@@ -48,7 +48,7 @@ def ensure_journal_table() -> None:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS trade_journal (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT DEFAULT (datetime('now')),
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
                 segment TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 instrument_token INTEGER NOT NULL,
@@ -142,7 +142,7 @@ def list_records(where: str = "1=1", params: tuple = (), limit: int = 500) -> li
 def update_record(record_id: int, fields: dict[str, Any]) -> None:
     if not fields:
         return
-    sets = ", ".join(f"{k} = ?" for k in fields) + ", updated_at = datetime('now')"
+    sets = ", ".join(f"{k} = ?" for k in fields) + ", updated_at = datetime('now', 'localtime')"
     values = [json.dumps(v) if k in JSON_FIELDS and v is not None else v for k, v in fields.items()]
     with get_db() as conn:
         conn.execute(f"UPDATE trade_journal SET {sets} WHERE id = ?", (*values, record_id))

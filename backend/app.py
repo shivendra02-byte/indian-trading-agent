@@ -2,6 +2,12 @@
 
 import sys
 import os
+import time
+
+# All times in the app are Indian Standard Time (the server itself runs on UTC).
+os.environ["TZ"] = os.environ.get("TRADINGAGENTS_TZ", "Asia/Kolkata")
+if hasattr(time, "tzset"):
+    time.tzset()
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +33,12 @@ async def lifespan(app: FastAPI):
     ensure_marketdata_tables()
     from backend.backtest.engine import recover_interrupted
     recover_interrupted()
+    from backend.db import install_localtime_triggers
+    from backend.journal.store import ensure_journal_table
+    from backend.signals.cash_swing import ensure_scan_tables
+    ensure_journal_table()
+    ensure_scan_tables()
+    install_localtime_triggers()
     # Load API keys from DB (UI takes priority over .env)
     load_api_keys_into_env()
     # Apply saved LLM config to DEFAULT_CONFIG

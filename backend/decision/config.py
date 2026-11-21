@@ -115,6 +115,21 @@ class TrailingCfg(_Strict):
     trail_atr: float = Field(gt=0)
 
 
+class SelectionCfg(_Strict):
+    """How non-safety technical checks are applied.
+
+    ``strict``: higher-timeframe agreement, confirmation/context timeframes and a
+    setup's required regime reject the candidate; regime permission, volume and
+    the RSI turn mark it invalid (shadow-tracked only).
+    ``scored`` (two-stage selection): only the Stage A safety filters reject;
+    those technical checks subtract the penalty points below from the score and
+    the candidate stays valid, so ranking decides the shortlist."""
+    mode: Literal["strict", "scored"] = "strict"
+    htf_against_penalty: float = Field(default=20, ge=0, le=100)
+    confirmation_against_penalty: float = Field(default=10, ge=0, le=100)   # per timeframe
+    required_regime_penalty: float = Field(default=15, ge=0, le=100)
+
+
 class GlobalCfg(_Strict):
     capital: float = Field(gt=0)
     system: SystemCfg
@@ -127,6 +142,7 @@ class GlobalCfg(_Strict):
     permissions: dict[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"],
                       dict[Literal["pullback", "breakout", "range_reversal"], Permission]]
     trailing_shadow: TrailingCfg
+    selection: SelectionCfg = SelectionCfg()
 
 
 class InstrumentCfg(BaseModel):

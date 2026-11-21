@@ -54,6 +54,20 @@ def cash_swing_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/cup-handle")
+def cup_handle_latest():
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.cup_handle import SEGMENT
+    return latest_run(segment=SEGMENT) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/cup-handle/run")
+def cup_handle_run():
+    """Run the cup-and-handle scan now on the latest completed daily bars."""
+    from backend.signals.cup_handle import run_scan
+    return run_scan(force=True)
+
+
 @router.get("/api/scans/hourly/{group}")
 def hourly_latest(group: Literal["nse", "mcx"]):
     from backend.signals.cash_swing import latest_run

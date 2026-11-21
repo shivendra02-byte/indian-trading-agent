@@ -178,6 +178,8 @@ export const getSchedulerStatus = () => fetchAPI(`/api/scheduler/status`);
 export const getCashSwingScan = (signalDate?: string) =>
   fetchAPI(`/api/scans/cash-swing${signalDate ? `?signal_date=${encodeURIComponent(signalDate)}` : ""}`);
 export const runCashSwingScan = () => fetchAPI(`/api/scans/cash-swing/run`, { method: "POST" });
+export const getCupHandleScan = () => fetchAPI(`/api/scans/cup-handle`);
+export const runCupHandleScan = () => fetchAPI(`/api/scans/cup-handle/run`, { method: "POST" });
 export const getHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}`);
 export const runHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}/run`, { method: "POST" });
 export const getJournal = (params: { segment?: string; decision?: string; status?: string; limit?: number } = {}) => {
@@ -202,6 +204,7 @@ export const startRuleBacktest = (data: {
   max_symbols?: number;
 }) => fetchAPI(`/api/rule-backtests`, { method: "POST", body: JSON.stringify(data) });
 export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
+export const getHistoryProgress = () => fetchAPI(`/api/rule-backtests/history`);
 
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);

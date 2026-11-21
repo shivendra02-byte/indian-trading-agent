@@ -273,21 +273,17 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             rs = {d: _relative_strength_points(daily, nifty_daily, 1 if d == "long" else -1)
                   for d in ("long", "short")}
         oi = oi_signal(hourly)
+        context_bars = {tf: context.get(tf) or bars_for_timeframe(token, tf, exchange)
+                        for tf in icfg.context_must_not_oppose}
+        must_not_oppose = {tf: htf_trend(b) or 0.0 for tf, b in context_bars.items()}
         candidates = evaluate(hourly, htf_bars, regime["regime"], directions=tuple(icfg.directions),
                               is_stock=seg == "stock_futures", rs_override=rs, oi=oi,
-                              confirmations=confirmations, min_primary_bars=icfg.min_primary_bars)
-        must_not_oppose = {tf: htf_trend(context.get(tf) or bars_for_timeframe(token, tf, exchange)) or 0.0
-                           for tf in icfg.context_must_not_oppose}
+                              confirmations=confirmations, context=context_bars,
+                              min_primary_bars=icfg.min_primary_bars)
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
             if not c.get("trackable"):
-                continue
-            s = 1 if c["direction"] == "long" else -1
-            against = [tf for tf, t in must_not_oppose.items() if t * s < 0]
-            if against:
-                c.update(trackable=False, valid=False, reject_reason=f"{', '.join(against)} trend against the trade")
-                c["stages"].append(stage("context", "fail", c["reject_reason"]))
                 continue
             lots = int(risk_per_trade() // (c["risk_per_unit"] * inst["value_per_point"])) if c["risk_per_unit"] else 0
             if lots < 1:

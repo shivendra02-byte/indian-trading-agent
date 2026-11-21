@@ -79,6 +79,11 @@ global:
   trailing_shadow:                 # recorded next to the fixed exit; not used for exits
     start_r: 1.5
     trail_atr: 2.0
+  selection:                       # strict: technical checks reject; scored: two-stage (see config/experiments/two_stage.yaml)
+    mode: strict
+    htf_against_penalty: 20
+    confirmation_against_penalty: 10
+    required_regime_penalty: 15
 
 instruments:
   stock_futures:
@@ -160,6 +165,36 @@ instruments:
     max_new_trades_day: 2
     max_open_risk_pct: 2.0
     min_primary_bars: 250
+
+  cup_handle:                      # William O'Neil cup and handle — cash, long only, own book
+    enabled: true
+    primary_tf: day
+    directions: [long]
+    shortlist_per_scan: 2
+    hold_trading_days: 40          # time stop ~8 weeks
+    min_primary_bars: 300
+    entry_window: ["09:15", "15:15"]   # buy limit at pivot + 5% (buy zone), next session
+    stop_pct: 8.0                  # O'Neil: cut losses at 7–8%
+    target_pct: 20.0               # O'Neil: take profits around 20–25%
+    event_block_days: 5            # results/RBI/Budget checked for the first days of the hold only
+    min_turnover_cr: 50
+    prior_uptrend_pct: 30
+    prior_lookback_days: 130
+    cup_min_weeks: 7
+    cup_max_weeks: 65
+    cup_min_depth_pct: 12
+    cup_max_depth_pct: 33
+    rounded_bottom_min_fraction: 0.30  # share of cup bars closing in its lowest quarter; a straight V spends 25% there
+    rim_tolerance_pct: 10          # right rim within 10% below (5% above) the left rim
+    handle_min_days: 5
+    handle_max_days: 25
+    handle_max_depth_pct: 12
+    breakout_volume_ratio: 1.5     # vs the 50-day average
+    volume_avg_days: 50
+    max_extended_pct: 5            # no entry more than 5% above the pivot
+    rs_lookback_days: 126          # must outperform NIFTY over ~6 months
+    max_position_value: 200000     # proposed: own book, to be confirmed
+    max_open_positions: 3          # proposed: own book, to be confirmed
 
 strategies:
   pullback:

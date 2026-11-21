@@ -57,7 +57,7 @@ def ensure_db():
                 ticker TEXT PRIMARY KEY,
                 exchange TEXT DEFAULT 'NSE',
                 name TEXT,
-                added_at TEXT DEFAULT (datetime('now'))
+                added_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS analysis_history (
@@ -84,7 +84,7 @@ def ensure_db():
                 pnl_amount REAL,
                 pnl_pct REAL,
                 pnl_status TEXT DEFAULT 'pending',
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS backtest_runs (
@@ -100,7 +100,7 @@ def ensure_db():
                 max_drawdown_pct REAL DEFAULT 0,
                 final_portfolio_value REAL,
                 status TEXT DEFAULT 'running',
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS backtest_trades (
@@ -133,8 +133,8 @@ def ensure_db():
                 summary_json TEXT NOT NULL,
                 insights_json TEXT NOT NULL,
                 model_metadata_json TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             -- Manual and explicitly synced Kite positions share a symbol and
@@ -157,8 +157,8 @@ def ensure_db():
                 day_change_pct REAL,
                 source TEXT NOT NULL DEFAULT 'manual',
                 notes TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                 PRIMARY KEY (tradingsymbol, exchange)
             );
 
@@ -176,7 +176,7 @@ def ensure_db():
                 triggered_signals TEXT,             -- JSON: list of specific signal names that fired
                 entry_price REAL NOT NULL,
                 entry_date TEXT DEFAULT (date('now')),
-                entry_datetime TEXT DEFAULT (datetime('now')),
+                entry_datetime TEXT DEFAULT (datetime('now', 'localtime')),
                 price_1d REAL,                      -- price 1 trading day later
                 price_3d REAL,
                 price_5d REAL,
@@ -187,7 +187,7 @@ def ensure_db():
                 pnl_10d_pct REAL,
                 status TEXT DEFAULT 'active',       -- active | expired | manually_closed
                 notes TEXT,
-                updated_at TEXT DEFAULT (datetime('now'))
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             -- Daily Verdict snapshots — measures whether the verdict actually predicted Nifty's move
@@ -213,8 +213,8 @@ def ensure_db():
                 outcome_1d TEXT,                        -- predicted_correctly | predicted_wrong | neutral
                 outcome_3d TEXT,
                 outcome_5d TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             -- Shadow trades: every STRONG BUY (and HIGH-conviction BUY) the recommender produces is
@@ -240,8 +240,8 @@ def ensure_db():
                 pnl_5d_pct REAL,
                 pnl_10d_pct REAL,
                 user_tracked INTEGER DEFAULT 0,         -- 1 if user also opened a paper_trade for this ticker on this day
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                 PRIMARY KEY (ticker, signal_date)       -- idempotent: one shadow per ticker per day
             );
 
@@ -262,7 +262,7 @@ def ensure_db():
                 return_10d REAL,
                 outcome_1d TEXT,                    -- win | loss | breakeven
                 outcome_5d TEXT,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
         """)
 
@@ -523,7 +523,7 @@ def _upsert_position_conn(conn: sqlite3.Connection, data: dict):
             day_change_pct = excluded.day_change_pct,
             source = excluded.source,
             notes = COALESCE(excluded.notes, notes),
-            updated_at = datetime('now')""",
+            updated_at = datetime('now', 'localtime')""",
         values,
     )
 
@@ -606,7 +606,7 @@ def save_equity_portfolio_review(review: dict):
             """INSERT OR REPLACE INTO equity_portfolio_reviews
             (review_id, review_date, holdings_json, summary_json, insights_json,
              model_metadata_json, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))""",
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
             (
                 review["review_id"], review["review_date"],
                 json.dumps(review.get("holdings", [])),
@@ -772,7 +772,7 @@ def update_paper_trade_prices(trade_id: int, prices: dict):
                 pnl_3d_pct = COALESCE(?, pnl_3d_pct),
                 pnl_5d_pct = COALESCE(?, pnl_5d_pct),
                 pnl_10d_pct = COALESCE(?, pnl_10d_pct),
-                updated_at = datetime('now')
+                updated_at = datetime('now', 'localtime')
                WHERE id = ?""",
             (
                 prices.get("price_1d"),
@@ -791,7 +791,7 @@ def update_paper_trade_prices(trade_id: int, prices: dict):
 def update_paper_trade_status(trade_id: int, status: str):
     with get_db() as conn:
         conn.execute(
-            "UPDATE paper_trades SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE paper_trades SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
             (status, trade_id),
         )
 
@@ -852,3 +852,35 @@ def list_recommender_backtest_runs() -> list[dict]:
                ORDER BY MAX(created_at) DESC"""
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def install_localtime_triggers() -> list[str]:
+    """Make timestamp columns that default to SQLite's ``datetime('now')`` (UTC)
+    store Indian time instead.
+
+    SQLite can't change a column default in place, so tables created before the
+    switch to ``datetime('now', 'localtime')`` get an AFTER INSERT trigger: a row
+    whose column still equals the current UTC second (i.e. it came from the old
+    default) is rewritten to local time. Explicitly written values never match
+    and are left alone. Idempotent; returns the triggers created."""
+    created = []
+    with get_db() as conn:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+        existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+        for table in tables:
+            for col in conn.execute(f'PRAGMA table_info("{table}")').fetchall():
+                default = (col[4] or "").replace(" ", "").lower()
+                if default != "datetime('now')":
+                    continue
+                name = f"localtime_{table}_{col[1]}"
+                if name in existing:
+                    continue
+                conn.execute(f"""
+                    CREATE TRIGGER "{name}" AFTER INSERT ON "{table}"
+                    WHEN NEW."{col[1]}" = datetime('now')
+                    BEGIN
+                        UPDATE "{table}" SET "{col[1]}" = datetime('now', 'localtime') WHERE rowid = NEW.rowid;
+                    END""")
+                created.append(name)
+    return created

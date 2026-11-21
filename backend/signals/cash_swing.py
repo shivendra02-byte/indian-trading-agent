@@ -129,7 +129,8 @@ def _save(run_id: int, signal_date: str, rows: list[dict], segment: str = SEGMEN
                  json.dumps(r["factors"]) if r.get("factors") else None, r.get("entry"), r.get("stop"),
                  r.get("target"), r.get("rr"), r.get("regime"), int(bool(r.get("shortlisted"))),
                  json.dumps({k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend",
-                                                     "rs_vs_nifty_pct", "risk_mult", "turnover_cr")}))
+                                                     "rs_vs_nifty_pct", "risk_mult", "turnover_cr", "pattern",
+                                                     "penalties")}))
                 for r in rows
             ],
         )

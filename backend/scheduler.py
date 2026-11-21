@@ -11,7 +11,8 @@ Jobs:
 * ``candles:<EXCHANGE>:<interval>`` — after each candle closes (+ a short
   buffer so Kite has the bar): NSE 10-minute (indices) and 1-hour; MCX 1-hour;
   daily bars after each exchange's close.
-* ``scan:cash_swing`` — once per NSE trading day from 15:45, after today's
+* ``scan:cash_swing`` — once per NSE trading day from 15:45 (followed by the
+  cup-and-handle scan on the same daily bars), after today's
   daily candles are stored.
 * ``scan:nse_1h`` / ``scan:mcx_1h`` — after each completed 1h bar has been
   synced (futures and MCX hourly scans; open journal records are tracked too).
@@ -187,6 +188,14 @@ class MarketDataScheduler:
                 result = run_scan(now=now)
                 if result.get("status") != "skipped" or result.get("reason") != "paused":
                     self.scans_done["cash_swing"] = now.date()
+                    # Cup and handle runs on the same daily bars, even when the swing scan
+                    # is blocked by an event inside its 7-day window.
+                    try:
+                        from backend.signals.cup_handle import run_scan as run_cup_scan
+                        cup = run_cup_scan(now=now)
+                    except Exception as exc:  # never let it stop the scheduler
+                        cup = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                    self.last_results["scan:cup_handle"] = {"at": now.isoformat(timespec="seconds"), **_brief(cup)}
             else:
                 _, exchange, interval = job.split(":")
                 bar = latest_closed_bar(exchange, interval, now)

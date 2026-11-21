@@ -116,7 +116,7 @@ def close_paper_trade(trade_id: int) -> dict:
             """UPDATE paper_trades SET
                 status = 'manually_closed',
                 notes = COALESCE(notes, '') || '\nClosed at Rs.' || ? || ' on ' || date('now') || '. P&L: ' || ? || '%',
-                updated_at = datetime('now')
+                updated_at = datetime('now', 'localtime')
                WHERE id = ?""",
             (current_price, pnl_pct, trade_id),
         )
