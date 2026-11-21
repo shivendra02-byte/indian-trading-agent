@@ -38,6 +38,7 @@ type RunRow = {
   progress: string | null;
   headline: Stats | null;
   trades: number | null;
+  options?: { daily_only?: boolean };
 };
 type Summary = {
   candidates: number;
@@ -50,6 +51,7 @@ type Summary = {
   by_exit: Record<string, Stats>;
   by_setup_regime?: Record<string, Stats>;
   by_data?: Record<string, Stats>;
+  by_year?: Record<string, Stats>;
   untested?: string[];
   soft_checks: Record<string, { passed: Stats; failed: Stats }>;
   limitations: string[];
@@ -184,7 +186,8 @@ function RunDetailCard({ run }: { run: RunDetail }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
-          #{run.id} · {SEGMENT_LABEL[run.segment] ?? run.segment} · {run.rule_set}{" "}
+          #{run.id} · {SEGMENT_LABEL[run.segment] ?? run.segment} · {run.rule_set}
+          {run.options?.daily_only ? " · daily bars only" : ""}{" "}
           <span className="font-normal text-muted-foreground">
             ({run.rule_version}) · {run.start_date} → {run.end_date} · {s.symbols} stocks · {s.candidates} candidates,{" "}
             {s.no_fill} not filled
@@ -205,6 +208,12 @@ function RunDetailCard({ run }: { run: RunDetail }) {
           <div>
             <p className="mb-1 text-xs font-medium">By setup and regime</p>
             <StatsTable rows={Object.entries(s.by_setup_regime)} />
+          </div>
+        )}
+        {s.by_year && Object.keys(s.by_year).length > 1 && (
+          <div>
+            <p className="mb-1 text-xs font-medium">By year (signal date)</p>
+            <StatsTable rows={Object.entries(s.by_year)} />
           </div>
         )}
         {s.by_data && Object.keys(s.by_data).length > 1 && (
@@ -248,6 +257,7 @@ export default function RuleBacktestsPage() {
   const [ruleSet, setRuleSet] = useState("current");
   const [start, setStart] = useState(isoDaysAgo(365));
   const [end, setEnd] = useState(isoDaysAgo(10));
+  const [dailyOnly, setDailyOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistoryProgress>({ status: "idle" });
@@ -295,7 +305,7 @@ export default function RuleBacktestsPage() {
   const run = async (rs: string) => {
     setBusy(true);
     try {
-      await startRuleBacktest({ segment, rule_set: rs, start_date: start, end_date: end });
+      await startRuleBacktest({ segment, rule_set: rs, start_date: start, end_date: end, daily_only: dailyOnly });
       toast.success(`Backtest started (${rs})`);
       fetchData();
     } catch (e) {
@@ -377,11 +387,16 @@ export default function RuleBacktestsPage() {
             <span className="text-xs text-muted-foreground">To</span>
             <input type="date" className="rounded border bg-background px-2 py-1" value={end} onChange={(e) => setEnd(e.target.value)} />
           </label>
+          <label className="flex items-center gap-2 pb-1 text-xs">
+            <input type="checkbox" checked={dailyOnly} onChange={(e) => setDailyOnly(e.target.checked)} />
+            Daily bars only
+          </label>
           <Button size="sm" onClick={() => run(ruleSet)} disabled={busy || running}>
             <Play className="mr-1 h-4 w-4" /> Run
           </Button>
           <p className="w-full text-xs text-muted-foreground">
             One run at a time. To compare, run each rule set on the same segment and dates, then tick both below. Stock futures runs take longer (hourly bars).
+            &quot;Daily bars only&quot; models every entry on the next day&apos;s daily bar and skips the 4H check, the same way the years before the hourly history are tested, so periods can be compared on equal terms.
           </p>
         </CardContent>
       </Card>
@@ -408,6 +423,7 @@ export default function RuleBacktestsPage() {
                   <span className="font-medium">#{r.id}</span>
                   <span>{SEGMENT_LABEL[r.segment] ?? r.segment}</span>
                   <Badge variant="outline">{r.rule_set}</Badge>
+                  {r.options?.daily_only ? <Badge variant="outline">daily bars only</Badge> : null}
                   <span className="text-muted-foreground">{r.start_date} → {r.end_date}</span>
                   {r.status === "done" ? (
                     <span className="ml-auto">

@@ -31,7 +31,7 @@ from backend.marketdata.candles import get_candles, resample_hours, resample_wee
 from backend.marketdata.instruments import fno_universe, spot_instrument
 from backend.signals import events
 from backend.signals.cash_swing import avg_turnover
-from backend.signals.regime import current_regime
+from backend.signals.regime import current_regime, label_series, regime_at
 from backend.signals.setups import _relative_strength_points, evaluate
 from tradingagents.utils.market_calendar import NSE, is_trading_day
 
@@ -86,13 +86,17 @@ def ensure_tables() -> None:
                 status TEXT NOT NULL,
                 progress TEXT,
                 summary TEXT,
-                trades TEXT
+                trades TEXT,
+                options TEXT
             )""")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(rule_backtests)")}
+        if "options" not in cols:
+            conn.execute("ALTER TABLE rule_backtests ADD COLUMN options TEXT")
 
 
 def _update(run_id: int, **fields) -> None:
     sets = ", ".join(f"{k} = ?" for k in fields)
-    values = [json.dumps(v) if k in ("summary", "trades") else v for k, v in fields.items()]
+    values = [json.dumps(v) if k in ("summary", "trades", "options") else v for k, v in fields.items()]
     with get_db() as conn:
         conn.execute(f"UPDATE rule_backtests SET {sets} WHERE id = ?", (*values, run_id))
 
@@ -105,6 +109,7 @@ def get_run(run_id: int, with_trades: bool = False) -> dict | None:
         return None
     out = dict(row)
     out["summary"] = json.loads(out["summary"]) if out["summary"] else None
+    out["options"] = json.loads(out["options"]) if out.get("options") else {}
     out["trades"] = json.loads(out["trades"]) if (with_trades and out["trades"]) else None
     if not with_trades:
         out.pop("trades")
@@ -115,7 +120,8 @@ def list_runs(limit: int = 30) -> list[dict]:
     ensure_tables()
     with get_db() as conn:
         rows = conn.execute("""SELECT id, created_at, segment, rule_set, rule_version, start_date, end_date,
-                                      status, progress, summary FROM rule_backtests ORDER BY id DESC LIMIT ?""",
+                                      status, progress, summary, options FROM rule_backtests
+                               ORDER BY id DESC LIMIT ?""",
                             (limit,)).fetchall()
     out = []
     for r in rows:
@@ -123,6 +129,7 @@ def list_runs(limit: int = 30) -> list[dict]:
         summary = json.loads(item.pop("summary") or "null") or {}
         item["headline"] = (summary.get("groups") or {}).get("shortlisted")
         item["trades"] = summary.get("trades")
+        item["options"] = json.loads(item["options"]) if item.get("options") else {}
         out.append(item)
     return out
 
@@ -253,7 +260,7 @@ def _simulate(c: dict, path: list[dict], fill_until: str, time_stop: date) -> di
 # --- segment runners ---------------------------------------------------------------------
 
 def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict],
-                   progress: Callable[[str], None] = lambda m: None) -> list[dict]:
+                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
     """Daily signals, long only. Where hourly history exists the entry window uses
     hourly bars and the 4H confirmation is applied; before that (older years) the
     entry is modelled on the next day's daily bar and timeframes that need hourly
@@ -282,10 +289,11 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
     trades = []
     for n, stock in enumerate(symbols, 1):
         daily = get_candles(stock["spot_token"], "day", limit=5000)
-        hourly = get_candles(stock["spot_token"], "60minute", limit=20000)
+        hourly = [] if daily_only else get_candles(stock["spot_token"], "60minute", limit=20000)
         d_index = [b["ts"][:10] for b in daily]
         h_index = [b["ts"] for b in hourly]
         hourly_from = h_index[0][:10] if h_index else "9999"
+        stock_labels = label_series(daily) if daily else []
         views = {"week": weekly_view(daily)} if daily else {}
         views.update({tf: hours_view(hourly, int(tf[0])) for tf in ("2h", "4h")} if hourly else {})
         for d, window, regime, bench in plan:
@@ -317,7 +325,8 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
                 confirmations = {tf: b for tf, b in confirmations.items() if tf not in hourly_tfs}
             for c in evaluate(bars, view(inst.scored_htf or "week"), regime, directions=tuple(inst.directions),
                               is_stock=True, benchmark=bench, max_stop_pct=max_stop,
-                              confirmations=confirmations, min_primary_bars=inst.min_primary_bars):
+                              confirmations=confirmations, min_primary_bars=inst.min_primary_bars,
+                              stock_regime=regime_at(stock_labels, i - 1)):
                 if not c.get("trackable"):
                     continue
                 entry_day = window[0].isoformat()
@@ -345,7 +354,7 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
 
 def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[dict],
                      progress: Callable[[str], None] = lambda m: None, *, instrument: str = "stock_futures",
-                     is_stock: bool = True) -> list[dict]:
+                     is_stock: bool = True, daily_only: bool = False) -> list[dict]:
     """Hourly signals on the spot price (expired futures can't be downloaded).
     ``instrument`` selects the config block (stock_futures / index_futures).
     Index spot has no volume: volume is recorded as not tested and left out of the score."""
@@ -378,6 +387,7 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
             continue
         volume_available = any(b.get("volume") for b in hourly[-50:])
         d_index = [b["ts"][:10] for b in daily]
+        stock_labels = label_series(daily)
         views = {tf: hours_view(hourly, int(tf[0])) for tf in ("2h", "4h")}
         daily_cache: dict[str, tuple] = {}
         for j, bar in enumerate(hourly):
@@ -394,8 +404,8 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
                 ctx_daily = daily[max(0, k - 300):k]
                 rs = {dn: _relative_strength_points(ctx_daily, bench, 1 if dn == "long" else -1)
                       for dn in ("long", "short")} if is_stock else None
-                daily_cache[day] = (ctx_daily, rs)
-            ctx_daily, rs = daily_cache[day]
+                daily_cache[day] = (ctx_daily, rs, regime_at(stock_labels, k - 1) if k else None)
+            ctx_daily, rs, own_regime = daily_cache[day]
 
             def view(tf: str) -> list[dict]:
                 if tf == "day":
@@ -410,7 +420,8 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
             primary = hourly[max(0, j - 399):j + 1]
             for c in evaluate(primary, view(scored), regime, directions=tuple(inst.directions), is_stock=is_stock,
                               rs_override=rs, confirmations=confirmations, context=context,
-                              min_primary_bars=inst.min_primary_bars, volume_available=volume_available):
+                              min_primary_bars=inst.min_primary_bars, volume_available=volume_available,
+                              stock_regime=own_regime):
                 if not c.get("trackable"):
                     continue
                 fill_until = min(bar_end + timedelta(hours=entry_bars), datetime.combine(bar_start.date(), cutoff))
@@ -431,16 +442,16 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
     return trades
 
 
-def run_futures_proxy(start, end, symbols, nifty, progress=lambda m: None) -> list[dict]:
+def run_futures_proxy(start, end, symbols, nifty, progress=lambda m: None, daily_only=False) -> list[dict]:
     return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="stock_futures", is_stock=True)
 
 
-def run_index_futures(start, end, symbols, nifty, progress=lambda m: None) -> list[dict]:
+def run_index_futures(start, end, symbols, nifty, progress=lambda m: None, daily_only=False) -> list[dict]:
     return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="index_futures", is_stock=False)
 
 
 def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict],
-                   progress: Callable[[str], None] = lambda m: None) -> list[dict]:
+                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
     """Daily cup-and-handle breakouts; entry on the next session (hourly bars where
     stored, otherwise the daily bar), then daily bars to the 8-week time stop."""
     from backend.signals import cup_handle
@@ -467,7 +478,7 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
     trades = []
     for n, stock in enumerate(symbols, 1):
         daily = get_candles(stock["spot_token"], "day", limit=5000)
-        hourly = get_candles(stock["spot_token"], "60minute", limit=20000)
+        hourly = [] if daily_only else get_candles(stock["spot_token"], "60minute", limit=20000)
         d_index = [b["ts"][:10] for b in daily]
         h_index = [b["ts"] for b in hourly]
         swing_highs, _ = swing_points(daily, 2)
@@ -569,6 +580,7 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
         "untested": sorted({u for t in closed for u in (t.get("untested") or [])}),
         "by_exit": by(lambda t: t["exit_reason"] or "?"),
         "by_month": by(lambda t: (t["exit_ts"] or "")[:7]),
+        "by_year": by(lambda t: (t.get("signal_ts") or "?")[:4]),
         "soft_checks": {
             name: {"passed": block([t for t in closed if (t.get("soft_checks") or {}).get(name) is True]),
                    "failed": block([t for t in closed if (t.get("soft_checks") or {}).get(name) is False])}
@@ -580,7 +592,8 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
 
 # --- entry points ------------------------------------------------------------------------
 
-def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symbols: int | None = None) -> int:
+def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symbols: int | None = None,
+                   daily_only: bool = False) -> int:
     if segment not in SEGMENTS:
         raise ValueError(f"segment must be one of {', '.join(SEGMENTS)}")
     sets = available_rule_sets()
@@ -595,10 +608,12 @@ def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symb
         version = get_config().rule_version
     with get_db() as conn:
         run_id = conn.execute(
-            """INSERT INTO rule_backtests (segment, rule_set, rule_version, start_date, end_date, status, progress)
-               VALUES (?, ?, ?, ?, ?, 'running', 'starting')""",
-            (segment, rule_set, version, start.isoformat(), end.isoformat())).lastrowid
-    threading.Thread(target=_run_safely, args=(run_id, segment, sets[rule_set], start, end, max_symbols),
+            """INSERT INTO rule_backtests (segment, rule_set, rule_version, start_date, end_date, status, progress,
+                                          options)
+               VALUES (?, ?, ?, ?, ?, 'running', 'starting', ?)""",
+            (segment, rule_set, version, start.isoformat(), end.isoformat(),
+             json.dumps({"daily_only": daily_only}))).lastrowid
+    threading.Thread(target=_run_safely, args=(run_id, segment, sets[rule_set], start, end, max_symbols, daily_only),
                      daemon=True, name=f"backtest-{run_id}").start()
     return run_id
 
@@ -611,7 +626,7 @@ def _run_safely(*args) -> None:
 
 
 def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
-                 max_symbols: int | None = None) -> dict:
+                 max_symbols: int | None = None, daily_only: bool = False) -> dict:
     """Run synchronously (the API runs it in a thread). Returns the summary."""
     with _run_lock, use_config(config_file):
         try:
@@ -629,9 +644,11 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
                 raise RuntimeError("no instruments to test; run the history download first")
             runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle,
                       "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures}[segment]
-            trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg))
+            trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg),
+                            daily_only=daily_only)
             summary = summarize(trades, segment)
-            summary.update({"symbols": len(symbols), "rule_version": get_config().rule_version})
+            summary.update({"symbols": len(symbols), "rule_version": get_config().rule_version,
+                            "daily_only": daily_only})
             _update(run_id, status="done", progress="done", summary=summary, trades=trades)
             return summary
         except Exception as exc:

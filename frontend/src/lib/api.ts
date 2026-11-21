@@ -202,6 +202,7 @@ export const startRuleBacktest = (data: {
   start_date: string;
   end_date: string;
   max_symbols?: number;
+  daily_only?: boolean;
 }) => fetchAPI(`/api/rule-backtests`, { method: "POST", body: JSON.stringify(data) });
 export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
 export const getHistoryProgress = () => fetchAPI(`/api/rule-backtests/history`);

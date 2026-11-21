@@ -22,6 +22,7 @@ class RunRequest(BaseModel):
     start_date: date
     end_date: date
     max_symbols: int | None = Field(default=None, ge=1, le=500)
+    daily_only: bool = False   # model every entry on daily bars (compare periods on equal terms)
 
 
 @router.get("/rule-sets")
@@ -57,7 +58,7 @@ def download_history():
 def start(data: RunRequest):
     try:
         run_id = engine.start_backtest(data.segment, data.rule_set, data.start_date, data.end_date,
-                                       data.max_symbols)
+                                       data.max_symbols, data.daily_only)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"id": run_id, "status": "running"}

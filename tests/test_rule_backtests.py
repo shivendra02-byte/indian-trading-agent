@@ -237,6 +237,28 @@ class IndexAndDailyOnlyTests(EndToEndTests):
                 self.assertEqual(t["untested"], ["4h"])
 
 
+class DailyOnlyOptionTests(EndToEndTests):
+    SEED = 17
+
+    test_futures_proxy_runs_both_rule_sets_without_look_ahead = None
+    test_routes = None
+
+    def test_daily_only_models_every_entry_on_daily_bars(self):
+        from backend.backtest import engine
+        from backend.decision.config import available_rule_sets
+        engine.ensure_tables()
+        with self.db.get_db() as conn:
+            run_id = conn.execute("INSERT INTO rule_backtests (segment, rule_set, start_date, end_date, status) "
+                                  "VALUES ('cash_swing', 'current', '2026-05-01', '2026-10-30', 'running')").lastrowid
+        summary = engine.run_backtest(run_id, "cash_swing", available_rule_sets()["current"],
+                                      date(2026, 5, 1), date(2026, 10, 30), daily_only=True)
+        trades = engine.get_run(run_id, with_trades=True)["trades"]
+        self.assertTrue(summary["daily_only"])
+        self.assertIn("2026", summary["by_year"])
+        self.assertTrue(trades)
+        self.assertTrue(all(t["data"] == "daily_only" and t["untested"] == ["4h"] for t in trades))
+
+
 class CupHandleBacktestTests(IsolatedStateTestCase, unittest.TestCase):
     def test_cup_handle_backtest_finds_the_breakout(self):
         from backend.backtest import engine

@@ -201,6 +201,7 @@ def _range_reversal(bars, ctx, s) -> tuple[bool, str, int, dict]:
     clusters = [c for c in _clusters(pts, tol) if c[1] >= _extra(st, "min_reactions", 2)]
     if not clusters:
         return False, "no level with enough prior reactions", 0, {}
+    ctx["range"] = (rng_lo, rng_hi)
     level = min(clusters, key=lambda c: abs(c[0] - last["close"]))[0]
     touched = (last["low"] <= level + tol) if s > 0 else (last["high"] >= level - tol)
     if not touched:
@@ -238,6 +239,18 @@ def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | No
         return {**result, "ok": False, "reason": f"stop too wide ({risk / a:.1f} ATR > {g.max_stop_atr})"}
     if max_stop_pct is not None and risk / entry > max_stop_pct:
         return {**result, "ok": False, "reason": f"stop too wide ({100 * risk / entry:.1f}% of price)"}
+    target_mode = _extra(st, "target", "levels") if st else "levels"
+    if target_mode in ("range_opposite", "range_middle") and ctx.get("range"):
+        lo, hi = ctx["range"]
+        edge = (hi if s > 0 else lo) if target_mode == "range_opposite" else (lo + hi) / 2
+        room = s * (edge - 0.1 * s * a - entry)
+        name = "the opposite side of the range" if target_mode == "range_opposite" else "the middle of the range"
+        if room < min_rr * risk:
+            return {**result, "ok": False, "reason": f"no room for {min_rr:g}R before {name} ({edge:.2f})",
+                    "next_level": round(edge, 2)}
+        target = entry + s * min(room, g.max_rr * risk)
+        return {**result, "ok": True, "reason": "", "target": round(target, 2),
+                "rr": round(s * (target - entry) / risk, 2), "next_level": round(edge, 2)}
     levels = [p for _, p in (highs if s > 0 else lows) if s * (p - entry) > 0.1 * a]
     history = bars[-251:-1]  # exclude the signal bar itself
     extreme = max(b["high"] for b in history) if s > 0 else min(b["low"] for b in history)
@@ -316,7 +329,7 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
              max_stop_pct: float | None = None, rs_override: dict | None = None,
              oi: dict | None = None, confirmations: dict[str, Sequence[dict]] | None = None,
              context: dict[str, Sequence[dict]] | None = None, min_primary_bars: int = 60,
-             volume_available: bool = True) -> list[dict]:
+             volume_available: bool = True, stock_regime: str | None = None) -> list[dict]:
     """Check every setup for each direction.
 
     ``htf_bars``: the scored higher timeframe (must agree for pullback/breakout).
@@ -326,6 +339,9 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
     (too little data counts as neutral).
     ``volume_available=False`` (index spot data has no volume): volume is
     recorded as not tested, never fails a check and is left out of the score.
+    ``stock_regime``: the instrument's own daily regime. A strategy with
+    ``regime_source: stock`` judges its regime requirement, permission and fit
+    on it instead of the market (NIFTY) regime.
     ``rs_override``: {"long": (points, diff), "short": ...} computed elsewhere.
     ``oi``: {"change_pct", "price_change"} for futures."""
     cfg = get_config()
@@ -344,17 +360,22 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
     contexts = {name: _context(bars, name) for name in SETUPS}
     if any(c["atr"][-1] is None or c["e50"][-1] is None for c in contexts.values()):
         return _reject_all("indicators not ready")
-    allowed = {k: v.model_dump() for k, v in cfg.global_.permissions.get(regime, {}).items()}
+    def permissions_for(r):
+        return {k: v.model_dump() for k, v in cfg.global_.permissions.get(r, {}).items()}
+
     min_shortlist = cfg.global_.scoring.min_shortlist_score
     out = []
     for setup in SETUPS:
         ctx = contexts[setup]
         st = ctx["strategy"]
-        rule = allowed.get(setup)
+        use_stock = _extra(st, "regime_source", "market") == "stock" and stock_regime is not None
+        setup_regime = stock_regime if use_stock else regime
+        rule = permissions_for(setup_regime).get(setup)
         for direction in directions:
             s = 1 if direction == "long" else -1
             stages: list[dict] = []
             cand = {"setup": setup, "direction": direction, "valid": False, "trackable": False, "regime": regime,
+                    "setup_regime": setup_regime, "regime_source": "stock" if use_stock else "market",
                     "htf_trend": htf, "confirmations": confirm_trends, "vol_ratio": round(ctx["vol_ratio"], 2),
                     "stages": stages, "rule_version": cfg.rule_version}
             out.append(cand)
@@ -362,8 +383,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             # otherwise the permission matrix is a soft check.
             penalties: dict[str, float] = {}
             required = _extra(st, "requires_regime", None)
-            if required and regime != required:
-                why = f"{setup} requires a {required} regime (now {regime})"
+            if required and setup_regime != required:
+                why = f"{setup} requires a {required} regime (now {setup_regime}{' for the stock' if use_stock else ''})"
                 if not scored_mode:
                     cand["reject_reason"] = why
                     stages.append(stage("regime", "fail", why))
@@ -372,7 +393,7 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             permitted = bool(rule and direction in rule["directions"]
                              and not (rule.get("with_trend_only") and htf * s < 1))
             stages.append(stage("regime", "pass" if permitted else "soft_fail",
-                                "" if permitted else f"{setup} {direction} not allowed in {regime}"))
+                                "" if permitted else f"{setup} {direction} not allowed in {setup_regime}"))
             if setup in ("pullback", "breakout") and htf * s <= 0:
                 if not scored_mode:
                     cand["reject_reason"] = "higher-timeframe trend does not agree"
@@ -433,7 +454,7 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             failed = []   # soft checks that make the candidate invalid (strict mode only)
             if not scored_mode:
                 if not permitted:
-                    failed.append(f"{setup} {direction} not allowed in {regime}")
+                    failed.append(f"{setup} {direction} not allowed in {setup_regime}")
                 if soft.get("volume") is False:
                     failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
                 if soft.get("rsi_turn") is False:
