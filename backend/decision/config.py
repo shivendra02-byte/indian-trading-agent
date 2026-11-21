@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -191,6 +193,28 @@ class DecisionConfig(_Strict):
 
 
 _lock = threading.Lock()
+_override: ContextVar[Path | None] = ContextVar("decision_config_override", default=None)
+EXPERIMENTS_DIR = DEFAULT_PATH.parent / "experiments"
+
+
+@contextmanager
+def use_config(path: str | Path):
+    """Evaluate with another rule set inside this block (backtests). Live scans are unaffected."""
+    token = _override.set(Path(path))
+    try:
+        get_config()  # validate up front
+        yield
+    finally:
+        _override.reset(token)
+
+
+def available_rule_sets() -> dict[str, Path]:
+    """'current' plus every config/experiments/*.yaml."""
+    sets = {"current": config_path()}
+    if EXPERIMENTS_DIR.exists():
+        for p in sorted(EXPERIMENTS_DIR.glob("*.yaml")):
+            sets[p.stem] = p
+    return sets
 
 
 def config_path() -> Path:
@@ -208,6 +232,6 @@ def _load(path: str, mtime: float) -> DecisionConfig:
 
 def get_config() -> DecisionConfig:
     """The current configuration (re-read automatically when the file changes)."""
-    path = config_path()
+    path = _override.get() or config_path()
     with _lock:
         return _load(str(path), path.stat().st_mtime)
