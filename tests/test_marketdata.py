@@ -173,7 +173,9 @@ class InstrumentAndCandleTests(IsolatedStateTestCase, unittest.TestCase):
         set_paused(True, "test")
         self.assertEqual(jobs.candle_sync(client=FakeKite())["status"], "skipped")
         set_paused(False)
-        result = jobs.morning_refresh(client=FakeKite())
+        from unittest.mock import patch
+        with patch("backend.signals.events._yahoo_results_date", return_value=None):
+            result = jobs.morning_refresh(client=FakeKite())
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["instruments"]["fno_stocks"], 110)
 

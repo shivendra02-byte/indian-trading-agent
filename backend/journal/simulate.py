@@ -114,3 +114,23 @@ def delivery_charges(buy_value: float, sell_value: float) -> float:
     gst = 0.18 * (exch + sebi)
     dp = 15.34 if sell_value else 0.0
     return round(stt + stamp + exch + sebi + gst + dp, 2)
+
+
+def futures_charges(buy_value: float, sell_value: float, exchange: str = "NFO") -> float:
+    """Approximate Zerodha futures charges for one round trip.
+
+    Brokerage: lower of ₹20 or 0.03% per executed order. NSE futures: STT 0.05%
+    on the sell side (from 1 Apr 2026), exchange transaction ~0.00173%. MCX
+    (non-agri): CTT 0.01% on the sell side, exchange transaction ~0.0021%.
+    Both: SEBI 0.0001%, stamp duty 0.002% on buy, 18% GST on brokerage +
+    exchange + SEBI fees."""
+    brokerage = min(20.0, 0.0003 * buy_value) + min(20.0, 0.0003 * sell_value)
+    if exchange == "MCX":
+        tax, exch_rate = 0.0001 * sell_value, 0.000021
+    else:
+        tax, exch_rate = 0.0005 * sell_value, 0.0000173
+    exch = exch_rate * (buy_value + sell_value)
+    sebi = 0.000001 * (buy_value + sell_value)
+    stamp = 0.00002 * buy_value
+    gst = 0.18 * (brokerage + exch + sebi)
+    return round(brokerage + tax + exch + sebi + stamp + gst, 2)

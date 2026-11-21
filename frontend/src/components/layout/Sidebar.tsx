@@ -47,6 +47,7 @@ const navGroups: NavGroup[] = [
     title: "DISCOVER",
     items: [
       { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
+      { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
       { href: "/recommendations", label: "Top Picks", icon: Sparkles, hint: "AI-free recommendations" },
       { href: "/scanner", label: "Market Scan", icon: Radar, hint: "Gap / Volume / Breakout" },
       { href: "/strategies", label: "Strategies", icon: Target, hint: "S/R, Cyclical patterns" },

@@ -21,8 +21,30 @@ from backend.db import get_db
 JSON_FIELDS = ("factors", "soft_checks", "panel", "trail", "extra")
 
 
+def _migrate(conn) -> None:
+    """v1 (cash swing only) had no signal_ts and was unique per day; rebuild it so
+    hourly scans can record several signals per day."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(trade_journal)")]
+    if cols and "signal_ts" not in cols:
+        conn.execute("DROP INDEX IF EXISTS idx_journal_track")
+        conn.execute("DROP INDEX IF EXISTS idx_journal_signal")
+        conn.execute("ALTER TABLE trade_journal RENAME TO trade_journal_v1")
+
+
+def _copy_v1(conn) -> None:
+    exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='trade_journal_v1'").fetchone()
+    if not exists:
+        return
+    old = [r[1] for r in conn.execute("PRAGMA table_info(trade_journal_v1)")]
+    shared = [c for c in old if c != "id"]
+    conn.execute(f"INSERT OR IGNORE INTO trade_journal ({', '.join(shared)}, signal_ts) "
+                 f"SELECT {', '.join(shared)}, signal_date || 'T15:30:00' FROM trade_journal_v1")
+    conn.execute("DROP TABLE trade_journal_v1")
+
+
 def ensure_journal_table() -> None:
     with get_db() as conn:
+        _migrate(conn)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS trade_journal (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +54,7 @@ def ensure_journal_table() -> None:
                 instrument_token INTEGER NOT NULL,
                 exchange TEXT NOT NULL,
                 signal_date TEXT NOT NULL,
+                signal_ts TEXT NOT NULL,
                 setup TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 regime TEXT,
@@ -67,20 +90,22 @@ def ensure_journal_table() -> None:
                 trail TEXT,
                 extra TEXT,
                 updated_at TEXT,
-                UNIQUE (segment, symbol, signal_date, setup, direction)
+                UNIQUE (segment, symbol, signal_ts, setup, direction)
             );
             CREATE INDEX IF NOT EXISTS idx_journal_track ON trade_journal (track_status);
             CREATE INDEX IF NOT EXISTS idx_journal_signal ON trade_journal (segment, signal_date);
         """)
+        _copy_v1(conn)
 
 
 def add_records(rows: list[dict]) -> int:
     ensure_journal_table()
-    cols = ("segment", "symbol", "instrument_token", "exchange", "signal_date", "setup", "direction", "regime",
+    cols = ("segment", "symbol", "instrument_token", "exchange", "signal_date", "signal_ts", "setup", "direction", "regime",
             "score", "factors", "soft_checks", "decision", "reject_reason", "entry", "stop", "target", "rr", "atr",
             "entry_date", "fill_until", "time_stop_date", "extra")
     values = []
     for r in rows:
+        r = {**r, "signal_ts": r.get("signal_ts") or f"{r['signal_date']}T15:30:00"}
         values.append(tuple(json.dumps(r.get(c)) if c in JSON_FIELDS and r.get(c) is not None else r.get(c)
                             for c in cols))
     with get_db() as conn:

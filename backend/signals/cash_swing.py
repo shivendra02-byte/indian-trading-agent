@@ -103,14 +103,14 @@ def avg_turnover(bars: list[dict], n: int = 20) -> float:
     return sum(b["close"] * (b.get("volume") or 0) for b in window) / len(window)
 
 
-def _save(run_id: int, signal_date: str, rows: list[dict]) -> None:
+def _save(run_id: int, signal_date: str, rows: list[dict], segment: str = SEGMENT) -> None:
     with get_db() as conn:
         conn.executemany(
             """INSERT INTO scan_candidates (run_id, segment, signal_date, symbol, setup, direction, valid,
                reject_reason, score, factors, entry, stop, target, rr, regime, shortlisted, extra)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
-                (run_id, SEGMENT, signal_date, r["symbol"], r.get("setup"), r.get("direction"),
+                (run_id, segment, signal_date, r["symbol"], r.get("setup"), r.get("direction"),
                  int(bool(r.get("valid"))), r.get("reject_reason"), r.get("score"),
                  json.dumps(r["factors"]) if r.get("factors") else None, r.get("entry"), r.get("stop"),
                  r.get("target"), r.get("rr"), r.get("regime"), int(bool(r.get("shortlisted"))),
@@ -121,11 +121,11 @@ def _save(run_id: int, signal_date: str, rows: list[dict]) -> None:
         )
 
 
-def _start_run(signal_date: str, now: datetime) -> int:
+def _start_run(signal_date: str, now: datetime, segment: str = SEGMENT) -> int:
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO scan_runs (segment, signal_date, started_at, status) VALUES (?, ?, ?, 'running')",
-            (SEGMENT, signal_date, now.isoformat(timespec="seconds")),
+            (segment, signal_date, now.isoformat(timespec="seconds")),
         )
         return cur.lastrowid
 
@@ -242,15 +242,15 @@ def run_scan(now: datetime | None = None, force: bool = False,
     })
 
 
-def latest_run(signal_date: str | None = None) -> dict | None:
+def latest_run(signal_date: str | None = None, segment: str = SEGMENT) -> dict | None:
     ensure_scan_tables()
     with get_db() as conn:
         if signal_date:
             run = conn.execute("SELECT * FROM scan_runs WHERE segment = ? AND signal_date = ? ORDER BY id DESC LIMIT 1",
-                               (SEGMENT, signal_date)).fetchone()
+                               (segment, signal_date)).fetchone()
         else:
             run = conn.execute("SELECT * FROM scan_runs WHERE segment = ? ORDER BY id DESC LIMIT 1",
-                               (SEGMENT,)).fetchone()
+                               (segment,)).fetchone()
         if not run:
             return None
         cands = conn.execute(

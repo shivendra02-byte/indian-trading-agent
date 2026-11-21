@@ -178,6 +178,8 @@ export const getSchedulerStatus = () => fetchAPI(`/api/scheduler/status`);
 export const getCashSwingScan = (signalDate?: string) =>
   fetchAPI(`/api/scans/cash-swing${signalDate ? `?signal_date=${encodeURIComponent(signalDate)}` : ""}`);
 export const runCashSwingScan = () => fetchAPI(`/api/scans/cash-swing/run`, { method: "POST" });
+export const getHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}`);
+export const runHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}/run`, { method: "POST" });
 export const getJournal = (params: { segment?: string; decision?: string; status?: string; limit?: number } = {}) => {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
