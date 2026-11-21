@@ -11,6 +11,8 @@ Jobs:
 * ``candles:<EXCHANGE>:<interval>`` — after each candle closes (+ a short
   buffer so Kite has the bar): NSE 10-minute (indices) and 1-hour; MCX 1-hour;
   daily bars after each exchange's close.
+* ``scan:cash_swing`` — once per NSE trading day from 15:45, after today's
+  daily candles are stored.
 
 Nothing runs while the system is paused, on weekends/holidays, or before
 today's Kite login. Disable with ``TRADINGAGENTS_SCHEDULER=off``.
@@ -33,6 +35,7 @@ CANDLE_BUFFER = timedelta(minutes=2)       # Kite publishes a bar shortly after 
 DAILY_BUFFER = timedelta(minutes=10)
 MORNING_REFRESH_AT = time(8, 30)
 MORNING_RETRY = timedelta(minutes=15)
+CASH_SWING_SCAN_AT = time(15, 45)
 BAR_LENGTH = {"10minute": timedelta(minutes=10), "60minute": timedelta(hours=1)}
 # (exchange, interval) pairs the scheduler keeps fresh.
 SCHEDULE = ((NSE, "10minute"), (NSE, "60minute"), (NSE, "day"), (MCX, "60minute"), (MCX, "day"))
@@ -91,6 +94,11 @@ def due_jobs(now: datetime, state: dict) -> list[str]:
         key = f"candles:{exchange}:{interval}"
         if bar and (done.get(key) is None or done[key] < bar):
             jobs.append(key)
+    nse_close = latest_closed_bar(NSE, "day", now)
+    day_synced = done.get("candles:NSE:day")
+    if (nse_close and now.time() >= CASH_SWING_SCAN_AT and day_synced and day_synced >= nse_close
+            and "candles:NSE:day" not in jobs and state.get("scans_done", {}).get("cash_swing") != today):
+        jobs.append("scan:cash_swing")
     return jobs
 
 
@@ -103,6 +111,7 @@ class MarketDataScheduler:
         self.last_tick: datetime | None = None
         self.last_results: dict[str, dict] = {}
         self.waiting_for: str | None = None
+        self.scans_done: dict[str, date] = {}
 
     # --- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -139,6 +148,7 @@ class MarketDataScheduler:
             "instruments_fresh": instrument_summary()["fresh_today"],
             "last_morning_attempt": self.last_morning_attempt,
             "done": self.done,
+            "scans_done": self.scans_done,
         }
 
     def tick(self, now: datetime | None = None) -> list[str]:
@@ -146,6 +156,11 @@ class MarketDataScheduler:
 
         now = now or datetime.now(IST).replace(tzinfo=None)
         self.last_tick = now
+        if self.scans_done.get("cash_swing") != now.date():
+            from backend.signals.cash_swing import latest_run
+            run = latest_run(now.date().isoformat())
+            if run and run["status"] in ("ok", "blocked"):
+                self.scans_done["cash_swing"] = now.date()  # already ran today (e.g. before a restart)
         state = self._state(now)
         self.waiting_for = self._waiting_reason(now, state)
         ran = []
@@ -153,6 +168,11 @@ class MarketDataScheduler:
             if job == "morning_refresh":
                 self.last_morning_attempt = now
                 result = jobs.morning_refresh()
+            elif job == "scan:cash_swing":
+                from backend.signals.cash_swing import run_scan
+                result = run_scan(now=now)
+                if result.get("status") != "skipped" or result.get("reason") != "paused":
+                    self.scans_done["cash_swing"] = now.date()
             else:
                 _, exchange, interval = job.split(":")
                 bar = latest_closed_bar(exchange, interval, now)
@@ -189,7 +209,7 @@ class MarketDataScheduler:
 
 
 def _brief(result: dict) -> dict:
-    keep = ("status", "reason", "series_synced", "candles_saved")
+    keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

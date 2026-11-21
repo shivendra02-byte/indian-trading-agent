@@ -175,6 +175,9 @@ export const setPauseState = (paused: boolean, reason?: string) =>
 export const getMarketCalendarStatus = () => fetchAPI(`/api/market-calendar/status`);
 export const getMarketDataStatus = () => fetchAPI(`/api/marketdata/status`);
 export const getSchedulerStatus = () => fetchAPI(`/api/scheduler/status`);
+export const getCashSwingScan = (signalDate?: string) =>
+  fetchAPI(`/api/scans/cash-swing${signalDate ? `?signal_date=${encodeURIComponent(signalDate)}` : ""}`);
+export const runCashSwingScan = () => fetchAPI(`/api/scans/cash-swing/run`, { method: "POST" });
 
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);

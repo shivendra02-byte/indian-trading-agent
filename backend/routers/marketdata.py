@@ -41,6 +41,19 @@ def scheduler_status():
     return scheduler.status()
 
 
+@router.get("/api/scans/cash-swing")
+def cash_swing_latest(signal_date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    from backend.signals.cash_swing import latest_run
+    return latest_run(signal_date) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/cash-swing/run")
+def cash_swing_run():
+    """Run the daily cash swing scan now (uses the latest completed daily bars)."""
+    from backend.signals.cash_swing import run_scan
+    return run_scan(force=True)
+
+
 @router.get("/api/market-calendar/status")
 def calendar_status():
     return {
