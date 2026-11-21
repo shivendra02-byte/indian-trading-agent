@@ -21,9 +21,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
+from backend.decision.config import get_config
 from backend.journal.store import add_records as journal_add
 from backend.journal.tracker import track_open_records
-from backend.marketdata.candles import get_candles, resample_4h
+from backend.marketdata.candles import bars_for_timeframe, get_candles
 from backend.marketdata.instruments import active_future, ban_status, fno_universe, spot_instrument
 from backend.marketdata.store import MCX_UNDERLYINGS, SCANNED_INDICES
 from backend.signals import events
@@ -31,20 +32,30 @@ from backend.signals.cash_swing import (
     _finish_run, _save, _start_run, data_quality, ensure_scan_tables, expected_last_daily_bar,
 )
 from backend.signals.regime import current_regime
-from backend.signals.setups import SHORTLIST_SCORE, _relative_strength_points, evaluate, htf_trend
+from backend.signals.setups import _relative_strength_points, evaluate, htf_trend, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
 
-HOLD_DAYS = 3
-ENTRY_BARS = 2
-LAST_ENTRY_BEFORE_CLOSE = timedelta(minutes=30)
-MAX_SPREAD_PCT = 0.1
-RISK_PER_TRADE = 10_000
-SHORTLIST_SIZE = 5
-MIN_HOURLY_BARS = 60
-# MCX quote is per 10 g / per kg / per barrel / per mmBtu; ₹ value of a 1-point move per lot.
-MCX_VALUE_PER_POINT = {"GOLDM": 10, "SILVERM": 5, "CRUDEOILM": 10, "NATGASMINI": 250}
 GROUPS = {"nse": "fno_1h", "mcx": "mcx_1h"}
+SEGMENTS = {"nse": ("stock_futures", "index_futures"), "mcx": ("mcx",)}
+
+
+def _inst(segment: str):
+    return get_config().instrument(segment)
+
+
+def _x(segment: str, key: str, default):
+    return (_inst(segment).model_extra or {}).get(key, default)
+
+
+def risk_per_trade() -> float:
+    g = get_config().global_
+    return g.capital * g.risk.risk_per_trade_pct / 100
+
+
+def mcx_value_per_point() -> dict[str, float]:
+    """₹ value of a 1-point move per lot (MCX quotes per 10 g / kg / barrel / mmBtu)."""
+    return _x("mcx", "value_per_point", {})
 
 
 def _now() -> datetime:
@@ -76,9 +87,10 @@ def latest_hourly_bar_start(exchange: str, now: datetime) -> datetime | None:
     return None
 
 
-def hourly_quality(bars: list[dict], expected_start: datetime, exchange: str, need_oi: bool) -> str | None:
-    if len(bars) < MIN_HOURLY_BARS:
-        return f"only {len(bars)} hourly bars (need {MIN_HOURLY_BARS})"
+def hourly_quality(bars: list[dict], expected_start: datetime, exchange: str, need_oi: bool,
+                   min_bars: int = 60) -> str | None:
+    if len(bars) < min_bars:
+        return f"only {len(bars)} hourly bars (need {min_bars})"
     last = datetime.fromisoformat(bars[-1]["ts"])
     if last != expected_start:
         return f"stale data: last hourly bar {last:%Y-%m-%d %H:%M}, expected {expected_start:%H:%M}"
@@ -145,7 +157,7 @@ def _instruments(group: str, today: date) -> list[dict]:
             fut = active_future(name, segment="MCX-FUT", today=today)
             if fut:
                 out.append({"segment": "mcx", "symbol": name, "contract": fut, "spot": None,
-                            "value_per_point": MCX_VALUE_PER_POINT[name], "ban": False})
+                            "value_per_point": mcx_value_per_point()[name], "ban": False})
     return out
 
 
@@ -157,6 +169,9 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     ensure_scan_tables()
     now = now or _now()
     tracked = track_open_records()
+    lead = SEGMENTS[group][0]
+    if not any(_inst(seg).enabled for seg in SEGMENTS[group]):
+        return {"status": "skipped", "reason": f"{group} scans disabled in config", "tracking": tracked}
     if is_paused():
         return {"status": "skipped", "reason": "paused", "tracking": tracked}
     windows = session_windows(exchange, now.date())
@@ -166,13 +181,17 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     if bar_start is None:
         return {"status": "skipped", "reason": "no completed hourly bar yet", "tracking": tracked}
     signal_end = min(bar_start + timedelta(hours=1), datetime.combine(now.date(), windows[-1][1]))
-    cutoff = datetime.combine(now.date(), windows[-1][1]) - LAST_ENTRY_BEFORE_CLOSE
+    last_min = int(_x(lead, "no_entry_last_minutes", 30))
+    first_min = int(_x(lead, "no_entry_first_minutes", 15))
+    cutoff = datetime.combine(now.date(), windows[-1][1]) - timedelta(minutes=last_min)
     if signal_end >= cutoff and not force:
-        return {"status": "skipped", "reason": "entry window would start in the last 30 minutes",
+        return {"status": "skipped", "reason": f"entry window would start in the last {last_min} minutes",
                 "tracking": tracked}
+    if signal_end < datetime.combine(now.date(), windows[0][0]) + timedelta(minutes=first_min):
+        return {"status": "skipped", "reason": f"inside the first {first_min} minutes", "tracking": tracked}
 
     run_id = _start_run(now.date().isoformat(), now, segment=segment_key)
-    hold = exchange_days_after(exchange, now.date() - timedelta(days=1), HOLD_DAYS)  # today + next 2
+    hold = exchange_days_after(exchange, now.date() - timedelta(days=1), _inst(lead).hold_trading_days)
     daily_expected = expected_last_daily_bar(now) if exchange == NSE else None
 
     regime_nse = None
@@ -192,25 +211,31 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                                                    "tracking": tracked})
         regime_nse = current_regime(nifty_daily)
 
-    instruments = _instruments(group, now.date())
+    instruments = [i for i in _instruments(group, now.date()) if _inst(i["segment"]).enabled]
     if not instruments:
         return _finish_run(run_id, "blocked", {"reason": "no active contracts (instrument master missing)"})
 
     rows: list[dict] = []
     for inst in instruments:
         sym, contract, seg = inst["symbol"], inst["contract"], inst["segment"]
+        icfg = _inst(seg)
         base = {"symbol": sym, "segment": seg, "token": contract["instrument_token"],
                 "tradingsymbol": contract["tradingsymbol"]}
+
+        def reject(reason: str) -> None:
+            rows.append({**base, "valid": False, "reject_reason": reason,
+                         "stages": [stage("eligibility", "fail", reason)]})
+
         if inst["ban"] is True:
-            rows.append({**base, "valid": False, "reject_reason": "in F&O ban"})
+            reject("in F&O ban")
             continue
         if inst["ban"] == "unknown":
-            rows.append({**base, "valid": False, "reject_reason": "F&O ban list not verified today"})
+            reject("F&O ban list not verified today")
             continue
         hourly = get_candles(contract["instrument_token"], "60minute", limit=400)
-        problem = hourly_quality(hourly, bar_start, exchange, need_oi=True)
+        problem = hourly_quality(hourly, bar_start, exchange, need_oi=True, min_bars=icfg.min_primary_bars)
         if problem:
-            rows.append({**base, "valid": False, "reject_reason": problem})
+            reject(problem)
             continue
         if exchange == NSE:
             daily = get_candles(inst["spot"]["instrument_token"], "day", limit=300) if inst["spot"] else []
@@ -223,48 +248,64 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                 problem = f"stale daily bars (last {daily[-1]['ts'][:10]})"
             regime = current_regime(daily) if not problem else None
         if problem:
-            rows.append({**base, "valid": False, "reject_reason": f"daily data: {problem}"})
+            reject(f"daily data: {problem}")
             continue
         if seg == "stock_futures":
             ok, why = events.results_clear(sym, hold[0], hold[-1], now.date())
             if not ok:
-                rows.append({**base, "valid": False, "reject_reason": why})
+                reject(why)
                 continue
         if seg == "mcx":
             blocked, why = events.mcx_event_block(sym, signal_end)
             if blocked:
-                rows.append({**base, "valid": False, "reject_reason": why})
+                reject(why)
                 continue
+        eligibility = stage("eligibility", "pass")
 
-        daily_trend = htf_trend(daily) or 0.0
+        context = {"day": daily}
+        token = contract["instrument_token"]
+        htf_bars = bars_for_timeframe(token, icfg.scored_htf or "4h", exchange) if icfg.scored_htf not in context \
+            else context[icfg.scored_htf]
+        confirmations = {tf: bars_for_timeframe(token, tf, exchange) for tf in icfg.confirmation_tfs
+                         if tf != icfg.scored_htf}
         rs = None
         if seg == "stock_futures":
             rs = {d: _relative_strength_points(daily, nifty_daily, 1 if d == "long" else -1)
                   for d in ("long", "short")}
         oi = oi_signal(hourly)
-        candidates = evaluate(hourly, resample_4h(hourly, exchange), regime["regime"],
-                              is_stock=seg == "stock_futures", rs_override=rs, oi=oi)
+        candidates = evaluate(hourly, htf_bars, regime["regime"], directions=tuple(icfg.directions),
+                              is_stock=seg == "stock_futures", rs_override=rs, oi=oi,
+                              confirmations=confirmations, min_primary_bars=icfg.min_primary_bars)
+        must_not_oppose = {tf: htf_trend(context.get(tf) or bars_for_timeframe(token, tf, exchange)) or 0.0
+                           for tf in icfg.context_must_not_oppose}
         trackable = []
         for c in candidates:
+            c["stages"] = [eligibility, *c.get("stages", [])]
             if not c.get("trackable"):
                 continue
             s = 1 if c["direction"] == "long" else -1
-            if daily_trend * s < 0:
-                c.update(trackable=False, valid=False, reject_reason="daily trend against the trade")
+            against = [tf for tf, t in must_not_oppose.items() if t * s < 0]
+            if against:
+                c.update(trackable=False, valid=False, reject_reason=f"{', '.join(against)} trend against the trade")
+                c["stages"].append(stage("context", "fail", c["reject_reason"]))
                 continue
-            lots = int(RISK_PER_TRADE // (c["risk_per_unit"] * inst["value_per_point"])) if c["risk_per_unit"] else 0
+            lots = int(risk_per_trade() // (c["risk_per_unit"] * inst["value_per_point"])) if c["risk_per_unit"] else 0
             if lots < 1:
-                c.update(trackable=False, valid=False, reject_reason="1 lot risks more than 1%")
+                c.update(trackable=False, valid=False, reject_reason="1 lot risks more than the per-trade limit")
+                c["stages"].append(stage("construction", "fail", c["reject_reason"]))
                 continue
             c["lots"] = lots
+            c["stages"].append(stage("sizing", "pass", lots=lots))
             trackable.append(c)
         if trackable:
             for c in trackable:
                 rows.append({**base, **c, "oi_change_pct": oi["change_pct"],
-                             "value_per_point": inst["value_per_point"], "expiry": contract["expiry"]})
+                             "value_per_point": inst["value_per_point"], "expiry": contract["expiry"],
+                             "context": {tf: t for tf, t in must_not_oppose.items()}})
         else:
             reasons = "; ".join(sorted({c["reject_reason"] for c in candidates if c.get("reject_reason")}))
-            rows.append({**base, "valid": False, "regime": regime["regime"], "reject_reason": reasons})
+            rows.append({**base, "valid": False, "regime": regime["regime"], "reject_reason": reasons,
+                         "stages": [eligibility]})
 
     # Liquidity: one quote call for every trackable contract; unverifiable spread → reject.
     tracked_rows = [r for r in rows if r.get("trackable")]
@@ -279,18 +320,28 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         for r in tracked_rows:
             spread = spreads.get(f"{prefix}:{r['tradingsymbol']}")
             r["spread_pct"] = spread
-            if spread is None or spread > MAX_SPREAD_PCT:
+            max_spread = float(_x(r["segment"], "max_spread_pct", 0.1))
+            if spread is None or spread > max_spread:
                 r.update(trackable=False, valid=False,
                          reject_reason="liquidity not verified" if spread is None
-                         else f"bid-ask spread {spread:.2f}% > {MAX_SPREAD_PCT}%")
+                         else f"bid-ask spread {spread:.2f}% > {max_spread}%")
+                r["stages"].append(stage("eligibility", "fail", r["reject_reason"]))
+            else:
+                r["stages"].append(stage("liquidity", "pass", spread_pct=spread))
 
-    ranked = sorted((r for r in rows if r.get("valid") and r.get("trackable") and r["score"] >= SHORTLIST_SCORE),
+    ranked = sorted((r for r in rows if r.get("valid") and r.get("trackable") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
-    for r in ranked[:SHORTLIST_SIZE]:
+    shortlist_n = _inst(lead).shortlist_per_scan
+    for r in ranked[:shortlist_n]:
         r["shortlisted"] = True
+    for r in rows:
+        if r.get("trackable"):
+            selected = bool(r.get("shortlisted"))
+            r["stages"].append(stage("ai_panel", "pending" if selected else "not_sent"))
+            r["stages"].append(stage("final_approval", "pending" if selected else "not_applicable"))
     _save(run_id, now.date().isoformat(), rows, segment=segment_key)
 
-    fill_until = min(signal_end + timedelta(hours=ENTRY_BARS), cutoff)
+    fill_until = min(signal_end + timedelta(hours=_inst(lead).model_extra.get("entry_valid_bars", 2)), cutoff)
     journal_rows = []
     for r in rows:
         if not r.get("trackable"):
@@ -302,8 +353,8 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     return _finish_run(run_id, "ok", {
         "signal_bar": bar_start.isoformat(timespec="minutes"), "regime": regime_nse,
         "instruments": len(instruments), "valid_setups": sum(1 for r in rows if r.get("valid")),
-        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:SHORTLIST_SIZE]],
-        "journal_records": len(journal_rows), "tracking": tracked,
+        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:shortlist_n]],
+        "journal_records": len(journal_rows), "tracking": tracked, "rule_version": get_config().rule_version,
     })
 
 
@@ -313,7 +364,7 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         decision = "soft_rejected"
     elif r.get("shortlisted"):
         decision = "shortlisted"
-    elif r["score"] >= SHORTLIST_SCORE:
+    elif r["score"] >= min_score():
         decision = "not_selected"
     else:
         decision = "below_score"
@@ -328,5 +379,6 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
                                          "spread_pct", "stop_atr", "next_level", "vol_ratio", "htf_trend",
-                                         "rs_vs_nifty_pct", "risk_mult")},
+                                         "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
+        "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }

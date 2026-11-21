@@ -141,6 +141,10 @@ class ScanFeedsJournalTests(IsolatedStateTestCase, unittest.TestCase):
         stock[-1].update(open=closes[-2], low=closes[-2] * 0.997, high=closes[-1] * 1.001)
         for token, bars in ((256265, nifty), (501, stock)):
             save_candles(token, "day", [{**b, "date": b["ts"]} for b in bars])
+        # Hourly spot bars for the 4H confirmation timeframe (rising, so it agrees).
+        from tests.test_fno_scan import hourly_bars
+        save_candles(501, "60minute", hourly_bars([300 * 1.001 ** i for i in range(300)],
+                                                  last_day=date(2026, 11, 20), last_start="15:15"))
         result = run_scan(now=datetime(2026, 11, 20, 15, 50), results_fetch=lambda s: date(2027, 1, 25))
         self.assertEqual(result["status"], "ok", result)
         records = list_records("segment = 'cash_swing'")
@@ -148,6 +152,11 @@ class ScanFeedsJournalTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertGreater(len(records), 0)
         for rec in records:
             self.assertIn(rec["decision"], ("soft_rejected", "below_score", "not_selected", "shortlisted"))
+            self.assertTrue(rec["rule_version"].startswith("v1-"))
+            names = [st["stage"] for st in rec["stages"]]
+            self.assertEqual(names[:2], ["eligibility", "regime"])
+            self.assertEqual(names[-2:], ["ai_panel", "final_approval"])
+            self.assertTrue(all("at" in st and "decision" in st for st in rec["stages"]))
             self.assertEqual(rec["entry_date"], "2026-11-23")
             self.assertEqual(rec["time_stop_date"], "2026-12-02")
 

@@ -14,14 +14,19 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
+from backend.decision.config import get_config
 from backend.journal.simulate import delivery_charges, futures_charges, simulate
 from backend.journal.store import list_records, update_record
 from backend.marketdata.candles import get_candles
 from tradingagents.utils.market_calendar import is_trading_day, session_windows
 
-RISK_PER_TRADE = 10_000          # ₹ — 1% of ₹10L; notional sizing until the risk engine exists
-CASH_SWING_MAX_VALUE = 250_000   # ₹2.5L per stock
-ENTRY_WINDOW_END = "11:00"
+def _risk_per_trade() -> float:
+    g = get_config().global_
+    return g.capital * g.risk.risk_per_trade_pct / 100
+
+
+def _cash_swing_max_value() -> float:
+    return float((get_config().instrument("cash_swing").model_extra or {}).get("max_position_value", 250_000))
 
 
 def _trading_days(first: date, last: date) -> list[str]:
@@ -89,9 +94,9 @@ def _size(rec: dict, fill: float, risk: float) -> tuple[int, float]:
     """(quantity, value per point). Cash: shares. Futures/MCX: lots × multiplier."""
     extra = rec.get("extra") or {}
     if rec["segment"] == "cash_swing":
-        return max(0, math.floor(min(RISK_PER_TRADE / risk, CASH_SWING_MAX_VALUE / fill))), 1.0
+        return max(0, math.floor(min(_risk_per_trade() / risk, _cash_swing_max_value() / fill))), 1.0
     per_lot = float(extra.get("value_per_point") or 1)
-    lots = max(0, math.floor(RISK_PER_TRADE / (risk * per_lot)))
+    lots = max(0, math.floor(_risk_per_trade() / (risk * per_lot)))
     return lots, per_lot
 
 
@@ -104,7 +109,9 @@ def track_record(rec: dict) -> dict:
         return {}
     result = simulate(direction=rec["direction"], entry=rec["entry"], stop=rec["stop"], target=rec["target"],
                       atr=rec.get("atr"), bars=bars, fill_until=rec["fill_until"],
-                      time_stop_date=rec["time_stop_date"])
+                      time_stop_date=rec["time_stop_date"],
+                      trail_start_r=get_config().global_.trailing_shadow.start_r,
+                      trail_atr=get_config().global_.trailing_shadow.trail_atr)
     status = result["status"]
     if status == "pending":
         return {}

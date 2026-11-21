@@ -68,6 +68,15 @@ def hourly_run(group: Literal["nse", "mcx"]):
     return run_hourly_scan(group, force=True)
 
 
+@router.get("/api/decision-engine/config")
+def decision_config():
+    """The active decision-engine configuration (read-only) and its rule version."""
+    from backend.decision.config import config_path, get_config
+    cfg = get_config()
+    return {"rule_version": cfg.rule_version, "path": config_path().name,
+            "config": cfg.model_dump(by_alias=True, exclude={"rule_version"})}
+
+
 @router.get("/api/market-calendar/status")
 def calendar_status():
     return {

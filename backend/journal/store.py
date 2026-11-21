@@ -18,7 +18,7 @@ from typing import Any
 
 from backend.db import get_db
 
-JSON_FIELDS = ("factors", "soft_checks", "panel", "trail", "extra")
+JSON_FIELDS = ("factors", "soft_checks", "panel", "trail", "extra", "stages")
 
 
 def _migrate(conn) -> None:
@@ -89,6 +89,8 @@ def ensure_journal_table() -> None:
                 pnl_rupees REAL,
                 trail TEXT,
                 extra TEXT,
+                stages TEXT,
+                rule_version TEXT,
                 updated_at TEXT,
                 UNIQUE (segment, symbol, signal_ts, setup, direction)
             );
@@ -96,13 +98,17 @@ def ensure_journal_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_journal_signal ON trade_journal (segment, signal_date);
         """)
         _copy_v1(conn)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(trade_journal)")]
+        for col in ("stages", "rule_version"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE trade_journal ADD COLUMN {col} TEXT")
 
 
 def add_records(rows: list[dict]) -> int:
     ensure_journal_table()
     cols = ("segment", "symbol", "instrument_token", "exchange", "signal_date", "signal_ts", "setup", "direction", "regime",
             "score", "factors", "soft_checks", "decision", "reject_reason", "entry", "stop", "target", "rr", "atr",
-            "entry_date", "fill_until", "time_stop_date", "extra")
+            "entry_date", "fill_until", "time_stop_date", "extra", "stages", "rule_version")
     values = []
     for r in rows:
         r = {**r, "signal_ts": r.get("signal_ts") or f"{r['signal_date']}T15:30:00"}
