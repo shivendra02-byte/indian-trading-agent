@@ -279,7 +279,8 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         candidates = evaluate(hourly, htf_bars, regime["regime"], directions=tuple(icfg.directions),
                               is_stock=seg == "stock_futures", rs_override=rs, oi=oi,
                               confirmations=confirmations, context=context_bars,
-                              min_primary_bars=icfg.min_primary_bars)
+                              min_primary_bars=icfg.min_primary_bars,
+                              stock_regime=current_regime(daily)["regime"] if daily else None)
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]

@@ -246,7 +246,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
         eligibility = stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1))
         candidates = evaluate(bars, htf, regime["regime"], directions=tuple(inst.directions),
                               is_stock=True, benchmark=nifty_bars, max_stop_pct=cfg["max_stop_pct"],
-                              confirmations=confirmations, min_primary_bars=cfg["min_bars"])
+                              confirmations=confirmations, min_primary_bars=cfg["min_bars"],
+                              stock_regime=current_regime(bars)["regime"])
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
         trackable = [c for c in candidates if c.get("trackable")]

@@ -52,6 +52,19 @@ def label_series(bars: Sequence[dict]) -> list[str | None]:
     return labels
 
 
+def regime_at(labels: Sequence[str | None], i: int) -> str:
+    """Regime on bar ``i`` from precomputed ``label_series`` labels, with the same
+    instability check as ``current_regime`` (backtests: one label pass per stock)."""
+    cfg = _cfg()
+    if i + 1 < cfg.min_daily_bars:
+        return UNSTABLE
+    recent = [l for l in labels[max(0, i - cfg.instability_window + 1):i + 1] if l is not None]
+    if not recent:
+        return UNSTABLE
+    changes = sum(1 for a, b in zip(recent, recent[1:]) if a != b)
+    return UNSTABLE if changes >= cfg.instability_changes else recent[-1]
+
+
 def current_regime(bars: Sequence[dict]) -> dict:
     """Regime for the last bar, with the instability check. Fails closed (UNSTABLE)
     when there isn't enough history."""
