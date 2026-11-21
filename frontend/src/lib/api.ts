@@ -174,6 +174,7 @@ export const setPauseState = (paused: boolean, reason?: string) =>
   fetchAPI(`/api/system/pause`, { method: "POST", body: JSON.stringify({ paused, reason }) });
 export const getMarketCalendarStatus = () => fetchAPI(`/api/market-calendar/status`);
 export const getMarketDataStatus = () => fetchAPI(`/api/marketdata/status`);
+export const getSchedulerStatus = () => fetchAPI(`/api/scheduler/status`);
 
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);

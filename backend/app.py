@@ -29,7 +29,11 @@ async def lifespan(app: FastAPI):
     load_api_keys_into_env()
     # Apply saved LLM config to DEFAULT_CONFIG
     apply_llm_config_to_default()
+    from backend.scheduler import scheduler, scheduler_enabled
+    if scheduler_enabled():
+        scheduler.start()
     yield
+    scheduler.stop()
 
 
 app = FastAPI(

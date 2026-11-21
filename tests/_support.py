@@ -40,12 +40,14 @@ class IsolatedStateTestCase:
                 "KITE_ACCESS_TOKEN",
                 "KITE_ACCESS_TOKEN_DATE",
                 "CORS_ORIGINS",
+                "TRADINGAGENTS_SCHEDULER",
             )
         }
         self.home = tempfile.TemporaryDirectory(prefix="tradingagents-test-home-")
         self.db_path = os.path.join(self.home.name, "trading_agent.db")
         os.environ["TRADINGAGENTS_HOME"] = self.home.name
         os.environ["TRADINGAGENTS_DB_PATH"] = self.db_path
+        os.environ["TRADINGAGENTS_SCHEDULER"] = "off"
         os.environ.pop("KITE_API_KEY", None)
         os.environ.pop("KITE_API_SECRET", None)
         os.environ.pop("KITE_ACCESS_TOKEN", None)
@@ -107,6 +109,7 @@ def fresh_test_client() -> Iterator:
     """Create the application client after test auth configuration is present."""
 
     configure_local_auth_environment()
+    os.environ.setdefault("TRADINGAGENTS_SCHEDULER", "off")
     from fastapi.testclient import TestClient
     from backend.app import app
 

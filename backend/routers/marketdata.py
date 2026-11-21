@@ -35,6 +35,12 @@ def update_pause(data: PauseRequest):
     return set_paused(data.paused, data.reason)
 
 
+@router.get("/api/scheduler/status")
+def scheduler_status():
+    from backend.scheduler import scheduler
+    return scheduler.status()
+
+
 @router.get("/api/market-calendar/status")
 def calendar_status():
     return {
