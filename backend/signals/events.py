@@ -17,12 +17,15 @@ from typing import Callable
 from backend.db import get_db
 from tradingagents.utils.market_calendar import IST, is_trading_day
 
+VERIFIED_FROM = date(2024, 1, 1)
 VERIFIED_THROUGH = date(2027, 3, 31)
 
-# RBI MPC decision days (last day of each meeting).
-RBI_DECISIONS = [date(2026, 2, 6), date(2026, 4, 8), date(2026, 6, 5), date(2026, 8, 5),
+# RBI MPC decision days (last day of each meeting; RBI schedules and resolutions).
+RBI_DECISIONS = [date(2024, 2, 8), date(2024, 4, 5), date(2024, 6, 7), date(2024, 8, 8), date(2024, 10, 9),
+                 date(2024, 12, 6), date(2025, 2, 7), date(2025, 4, 9), date(2025, 6, 6), date(2025, 8, 6),
+                 date(2025, 10, 1), date(2025, 12, 5), date(2026, 2, 6), date(2026, 4, 8), date(2026, 6, 5), date(2026, 8, 5),
                  date(2026, 10, 7), date(2026, 12, 4), date(2027, 2, 5)]
-UNION_BUDGET = [date(2026, 2, 1), date(2027, 2, 1)]
+UNION_BUDGET = [date(2024, 2, 1), date(2024, 7, 23), date(2025, 2, 1), date(2026, 2, 1), date(2027, 2, 1)]
 # FOMC decisions land after the Indian close (~00:00 IST), so the Indian
 # market reacts the next day; these are the US decision dates.
 FOMC_DECISIONS = [date(2026, 1, 28), date(2026, 3, 18), date(2026, 4, 29), date(2026, 6, 17),
@@ -64,7 +67,8 @@ def market_events_between(first: date, last: date, kinds=("RBI", "BUDGET")) -> d
     if "FOMC" in kinds:
         events += [{"date": (d + timedelta(days=1)).isoformat(), "event": "US FOMC decision"}
                    for d in FOMC_DECISIONS if first <= d + timedelta(days=1) <= last]
-    return {"verified": last <= VERIFIED_THROUGH, "events": sorted(events, key=lambda e: e["date"])}
+    return {"verified": VERIFIED_FROM <= first and last <= VERIFIED_THROUGH,
+            "events": sorted(events, key=lambda e: e["date"])}
 
 
 # --- MCX event windows ----------------------------------------------------------------
