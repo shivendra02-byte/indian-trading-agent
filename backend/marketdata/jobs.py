@@ -156,3 +156,9 @@ def recent_runs(limit: int = 10) -> list[dict]:
             pass
         out.append(item)
     return out
+
+
+def history_backfill(client=None) -> dict:
+    """Download older daily/hourly spot history for backtests (Backtest page button)."""
+    from backend.backtest.data import backfill_for_backtests
+    return _run("history_backfill", lambda c: backfill_for_backtests(c), client)

@@ -80,7 +80,8 @@ def _context(bars: Sequence[dict], strategy: str = "pullback", intraday: bool | 
         "e50": ema(closes, st.ema_slow),
         "rsi": rsi(closes, st.rsi_period),
         "atr": atr(bars, st.atr_period),
-        "vol_ratio": volume_ratio(bars, st.lookback, intraday),
+        "vol_ratio": volume_ratio(bars, st.lookback,
+                                  intraday and _extra(st, "volume_reference", "same_slot") == "same_slot"),
         "swings": swing_points(bars, cfg.global_.geometry.swing_fractal_bars),
         "strategy": st,
     }

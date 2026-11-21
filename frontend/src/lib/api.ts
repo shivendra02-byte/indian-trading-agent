@@ -190,6 +190,19 @@ export const getLearningReport = (segment?: string) =>
   fetchAPI(`/api/journal/learning${segment ? `?segment=${encodeURIComponent(segment)}` : ""}`);
 export const trackJournal = () => fetchAPI(`/api/journal/track`, { method: "POST" });
 
+// Rule backtester
+export const getRuleSets = () => fetchAPI(`/api/rule-backtests/rule-sets`);
+export const listRuleBacktests = () => fetchAPI(`/api/rule-backtests`);
+export const getRuleBacktest = (id: number) => fetchAPI(`/api/rule-backtests/${id}`);
+export const startRuleBacktest = (data: {
+  segment: string;
+  rule_set: string;
+  start_date: string;
+  end_date: string;
+  max_symbols?: number;
+}) => fetchAPI(`/api/rule-backtests`, { method: "POST", body: JSON.stringify(data) });
+export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
