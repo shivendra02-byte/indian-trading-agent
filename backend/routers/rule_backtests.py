@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/rule-backtests", tags=["rule-backtests"])
 
 
 class RunRequest(BaseModel):
-    segment: Literal["cash_swing", "stock_futures_proxy"]
+    segment: Literal["cash_swing", "cup_handle", "stock_futures_proxy", "index_futures_proxy"]
     rule_set: str = Field(max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
     start_date: date
     end_date: date
@@ -29,12 +29,27 @@ def rule_sets():
     return {"rule_sets": sorted(available_rule_sets()), "segments": list(engine.SEGMENTS)}
 
 
+@router.get("/history")
+def history_progress():
+    """Progress of the history download (stocks done/total, candles saved, time left, failures)."""
+    from backend.backtest.data import progress_snapshot
+    return progress_snapshot()
+
+
 @router.post("/history")
 def download_history():
-    """Start the history download in the background; progress shows in /api/marketdata/status."""
+    """Start the history download in the background; poll GET /history for progress."""
+    from backend.backtest.data import PROGRESS
     if jobs._job_lock.locked():
         return {"status": "busy"}
-    threading.Thread(target=jobs.history_backfill, daemon=True, name="history-backfill").start()
+
+    def run():
+        result = jobs.history_backfill()
+        if result.get("status") in ("error", "skipped", "busy") and PROGRESS.get("status") not in ("done", "error"):
+            PROGRESS.update(status="error", message=result.get("reason") or "history download failed")
+
+    PROGRESS.update(status="starting", done=0, total=0, message=None, errors=[])
+    threading.Thread(target=run, daemon=True, name="history-backfill").start()
     return {"status": "started"}
 
 

@@ -7,11 +7,16 @@ permission matrix. ``evaluate()`` returns one candidate per (setup, direction)
 checked, each with ``valid``, ``trackable``, ``reject_reason``, the factor
 scores and a ``stages`` list — the structured, timestamped audit trail.
 
-Hard vs soft: structure, higher-timeframe agreement, confirmation timeframes,
-geometry and range reversal's sideways requirement are hard. Regime permission
-for pullback/breakout, the RSI turn and each strategy's volume multiplier are
-soft: the candidate is still constructed, scored and shadow-tracked so the
-learning engine can measure whether those filters help.
+Hard vs soft (``global.selection.mode``):
+* ``strict``: structure, higher-timeframe agreement, confirmation/context
+  timeframes, geometry and a setup's required regime are hard. Regime
+  permission, the RSI turn and the volume multiplier are soft: the candidate is
+  still constructed, scored and shadow-tracked, but marked invalid.
+* ``scored`` (two-stage): only setup structure and geometry (an identifiable
+  stop and at least the minimum R:R) reject here; the safety filters live in the
+  scans. Higher timeframe, confirmation/context timeframes and the required
+  regime subtract penalty points; regime permission, volume and RSI only change
+  the factor scores. Candidates stay valid and are ranked by score.
 """
 
 from __future__ import annotations
@@ -278,15 +283,15 @@ def _volume_oi_points(vol_ratio: float, oi_change_pct: float | None, price_chang
 
 
 def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit, is_stock, rs_points,
-          oi_change_pct=None, price_change=None) -> dict:
+          oi_change_pct=None, price_change=None, volume_available=True) -> dict:
     """Factor points on the reference scale, re-weighted by the configured weights.
-    Factors that don't apply (relative strength for non-stocks) are left out and
-    the score is scaled back to 100."""
+    Factors that don't apply (relative strength for non-stocks, volume for
+    indices) are left out and the score is scaled back to 100."""
     htf_aligned = htf * s
     raw = {
         "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup == "range_reversal" and htf_aligned == 0)) else 0,
         "setup_quality": min(25, 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus),
-        "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s),
+        "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s) if volume_available else None,
         "rr_stop": (10 if geo["rr"] >= 3 else 7 if geo["rr"] >= 2.5 else 5)
                    + (5 if geo["stop_atr"] <= 2 else 2 if geo["stop_atr"] <= 3 else 0),
         "regime_fit": regime_fit,
@@ -310,11 +315,17 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
              directions=("long", "short"), is_stock=True, benchmark: Sequence[dict] | None = None,
              max_stop_pct: float | None = None, rs_override: dict | None = None,
              oi: dict | None = None, confirmations: dict[str, Sequence[dict]] | None = None,
-             min_primary_bars: int = 60) -> list[dict]:
+             context: dict[str, Sequence[dict]] | None = None, min_primary_bars: int = 60,
+             volume_available: bool = True) -> list[dict]:
     """Check every setup for each direction.
 
     ``htf_bars``: the scored higher timeframe (must agree for pullback/breakout).
-    ``confirmations``: {timeframe: bars} that must not be against the trade (hard).
+    ``confirmations``: {timeframe: bars} that must not be against the trade
+    (too little data rejects everything).
+    ``context``: {timeframe: bars} that must not be against the trade either
+    (too little data counts as neutral).
+    ``volume_available=False`` (index spot data has no volume): volume is
+    recorded as not tested, never fails a check and is left out of the score.
     ``rs_override``: {"long": (points, diff), "short": ...} computed elsewhere.
     ``oi``: {"change_pct", "price_change"} for futures."""
     cfg = get_config()
@@ -327,6 +338,9 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
     missing = [tf for tf, t in confirm_trends.items() if t is None]
     if missing:
         return _reject_all(f"not enough {', '.join(missing)} bars for confirmation")
+    context_trends = {tf: htf_trend(b) or 0.0 for tf, b in (context or {}).items()}
+    sel = cfg.global_.selection
+    scored_mode = sel.mode == "scored"
     contexts = {name: _context(bars, name) for name in SETUPS}
     if any(c["atr"][-1] is None or c["e50"][-1] is None for c in contexts.values()):
         return _reject_all("indicators not ready")
@@ -346,24 +360,33 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             out.append(cand)
             # Stage 2: regime. A required regime (range reversal → SIDEWAYS) is hard;
             # otherwise the permission matrix is a soft check.
+            penalties: dict[str, float] = {}
             required = _extra(st, "requires_regime", None)
             if required and regime != required:
-                cand["reject_reason"] = f"{setup} requires a {required} regime (now {regime})"
-                stages.append(stage("regime", "fail", cand["reject_reason"]))
-                continue
+                why = f"{setup} requires a {required} regime (now {regime})"
+                if not scored_mode:
+                    cand["reject_reason"] = why
+                    stages.append(stage("regime", "fail", why))
+                    continue
+                penalties["required_regime"] = sel.required_regime_penalty
             permitted = bool(rule and direction in rule["directions"]
                              and not (rule.get("with_trend_only") and htf * s < 1))
             stages.append(stage("regime", "pass" if permitted else "soft_fail",
                                 "" if permitted else f"{setup} {direction} not allowed in {regime}"))
             if setup in ("pullback", "breakout") and htf * s <= 0:
-                cand["reject_reason"] = "higher-timeframe trend does not agree"
-                stages.append(stage("setup", "fail", cand["reject_reason"]))
-                continue
-            against = [tf for tf, t in confirm_trends.items() if t * s < 0]
+                if not scored_mode:
+                    cand["reject_reason"] = "higher-timeframe trend does not agree"
+                    stages.append(stage("setup", "fail", cand["reject_reason"]))
+                    continue
+                penalties["htf_against"] = sel.htf_against_penalty if htf * s < 0 else sel.htf_against_penalty / 2
+            against = [tf for tf, t in {**confirm_trends, **context_trends}.items() if t * s < 0]
             if against:
-                cand["reject_reason"] = f"{', '.join(against)} trend against the trade"
-                stages.append(stage("setup", "fail", cand["reject_reason"]))
-                continue
+                if not scored_mode:
+                    cand["reject_reason"] = f"{', '.join(against)} trend against the trade"
+                    stages.append(stage("setup", "fail", cand["reject_reason"]))
+                    continue
+                for tf in against:
+                    penalties[f"{tf}_against"] = sel.confirmation_against_penalty
             # Stage 3: setup detection.
             volume_needed = st.volume_multiplier
             if setup == "pullback":
@@ -387,6 +410,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
                 continue
             stages.append(stage("construction", "pass", entry=geo["entry"], stop=geo["stop"],
                                 target=geo["target"], rr=geo["rr"]))
+            if not volume_available and "volume" in soft:
+                soft["volume"] = None   # not tested
             soft_checks = {"regime": permitted, **soft}
             if oi is not None:  # recorded for learning; adds score points, never blocks
                 soft_checks["oi_buildup"] = bool((oi.get("change_pct") or 0) >= 1.0
@@ -399,18 +424,24 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             scored = score(setup=setup, s=s, htf=htf, quality_bonus=bonus,
                            close_pos=_close_position(bars[-1], s), vol_ratio=ctx["vol_ratio"], geo=geo,
                            regime_fit=regime_fit, is_stock=is_stock, rs_points=rs_points,
-                           oi_change_pct=(oi or {}).get("change_pct"), price_change=(oi or {}).get("price_change"))
-            failed = []
-            if not permitted:
-                failed.append(f"{setup} {direction} not allowed in {regime}")
-            if soft.get("volume") is False:
-                failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
-            if soft.get("rsi_turn") is False:
-                failed.append("RSI did not turn from its band")
+                           oi_change_pct=(oi or {}).get("change_pct"), price_change=(oi or {}).get("price_change"),
+                           volume_available=volume_available)
+            if penalties:
+                scored["score_before_penalties"] = scored["score"]
+                scored["score"] = round(max(0.0, scored["score"] - sum(penalties.values())), 1)
+                scored["penalties"] = penalties
+            failed = []   # soft checks that make the candidate invalid (strict mode only)
+            if not scored_mode:
+                if not permitted:
+                    failed.append(f"{setup} {direction} not allowed in {regime}")
+                if soft.get("volume") is False:
+                    failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
+                if soft.get("rsi_turn") is False:
+                    failed.append("RSI did not turn from its band")
             stages.append(stage("scoring", "pass" if scored["score"] >= min_shortlist else "below_threshold",
-                                score=scored["score"]))
+                                score=scored["score"], **({"penalties": penalties} if penalties else {})))
             cand.update(scored)
-            cand.update({"valid": not failed, "trackable": True, "soft_checks": soft_checks,
+            cand.update({"valid": not failed, "trackable": True, "soft_checks": soft_checks, "context": context_trends,
                          "reject_reason": "; ".join(failed) or None,
                          "risk_mult": (rule or {}).get("risk_mult", 1.0), "rs_vs_nifty_pct": rs_diff,
                          "atr": round(ctx["atr"][-1], 4)})

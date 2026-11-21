@@ -70,7 +70,7 @@ def snapshot_today(force: bool = False) -> dict:
              caution_count, favorable_count, caution_flags, favorable_flags,
              position_size_pct, max_trades_today, min_conviction,
              nifty_close, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
             (
                 today,
                 verdict_data.get("verdict"),

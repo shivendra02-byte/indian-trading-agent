@@ -5,6 +5,7 @@ import { Download, Loader2, Play, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   downloadBacktestHistory,
+  getHistoryProgress,
   getRuleBacktest,
   getRuleSets,
   listRuleBacktests,
@@ -47,15 +48,75 @@ type Summary = {
   by_setup: Record<string, Stats>;
   by_regime: Record<string, Stats>;
   by_exit: Record<string, Stats>;
+  by_setup_regime?: Record<string, Stats>;
+  by_data?: Record<string, Stats>;
+  untested?: string[];
   soft_checks: Record<string, { passed: Stats; failed: Stats }>;
   limitations: string[];
 };
 type RunDetail = RunRow & { summary: Summary | null };
+type HistoryProgress = {
+  status: "idle" | "starting" | "running" | "done" | "error";
+  done?: number;
+  total?: number;
+  current?: string | null;
+  candles_saved?: number;
+  errors?: string[];
+  message?: string | null;
+  eta_s?: number | null;
+  finished_at?: string | null;
+};
 
 const SEGMENT_LABEL: Record<string, string> = {
   cash_swing: "Cash swing (daily)",
+  cup_handle: "Cup & handle (daily, ~8 weeks)",
   stock_futures_proxy: "Stock futures (1H, spot proxy)",
+  index_futures_proxy: "Index futures (1H, NIFTY/BANKNIFTY spot proxy)",
 };
+
+function formatEta(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "";
+  if (seconds < 60) return `about ${seconds}s left`;
+  return `about ${Math.round(seconds / 60)} min left`;
+}
+
+function HistoryBar({ p }: { p: HistoryProgress }) {
+  if (p.status === "idle") return null;
+  const total = p.total ?? 0;
+  const done = p.done ?? 0;
+  const pctDone = total ? Math.round((100 * done) / total) : 0;
+  return (
+    <Card>
+      <CardContent className="space-y-2 pt-6 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">History download</span>
+          {p.status === "running" || p.status === "starting" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : null}
+          <span className={p.status === "error" ? "text-red-600" : p.status === "done" ? "text-emerald-600" : "text-muted-foreground"}>
+            {p.status === "starting" && "starting…"}
+            {p.status === "running" && `${done} / ${total} instruments${p.current ? ` · ${p.current}` : ""}`}
+            {p.status === "done" && `finished · ${total} instruments`}
+            {p.status === "error" && `failed: ${p.message ?? "unknown error"}`}
+          </span>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {(p.candles_saved ?? 0).toLocaleString("en-IN")} candles saved
+            {p.status === "running" && p.eta_s ? ` · ${formatEta(p.eta_s)}` : ""}
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded bg-muted">
+          <div
+            className={`h-full ${p.status === "error" ? "bg-red-600" : "bg-emerald-600"}`}
+            style={{ width: `${p.status === "done" ? 100 : pctDone}%` }}
+          />
+        </div>
+        {p.errors && p.errors.length > 0 && (
+          <p className="text-xs text-amber-600">Failed: {p.errors.join(", ")}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 const GROUP_LABEL: Record<string, string> = {
   shortlisted: "Shortlisted (top picks per scan)",
   passed_all_rules: "Passed all rules",
@@ -140,6 +201,21 @@ function RunDetailCard({ run }: { run: RunDetail }) {
           <p className="mb-1 text-xs font-medium">By regime</p>
           <StatsTable rows={Object.entries(s.by_regime)} />
         </div>
+        {s.by_setup_regime && (
+          <div>
+            <p className="mb-1 text-xs font-medium">By setup and regime</p>
+            <StatsTable rows={Object.entries(s.by_setup_regime)} />
+          </div>
+        )}
+        {s.by_data && Object.keys(s.by_data).length > 1 && (
+          <div>
+            <p className="mb-1 text-xs font-medium">By data available</p>
+            <StatsTable rows={Object.entries(s.by_data)} />
+          </div>
+        )}
+        {s.untested && s.untested.length > 0 && (
+          <p className="text-xs text-amber-600">Not tested for some or all trades: {s.untested.join(", ")}</p>
+        )}
         <div>
           <p className="mb-1 text-xs font-medium">Soft checks: passed vs failed</p>
           <StatsTable
@@ -174,6 +250,24 @@ export default function RuleBacktestsPage() {
   const [end, setEnd] = useState(isoDaysAgo(10));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<HistoryProgress>({ status: "idle" });
+
+  const fetchHistory = useCallback(() => {
+    getHistoryProgress()
+      .then((p) => setHistory(p as HistoryProgress))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const downloading = history.status === "running" || history.status === "starting";
+  useEffect(() => {
+    if (!downloading) return;
+    const t = setInterval(fetchHistory, 3000);
+    return () => clearInterval(t);
+  }, [downloading, fetchHistory]);
 
   const fetchData = useCallback(() => {
     Promise.all([getRuleSets(), listRuleBacktests()])
@@ -214,7 +308,12 @@ export default function RuleBacktestsPage() {
   const download = async () => {
     try {
       const r = (await downloadBacktestHistory()) as { status: string };
-      toast.message(r.status === "busy" ? "Another data job is running; try again shortly" : "History download started (5–10 min the first time)");
+      if (r.status === "busy") {
+        toast.message("Another data job is running; try again shortly");
+      } else {
+        setHistory({ status: "starting" });
+        fetchHistory();
+      }
     } catch (e) {
       toast.error(errorMessage(e, "Could not start the download"));
     }
@@ -242,13 +341,15 @@ export default function RuleBacktestsPage() {
             Replays a rule set over stored history and compares versions. Results only inform decisions; rules change only through a reviewed config PR.
           </p>
         </div>
-        <Button className="ml-auto" variant="outline" size="sm" onClick={download}>
+        <Button className="ml-auto" variant="outline" size="sm" onClick={download} disabled={downloading}>
           <Download className="mr-1 h-4 w-4" /> Download history
         </Button>
         <Button variant="outline" size="sm" onClick={() => { setLoading(true); fetchData(); }} disabled={loading}>
           <RefreshCw className="mr-1 h-4 w-4" /> Refresh
         </Button>
       </div>
+
+      <HistoryBar p={history} />
 
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 pt-6 text-sm">

@@ -6,6 +6,7 @@ import unittest
 from datetime import date, datetime, timedelta
 
 from tests._support import IsolatedStateTestCase, csrf_headers, fresh_test_client, login
+from datetime import timedelta  # noqa: F811
 from tests.test_signals import make_bars
 from tradingagents.utils.market_calendar import is_trading_day
 
@@ -194,6 +195,82 @@ class EndToEndTests(IsolatedStateTestCase, unittest.TestCase):
             self.assertEqual(bad.status_code, 400)
             self.assertEqual(client.get("/api/rule-backtests").json()["runs"], [])
             self.assertEqual(client.get("/api/rule-backtests/99").status_code, 404)
+            self.assertEqual(client.get("/api/rule-backtests/history").json()["status"], "idle")
+            self.assertIn("cup_handle", sets["segments"])
+
+
+class IndexAndDailyOnlyTests(EndToEndTests):
+    SEED = 17
+
+    test_futures_proxy_runs_both_rule_sets_without_look_ahead = None
+    test_routes = None
+
+    def test_index_futures_without_volume(self):
+        from backend.marketdata.candles import save_candles
+        save_candles(256265, "60minute", hourly_series(date(2025, 11, 3), date(2026, 11, 20), start=20000, seed=9,
+                                                      volume=0))
+        summary, run = self._run("index_futures_proxy", "current")
+        self.assertEqual(run["status"], "done", run.get("progress"))
+        self.assertIn("volume", " ".join(summary["limitations"]))
+        for t in run["trades"]:
+            self.assertEqual(t["symbol"], "NIFTY")
+            self.assertEqual(t["untested"], ["volume", "oi"])
+            self.assertIsNone((t["soft_checks"] or {}).get("volume"))
+
+    def test_cash_swing_uses_daily_bars_before_hourly_history(self):
+        from backend.backtest import engine
+        from backend.decision.config import available_rule_sets
+        engine.ensure_tables()
+        with self.db.get_db() as conn:
+            run_id = conn.execute("INSERT INTO rule_backtests (segment, rule_set, start_date, end_date, status) "
+                                  "VALUES ('cash_swing', 'two_stage', '2025-08-15', '2026-10-30', 'running')").lastrowid
+        summary = engine.run_backtest(run_id, "cash_swing", available_rule_sets()["two_stage"],
+                                      date(2025, 8, 15), date(2026, 10, 30))
+        trades = engine.get_run(run_id, with_trades=True)["trades"]
+        self.assertIn("by_setup_regime", summary)
+        self.assertTrue(trades)
+        for t in trades:
+            if t["data"] == "daily_only":
+                self.assertLess(t["signal_ts"], "2025-12-15")
+            if t["signal_ts"] < "2025-11-03":
+                self.assertEqual(t["data"], "daily_only")
+                self.assertEqual(t["untested"], ["4h"])
+
+
+class CupHandleBacktestTests(IsolatedStateTestCase, unittest.TestCase):
+    def test_cup_handle_backtest_finds_the_breakout(self):
+        from backend.backtest import engine
+        from backend.decision.config import available_rule_sets
+        from backend.marketdata import ensure_marketdata_tables
+        from backend.marketdata.candles import save_candles
+        from tests.test_two_stage_and_cup import cup_bars, flat_nifty
+        ensure_marketdata_tables()
+        with self.db.get_db() as conn:
+            conn.executemany("INSERT INTO instruments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                (256265, "NSE", "INDICES", "NIFTY 50", "NIFTY 50", "EQ", None, 0, 0, 0, "2026-11-20"),
+                (501, "NSE", "NSE", "CUPCO", "CUPCO", "EQ", None, 0, 1, 0.05, "2026-11-20"),
+                (601, "NFO", "NFO-FUT", "CUPCO99DECFUT", "CUPCO", "FUT", "2099-12-31", 0, 250, 0.05, "2026-11-20")])
+        bars = [{**b, "volume": b["volume"] * 10} for b in cup_bars(end=date(2026, 9, 1))]
+        after, d, price = [], date(2026, 9, 2), bars[-1]["close"]
+        while d <= date(2026, 11, 20):
+            if is_trading_day(d):
+                price *= 1.006   # reaches +20% well inside the 8-week hold
+                after.append({"ts": f"{d.isoformat()}T00:00:00", "open": price * 0.999, "high": price * 1.003,
+                              "low": price * 0.997, "close": price, "volume": 10_000_000})
+            d += timedelta(days=1)
+        bars += after
+        save_candles(501, "day", [{**b, "date": b["ts"]} for b in bars])
+        save_candles(256265, "day", [{**b, "date": b["ts"]} for b in flat_nifty(bars)])
+        engine.ensure_tables()
+        with self.db.get_db() as conn:
+            run_id = conn.execute("INSERT INTO rule_backtests (segment, rule_set, start_date, end_date, status) "
+                                  "VALUES ('cup_handle', 'current', '2026-08-01', '2026-11-20', 'running')").lastrowid
+        summary = engine.run_backtest(run_id, "cup_handle", available_rule_sets()["current"],
+                                      date(2026, 8, 1), date(2026, 11, 20))
+        trades = engine.get_run(run_id, with_trades=True)["trades"]
+        self.assertEqual([t["signal_ts"] for t in trades], ["2026-09-01"], summary)
+        self.assertEqual(trades[0]["data"], "daily_only")
+        self.assertEqual((trades[0]["status"], trades[0]["exit_reason"]), ("closed", "target"), trades[0])
 
 
 class CashSwingEndToEndTests(EndToEndTests):

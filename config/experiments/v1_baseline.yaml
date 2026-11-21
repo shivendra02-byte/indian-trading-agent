@@ -212,6 +212,38 @@ instruments:
     max_new_trades_day: 2
     max_open_risk_pct: 2.0
     min_primary_bars: 250
+  cup_handle:
+    enabled: true
+    primary_tf: day
+    directions:
+    - long
+    shortlist_per_scan: 2
+    hold_trading_days: 40
+    min_primary_bars: 300
+    entry_window:
+    - 09:15
+    - '15:15'
+    stop_pct: 8.0
+    target_pct: 20.0
+    event_block_days: 5
+    min_turnover_cr: 50
+    prior_uptrend_pct: 30
+    prior_lookback_days: 130
+    cup_min_weeks: 7
+    cup_max_weeks: 65
+    cup_min_depth_pct: 12
+    cup_max_depth_pct: 33
+    rounded_bottom_min_fraction: 0.3
+    rim_tolerance_pct: 10
+    handle_min_days: 5
+    handle_max_days: 25
+    handle_max_depth_pct: 12
+    breakout_volume_ratio: 1.5
+    volume_avg_days: 50
+    max_extended_pct: 5
+    rs_lookback_days: 126
+    max_position_value: 200000
+    max_open_positions: 3
 strategies:
   pullback:
     ema_fast: 20

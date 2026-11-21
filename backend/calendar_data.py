@@ -148,7 +148,7 @@ def _ensure_table():
                 event_date TEXT NOT NULL,
                 event_type TEXT DEFAULT 'earnings',
                 description TEXT,
-                fetched_at TEXT DEFAULT (datetime('now')),
+                fetched_at TEXT DEFAULT (datetime('now', 'localtime')),
                 PRIMARY KEY (ticker, event_date, event_type)
             )
         """)
@@ -209,7 +209,7 @@ def refresh_earnings_calendar(tickers: list[str]) -> dict:
                 conn.execute(
                     """INSERT OR REPLACE INTO earnings_calendar
                     (ticker, event_date, event_type, description, fetched_at)
-                    VALUES (?, ?, ?, ?, datetime('now'))""",
+                    VALUES (?, ?, ?, ?, datetime('now', 'localtime'))""",
                     (e["ticker"], e["event_date"], e["event_type"], e["description"]),
                 )
             except Exception:
@@ -263,7 +263,7 @@ def get_next_earnings_date(ticker: str) -> Optional[str]:
             conn.execute(
                 """INSERT OR REPLACE INTO earnings_calendar
                 (ticker, event_date, event_type, description, fetched_at)
-                VALUES (?, ?, ?, ?, datetime('now'))""",
+                VALUES (?, ?, ?, ?, datetime('now', 'localtime'))""",
                 (result["ticker"], result["event_date"], result["event_type"], result["description"]),
             )
         return result["event_date"]

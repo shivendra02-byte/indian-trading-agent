@@ -19,6 +19,25 @@ from tradingagents.utils.market_calendar import IST, NSE
 HISTORY_DAILY_YEARS = 3
 HISTORY_HOURLY_MONTHS = 12
 
+# Live progress of the history download, read by GET /api/rule-backtests/history.
+PROGRESS: dict = {"status": "idle"}
+
+
+def _set_progress(**fields) -> None:
+    PROGRESS.update(fields)
+
+
+def progress_snapshot() -> dict:
+    """Progress with elapsed time and a rough time left."""
+    out = dict(PROGRESS)
+    started = out.get("started_at")
+    if started and out.get("status") == "running":
+        elapsed = (datetime.now(IST).replace(tzinfo=None) - datetime.fromisoformat(started)).total_seconds()
+        out["elapsed_s"] = int(elapsed)
+        done, total = out.get("done") or 0, out.get("total") or 0
+        out["eta_s"] = int(elapsed / done * (total - done)) if done and total else None
+    return out
+
 
 def first_stored(token: int, interval: str) -> datetime | None:
     with get_db() as conn:
@@ -56,20 +75,32 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
     daily_start = now - timedelta(days=int(daily_years * 365))
     hourly_start = now - timedelta(days=hourly_months * 31)
     tokens = []
-    nifty = spot_instrument("NIFTY")
-    if nifty:
-        tokens.append(("NIFTY", nifty["instrument_token"]))
+    for index in ("NIFTY", "BANKNIFTY"):          # BANKNIFTY for the index futures backtest
+        inst = spot_instrument(index)
+        if inst:
+            tokens.append((index, inst["instrument_token"]))
     tokens += [(s["symbol"], s["spot_token"]) for s in fno_universe() if s["spot_token"]]
     saved, errors = 0, []
-    for i, (name, token) in enumerate(tokens, 1):
-        try:
-            saved += backfill_series(client, token, "day", daily_start, now)
-            saved += backfill_series(client, token, "60minute", hourly_start, now)
-        except Exception as exc:
-            from backend.brokers.kite import KiteAuthExpired, _is_auth_error
-            if _is_auth_error(exc):
-                raise KiteAuthExpired("Kite session expired. Please connect Kite again.") from exc
-            errors.append(f"{name}: {type(exc).__name__}")
-        if progress:
-            progress(f"history {i}/{len(tokens)}")
+    _set_progress(status="running", started_at=now.isoformat(timespec="seconds"), finished_at=None,
+                  done=0, total=len(tokens), current=None, candles_saved=0, errors=[], message=None)
+    try:
+        for i, (name, token) in enumerate(tokens, 1):
+            _set_progress(current=name)
+            try:
+                saved += backfill_series(client, token, "day", daily_start, now)
+                saved += backfill_series(client, token, "60minute", hourly_start, now)
+            except Exception as exc:
+                from backend.brokers.kite import KiteAuthExpired, _is_auth_error
+                if _is_auth_error(exc):
+                    raise KiteAuthExpired("Kite session expired. Please connect Kite again.") from exc
+                errors.append(f"{name}: {type(exc).__name__}")
+            _set_progress(done=i, candles_saved=saved, errors=errors[-20:])
+            if progress:
+                progress(f"history {i}/{len(tokens)}")
+    except Exception as exc:
+        _set_progress(status="error", message=str(exc)[:200],
+                      finished_at=datetime.now(IST).replace(tzinfo=None).isoformat(timespec="seconds"))
+        raise
+    _set_progress(status="done", current=None,
+                  finished_at=datetime.now(IST).replace(tzinfo=None).isoformat(timespec="seconds"))
     return {"series": len(tokens), "candles_saved": saved, "errors": errors[:20]}

@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/utils";
 
-type Factors = {
-  htf_trend: number;
-  setup_quality: number;
-  volume_oi: number;
-  rr_stop: number;
-  regime_fit: number;
-  relative_strength: number | null;
+type Factors = Record<string, number | null>;
+type Pattern = {
+  pivot: number;
+  cup_weeks: number;
+  cup_depth_pct: number;
+  handle_days: number;
+  handle_depth_pct: number;
 };
 type Candidate = {
   id: number;
@@ -39,6 +39,8 @@ type Candidate = {
     tradingsymbol?: string;
     lots?: number;
     oi_change_pct?: number | null;
+    pattern?: Pattern | null;
+    penalties?: Record<string, number> | null;
   };
 };
 type ScanRun = {
@@ -63,14 +65,21 @@ const SETUP_LABEL: Record<string, string> = {
   pullback: "Trend pullback",
   breakout: "Volume breakout",
   range_reversal: "Range reversal",
+  cup_handle: "Cup and handle",
 };
-const FACTOR_LABEL: [keyof Factors, string, number][] = [
-  ["htf_trend", "Weekly trend", 25],
+const FACTOR_LABEL: [string, string, number][] = [
+  ["htf_trend", "Higher-timeframe trend", 25],
   ["setup_quality", "Setup quality", 25],
   ["volume_oi", "Volume", 15],
   ["rr_stop", "Reward:risk & stop", 15],
   ["regime_fit", "Regime fit", 10],
   ["relative_strength", "Strength vs NIFTY", 10],
+  // cup and handle
+  ["breakout_volume", "Breakout volume", 25],
+  ["handle_tightness", "Handle tightness", 20],
+  ["cup_depth", "Cup depth", 15],
+  ["handle_dry_up", "Handle volume dry-up", 10],
+  ["near_pivot", "Close near pivot", 10],
 ];
 
 function pct(a: number, b: number) {
@@ -100,7 +109,7 @@ function SetupCard({ c }: { c: Candidate }) {
         {c.factors && (
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
             {FACTOR_LABEL.map(([key, label, max]) =>
-              c.factors && c.factors[key] !== null ? (
+              c.factors && c.factors[key] !== null && c.factors[key] !== undefined ? (
                 <div key={key} className="flex justify-between">
                   <span className="text-muted-foreground">{label}</span>
                   <span>{c.factors[key]}/{max}</span>
@@ -111,7 +120,12 @@ function SetupCard({ c }: { c: Candidate }) {
         )}
         <p className="text-xs text-muted-foreground">
           {c.extra.tradingsymbol ? `${c.extra.tradingsymbol} · ${c.extra.lots} lot(s) · ` : ""}
-          {c.direction === "short" ? "Short · " : ""}Stop {c.extra.stop_atr} ATR · volume {c.extra.vol_ratio}×
+          {c.direction === "short" ? "Short · " : ""}
+          {c.extra.pattern
+            ? `Pivot ${c.extra.pattern.pivot} · cup ${c.extra.pattern.cup_weeks} wk, ${c.extra.pattern.cup_depth_pct}% deep · handle ${c.extra.pattern.handle_days} d, ${c.extra.pattern.handle_depth_pct}% deep · `
+            : c.extra.stop_atr !== undefined && c.extra.stop_atr !== null ? `Stop ${c.extra.stop_atr} ATR · ` : ""}
+          volume {c.extra.vol_ratio}×
+          {c.extra.penalties ? ` · penalties −${Object.values(c.extra.penalties).reduce((a, b) => a + b, 0)}` : ""}
           {c.extra.oi_change_pct !== undefined && c.extra.oi_change_pct !== null ? ` · OI ${c.extra.oi_change_pct}%` : ""}
           {c.extra.rs_vs_nifty_pct !== undefined && c.extra.rs_vs_nifty_pct !== null ? ` · vs NIFTY ${c.extra.rs_vs_nifty_pct}%` : ""}
           {c.extra.turnover_cr ? ` · turnover ₹${c.extra.turnover_cr} cr` : ""}

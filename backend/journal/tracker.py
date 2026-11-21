@@ -25,8 +25,12 @@ def _risk_per_trade() -> float:
     return g.capital * g.risk.risk_per_trade_pct / 100
 
 
-def _cash_swing_max_value() -> float:
-    return float((get_config().instrument("cash_swing").model_extra or {}).get("max_position_value", 250_000))
+CASH_SEGMENTS = ("cash_swing", "cup_handle")   # delivery trades: next-day hourly entry, then daily bars
+
+
+def _cash_max_value(segment: str = "cash_swing") -> float:
+    default = 250_000 if segment == "cash_swing" else 200_000
+    return float((get_config().instrument(segment).model_extra or {}).get("max_position_value", default))
 
 
 def _trading_days(first: date, last: date) -> list[str]:
@@ -48,7 +52,7 @@ def cash_swing_bars(token: int, entry_date: str, time_stop_date: str) -> tuple[l
         b["eod"] = False
     hourly[-1]["eod"] = hourly[-1]["ts"][11:16] >= "15:15"
     end = min(date.fromisoformat(time_stop_date), date.today())
-    daily = [b for b in get_candles(token, "day", limit=40)
+    daily = [b for b in get_candles(token, "day", limit=120)
              if entry_date < b["ts"][:10] <= time_stop_date]
     expected = _trading_days(date.fromisoformat(entry_date) + timedelta(days=1), end)
     have = [b["ts"][:10] for b in daily]
@@ -93,15 +97,15 @@ def _minutes(hhmm: str) -> int:
 def _size(rec: dict, fill: float, risk: float) -> tuple[int, float]:
     """(quantity, value per point). Cash: shares. Futures/MCX: lots × multiplier."""
     extra = rec.get("extra") or {}
-    if rec["segment"] == "cash_swing":
-        return max(0, math.floor(min(_risk_per_trade() / risk, _cash_swing_max_value() / fill))), 1.0
+    if rec["segment"] in CASH_SEGMENTS:
+        return max(0, math.floor(min(_risk_per_trade() / risk, _cash_max_value(rec["segment"]) / fill))), 1.0
     per_lot = float(extra.get("value_per_point") or 1)
     lots = max(0, math.floor(_risk_per_trade() / (risk * per_lot)))
     return lots, per_lot
 
 
 def track_record(rec: dict) -> dict:
-    if rec["segment"] == "cash_swing":
+    if rec["segment"] in CASH_SEGMENTS:
         bars, problem = cash_swing_bars(rec["instrument_token"], rec["entry_date"], rec["time_stop_date"])
     else:
         bars, problem = hourly_bars(rec)
@@ -131,7 +135,7 @@ def track_record(rec: dict) -> dict:
     buy, sell = (entry_value, exit_value) if s > 0 else (exit_value, entry_value)
     if not qty:
         charges = 0.0
-    elif rec["segment"] == "cash_swing":
+    elif rec["segment"] in CASH_SEGMENTS:
         charges = delivery_charges(buy, sell)
     else:
         charges = futures_charges(buy, sell, rec["exchange"])

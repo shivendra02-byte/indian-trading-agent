@@ -42,7 +42,7 @@ def _ensure_table():
                 dii_sell REAL,
                 dii_net REAL,
                 source TEXT,
-                fetched_at TEXT DEFAULT (datetime('now'))
+                fetched_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
 
@@ -205,7 +205,7 @@ def save_data(data: dict):
         conn.execute(
             """INSERT OR REPLACE INTO fii_dii_history
             (date, fii_buy, fii_sell, fii_net, dii_buy, dii_sell, dii_net, source, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
             (
                 data.get("date"),
                 data.get("fii_buy"),
