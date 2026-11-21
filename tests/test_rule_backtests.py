@@ -81,6 +81,20 @@ class RuleSetTests(unittest.TestCase):
             self.assertFalse(cfg.global_.system.live_order_execution)
         self.assertEqual(get_config().rule_version, current)
 
+    def test_every_rule_set_loads_and_stays_paper_only(self):
+        from backend.decision.config import available_rule_sets, get_config, use_config
+        for name, path in available_rule_sets().items():
+            with self.subTest(rule_set=name), use_config(path):
+                cfg = get_config()
+                self.assertTrue(cfg.global_.system.paper_trading_only)
+                self.assertFalse(cfg.global_.system.live_order_execution)
+
+    def test_fixed_2r_targets_exactly_two_r(self):
+        from backend.decision.config import available_rule_sets, get_config, use_config
+        with use_config(available_rule_sets()["fixed_2r"]):
+            g = get_config().global_.geometry
+            self.assertEqual((g.max_rr, g.no_level_rr), (2.0, 2.0))
+
     def test_summary_drawdown_and_groups(self):
         from backend.backtest.engine import max_drawdown_r, summarize
         rows = [{"pnl_r": r, "exit_ts": f"2026-01-0{i + 1}", "status": "closed", "decision": "passed",
