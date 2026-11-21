@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { toast } from "sonner";
-import { getMarketCalendarStatus, getPauseState, setPauseState } from "@/lib/api";
+import { getMarketCalendarStatus, getPauseState, getSchedulerStatus, setPauseState } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 
 type PauseState = { paused: boolean; since: string | null; reason: string | null };
@@ -14,6 +14,23 @@ type ExchangeStatus = {
   next_closure: { date: string; name: string | null; closed: string } | null;
 };
 type CalendarStatus = { exchanges: ExchangeStatus[] };
+type SchedulerStatus = {
+  enabled: boolean;
+  running: boolean;
+  waiting_for: string | null;
+  last_bar_synced: Record<string, string>;
+  last_results: Record<string, { status?: string }>;
+};
+
+function dataLine(s: SchedulerStatus): { text: string; warn: boolean } {
+  if (!s.enabled || !s.running) return { text: "Data scheduler off", warn: true };
+  if (s.waiting_for === "Kite login for today") return { text: "Waiting for today's Kite login", warn: true };
+  if (s.waiting_for) return { text: `Data: waiting (${s.waiting_for})`, warn: false };
+  const failed = Object.values(s.last_results).some((r) => r.status === "error");
+  const latest = Object.values(s.last_bar_synced).sort().at(-1);
+  if (failed) return { text: "Data: last sync had errors", warn: true };
+  return { text: latest ? `Data up to ${latest.slice(11, 16)}` : "Data: starting", warn: false };
+}
 
 const REFRESH_MS = 60_000;
 
@@ -21,6 +38,7 @@ const REFRESH_MS = 60_000;
 export function SystemControl() {
   const [pause, setPause] = useState<PauseState | null>(null);
   const [calendar, setCalendar] = useState<CalendarStatus | null>(null);
+  const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
   const fetchData = useCallback(() => {
@@ -30,6 +48,9 @@ export function SystemControl() {
     getMarketCalendarStatus()
       .then((data) => setCalendar(data as CalendarStatus))
       .catch(() => setCalendar(null));
+    getSchedulerStatus()
+      .then((data) => setScheduler(data as SchedulerStatus))
+      .catch(() => setScheduler(null));
   }, []);
 
   useEffect(() => {
@@ -83,6 +104,14 @@ export function SystemControl() {
               </span>
             </div>
           ))}
+          {scheduler && (() => {
+            const line = dataLine(scheduler);
+            return (
+              <p className={`text-[10px] ${line.warn ? "font-medium text-amber-600" : "text-muted-foreground"}`}>
+                {line.text}
+              </p>
+            );
+          })()}
           {calendar.exchanges.map((ex) =>
             ex.next_closure ? (
               <p key={`${ex.exchange}-next`} className="text-[10px] text-muted-foreground">
