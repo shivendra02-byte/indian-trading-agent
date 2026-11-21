@@ -161,4 +161,11 @@ def recent_runs(limit: int = 10) -> list[dict]:
 def history_backfill(client=None) -> dict:
     """Download older daily/hourly spot history for backtests (Backtest page button)."""
     from backend.backtest.data import backfill_for_backtests
-    return _run("history_backfill", lambda c: backfill_for_backtests(c), client)
+    from backend.marketdata.instruments import fno_universe
+
+    def body(c):
+        refreshed = None
+        if not fno_universe():  # first run (e.g. a weekend before any morning refresh)
+            refreshed = refresh_instruments(c)
+        return {**backfill_for_backtests(c), "instruments_refreshed": refreshed}
+    return _run("history_backfill", body, client)
