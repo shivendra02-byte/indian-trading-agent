@@ -54,6 +54,20 @@ def cash_swing_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/hourly/{group}")
+def hourly_latest(group: Literal["nse", "mcx"]):
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.fno import GROUPS
+    return latest_run(segment=GROUPS[group]) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/hourly/{group}/run")
+def hourly_run(group: Literal["nse", "mcx"]):
+    """Run the hourly scan now on the latest completed 1h bar."""
+    from backend.signals.fno import run_hourly_scan
+    return run_hourly_scan(group, force=True)
+
+
 @router.get("/api/market-calendar/status")
 def calendar_status():
     return {

@@ -50,6 +50,8 @@ def build_sync_plan(today: date | None = None) -> list[dict]:
             row = {"instrument_token": stock["spot_token"]}
             add(stock["symbol"], row, "60minute", NSE, 120)
             add(stock["symbol"], row, "day", NSE, 400)
+        if stock["future_token"]:  # traded contract for the 1h futures scan, with OI
+            add(f"{stock['symbol']} FUT", {"instrument_token": stock["future_token"]}, "60minute", NSE, 60, oi=True)
     for name in SCANNED_INDICES:
         spot = spot_instrument(name)
         add(name, spot, "60minute", NSE, 120)
@@ -97,11 +99,18 @@ def _run(job: str, body: Callable[[object], dict], client=None) -> dict:
 
 
 def morning_refresh(client=None) -> dict:
-    """Instrument master + F&O ban list. Run before 09:15 on trading days."""
+    """Instrument master + F&O ban list + results dates. Run before 09:15 on trading days."""
     def body(c):
         summary = refresh_instruments(c)
         ban = refresh_ban_list()
-        return {"instruments": summary, "ban_list": {k: v for k, v in ban.items() if k != "symbols"}}
+        try:
+            from backend.marketdata.instruments import fno_stock_names
+            from backend.signals.events import refresh_results
+            results = refresh_results(fno_stock_names())
+        except Exception as exc:  # results dates are re-checked later; never block the refresh
+            results = {"error": type(exc).__name__}
+        return {"instruments": summary, "ban_list": {k: v for k, v in ban.items() if k != "symbols"},
+                "results_dates": results}
     return _run("morning_refresh", body, client)
 
 

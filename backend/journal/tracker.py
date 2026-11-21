@@ -14,10 +14,10 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
-from backend.journal.simulate import delivery_charges, simulate
+from backend.journal.simulate import delivery_charges, futures_charges, simulate
 from backend.journal.store import list_records, update_record
 from backend.marketdata.candles import get_candles
-from tradingagents.utils.market_calendar import is_trading_day
+from tradingagents.utils.market_calendar import is_trading_day, session_windows
 
 RISK_PER_TRADE = 10_000          # ₹ — 1% of ₹10L; notional sizing until the risk engine exists
 CASH_SWING_MAX_VALUE = 250_000   # ₹2.5L per stock
@@ -53,12 +53,57 @@ def cash_swing_bars(token: int, entry_date: str, time_stop_date: str) -> tuple[l
     return hourly + daily, None
 
 
+def hourly_bars(rec: dict) -> tuple[list[dict], str | None]:
+    """60-minute bars of the traded contract after the signal bar, with ``eod`` on
+    each day's last bar. Days fully in the past must be complete."""
+    exchange = "MCX" if rec["exchange"] == "MCX" else "NSE"
+    bars = [b for b in get_candles(rec["instrument_token"], "60minute",
+                                   since=datetime.fromisoformat(rec["signal_ts"]))
+            if b["ts"] > rec["signal_ts"]]
+    if not bars:
+        return [], None
+    by_day: dict[str, list[dict]] = {}
+    for b in bars:
+        by_day.setdefault(b["ts"][:10], []).append(b)
+    problem = None
+    today = date.today().isoformat()
+    for day, day_bars in by_day.items():
+        windows = session_windows(exchange, date.fromisoformat(day))
+        close = windows[-1][1].strftime("%H:%M") if windows else "23:59"
+        last_end = day_bars[-1]["ts"][11:16]
+        for b in day_bars:
+            b["eod"] = False
+        # The last hourly bar of a session starts within the final hour before the close.
+        day_bars[-1]["eod"] = day < today or _minutes(last_end) + 60 >= _minutes(close)
+        if day < today and not day_bars[-1]["eod"]:
+            problem = f"incomplete hourly bars on {day}"
+    return bars, problem
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _size(rec: dict, fill: float, risk: float) -> tuple[int, float]:
+    """(quantity, value per point). Cash: shares. Futures/MCX: lots × multiplier."""
+    extra = rec.get("extra") or {}
+    if rec["segment"] == "cash_swing":
+        return max(0, math.floor(min(RISK_PER_TRADE / risk, CASH_SWING_MAX_VALUE / fill))), 1.0
+    per_lot = float(extra.get("value_per_point") or 1)
+    lots = max(0, math.floor(RISK_PER_TRADE / (risk * per_lot)))
+    return lots, per_lot
+
+
 def track_record(rec: dict) -> dict:
-    bars, problem = cash_swing_bars(rec["instrument_token"], rec["entry_date"], rec["time_stop_date"])
+    if rec["segment"] == "cash_swing":
+        bars, problem = cash_swing_bars(rec["instrument_token"], rec["entry_date"], rec["time_stop_date"])
+    else:
+        bars, problem = hourly_bars(rec)
     if not bars:
         return {}
     result = simulate(direction=rec["direction"], entry=rec["entry"], stop=rec["stop"], target=rec["target"],
-                      atr=rec.get("atr"), bars=bars, fill_until=f"{rec['entry_date']}T{ENTRY_WINDOW_END}",
+                      atr=rec.get("atr"), bars=bars, fill_until=rec["fill_until"],
                       time_stop_date=rec["time_stop_date"])
     status = result["status"]
     if status == "pending":
@@ -72,11 +117,18 @@ def track_record(rec: dict) -> dict:
         if problem:
             fields["extra"] = {**(rec.get("extra") or {}), "data_problem": problem}
         return fields
-    risk = result["risk_per_unit"]
-    qty = max(0, math.floor(min(RISK_PER_TRADE / risk, CASH_SWING_MAX_VALUE / result["fill_price"])))
-    buy, sell = qty * result["fill_price"], qty * result["exit_price"]
-    charges = delivery_charges(buy, sell) if qty else 0.0
-    gross = qty * (result["exit_price"] - result["fill_price"]) * (1 if rec["direction"] == "long" else -1)
+    s = 1 if rec["direction"] == "long" else -1
+    qty, per_point = _size(rec, result["fill_price"], result["risk_per_unit"])
+    entry_value = qty * per_point * result["fill_price"]
+    exit_value = qty * per_point * result["exit_price"]
+    buy, sell = (entry_value, exit_value) if s > 0 else (exit_value, entry_value)
+    if not qty:
+        charges = 0.0
+    elif rec["segment"] == "cash_swing":
+        charges = delivery_charges(buy, sell)
+    else:
+        charges = futures_charges(buy, sell, rec["exchange"])
+    gross = s * (exit_value - entry_value)
     fields.update({"track_status": "closed", "exit_ts": result["exit_ts"], "exit_price": result["exit_price"],
                    "exit_reason": result["exit_reason"], "pnl_r": result["pnl_r"], "qty": qty,
                    "charges": charges, "pnl_rupees": round(gross - charges, 2)})
@@ -84,9 +136,9 @@ def track_record(rec: dict) -> dict:
 
 
 def track_open_records() -> dict:
-    """Update every pending/open cash swing record. Returns counts."""
+    """Update every pending/open record (all segments). Returns counts."""
     counts = {"checked": 0, "filled": 0, "closed": 0, "no_fill": 0}
-    for rec in list_records("segment = 'cash_swing' AND track_status IN ('pending', 'open')", limit=5000):
+    for rec in list_records("track_status IN ('pending', 'open')", limit=5000):
         counts["checked"] += 1
         fields = track_record(rec)
         if not fields:

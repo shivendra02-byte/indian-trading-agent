@@ -13,6 +13,8 @@ Jobs:
   daily bars after each exchange's close.
 * ``scan:cash_swing`` — once per NSE trading day from 15:45, after today's
   daily candles are stored.
+* ``scan:nse_1h`` / ``scan:mcx_1h`` — after each completed 1h bar has been
+  synced (futures and MCX hourly scans; open journal records are tracked too).
 
 Nothing runs while the system is paused, on weekends/holidays, or before
 today's Kite login. Disable with ``TRADINGAGENTS_SCHEDULER=off``.
@@ -94,6 +96,12 @@ def due_jobs(now: datetime, state: dict) -> list[str]:
         key = f"candles:{exchange}:{interval}"
         if bar and (done.get(key) is None or done[key] < bar):
             jobs.append(key)
+    for exchange, key in ((NSE, "nse_1h"), (MCX, "mcx_1h")):
+        bar = latest_closed_bar(exchange, "60minute", now)
+        synced = done.get(f"candles:{exchange}:60minute")
+        if (bar and synced and synced >= bar and f"candles:{exchange}:60minute" not in jobs
+                and state.get("scans_done", {}).get(key) != bar):
+            jobs.append(f"scan:{key}")
     nse_close = latest_closed_bar(NSE, "day", now)
     day_synced = done.get("candles:NSE:day")
     if (nse_close and now.time() >= CASH_SWING_SCAN_AT and day_synced and day_synced >= nse_close
@@ -111,7 +119,7 @@ class MarketDataScheduler:
         self.last_tick: datetime | None = None
         self.last_results: dict[str, dict] = {}
         self.waiting_for: str | None = None
-        self.scans_done: dict[str, date] = {}
+        self.scans_done: dict[str, date | datetime] = {}
 
     # --- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -168,6 +176,12 @@ class MarketDataScheduler:
             if job == "morning_refresh":
                 self.last_morning_attempt = now
                 result = jobs.morning_refresh()
+            elif job in ("scan:nse_1h", "scan:mcx_1h"):
+                from backend.signals.fno import run_hourly_scan
+                key = job.split(":")[1]
+                exchange = NSE if key == "nse_1h" else MCX
+                result = run_hourly_scan("nse" if key == "nse_1h" else "mcx", now=now)
+                self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
             elif job == "scan:cash_swing":
                 from backend.signals.cash_swing import run_scan
                 result = run_scan(now=now)

@@ -56,7 +56,9 @@ class DueJobsTests(unittest.TestCase):
         done = {"candles:NSE:60minute": datetime(2026, 11, 23, 11, 15),
                 "candles:NSE:10minute": datetime(2026, 11, 23, 11, 15),
                 "candles:MCX:60minute": datetime(2026, 11, 23, 11, 0)}
-        self.assertEqual(due_jobs(now, state(done=done)), [])
+        self.assertEqual(due_jobs(now, state(done=done)), ["scan:nse_1h", "scan:mcx_1h"])
+        scans = {"nse_1h": datetime(2026, 11, 23, 11, 15), "mcx_1h": datetime(2026, 11, 23, 11, 0)}
+        self.assertEqual(due_jobs(now, state(done=done, scans_done=scans)), [])
 
     def test_mcx_only_day_runs_mcx_jobs(self):
         jobs = due_jobs(datetime(2026, 11, 24, 18, 3), state())
@@ -75,7 +77,8 @@ class SchedulerTickTests(IsolatedStateTestCase, unittest.TestCase):
              patch("backend.brokers.kite.get_kite_status", return_value={"connected_today": True}), \
              patch("backend.marketdata.instruments._today", return_value=date(2026, 11, 20)), \
              patch("backend.marketdata.candles.REQUEST_GAP_SECONDS", 0), \
-             patch("backend.marketdata.candles._time.sleep", lambda s: None):
+             patch("backend.marketdata.candles._time.sleep", lambda s: None), \
+             patch("backend.signals.events._yahoo_results_date", return_value=None):
             self.assertEqual(sched.tick(datetime(2026, 11, 20, 9, 0)), ["morning_refresh"])
             ran = sched.tick(datetime(2026, 11, 20, 12, 20))
         self.assertIn("candles:NSE:60minute", ran)

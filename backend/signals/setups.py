@@ -216,12 +216,23 @@ def _relative_strength_points(bars, benchmark, s) -> tuple[int, float | None]:
     return pts, round(diff, 2)
 
 
-def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit, is_stock, rs_points) -> dict:
+def _volume_oi_points(vol_ratio: float, oi_change_pct: float | None, price_change: float | None, s: int) -> int:
+    """Without OI (cash, spot): volume only, up to 15. With futures OI: volume up to 10,
+    plus 5 when OI rises with price in the trade direction (long/short build-up)."""
+    if oi_change_pct is None:
+        return 15 if vol_ratio >= 2 else 10 if vol_ratio >= 1.5 else 5 if vol_ratio >= 1.0 else 0
+    vol = 10 if vol_ratio >= 2 else 7 if vol_ratio >= 1.5 else 3 if vol_ratio >= 1.0 else 0
+    buildup = oi_change_pct >= 1.0 and price_change is not None and s * price_change > 0
+    return vol + (5 if buildup else 0)
+
+
+def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit, is_stock, rs_points,
+          oi_change_pct=None, price_change=None) -> dict:
     htf_aligned = htf * s
     factors = {
         "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup == "range_reversal" and htf_aligned == 0)) else 0,
         "setup_quality": 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus,
-        "volume_oi": 15 if vol_ratio >= 2 else 10 if vol_ratio >= 1.5 else 5 if vol_ratio >= 1.0 else 0,
+        "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s),
         "rr_stop": (10 if geo["rr"] >= 3 else 7 if geo["rr"] >= 2.5 else 5)
                    + (5 if geo["stop_atr"] <= 2 else 2 if geo["stop_atr"] <= 3 else 0),
         "regime_fit": regime_fit,
@@ -236,7 +247,10 @@ def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit
 
 def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
              directions=("long", "short"), is_stock=True, benchmark: Sequence[dict] | None = None,
-             max_stop_pct: float | None = None) -> list[dict]:
+             max_stop_pct: float | None = None, rs_override: dict | None = None,
+             oi: dict | None = None) -> list[dict]:
+    """``rs_override``: {"long": (points, diff), "short": (...)} computed elsewhere (e.g. on
+    daily bars for hourly futures). ``oi``: {"change_pct", "price_change"} for futures."""
     """Check every setup allowed in ``regime`` for each direction."""
     if len(bars) < MIN_ENTRY_BARS:
         return [{"setup": None, "direction": None, "valid": False,
@@ -280,14 +294,21 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
                 cand["reject_reason"] = geo["reason"]
                 continue
             soft_checks = {"regime": permitted, **soft}
-            rs_points, rs_diff = _relative_strength_points(bars, benchmark, s) if is_stock else (0, None)
+            if rs_override is not None:
+                rs_points, rs_diff = rs_override.get(direction, (0, None))
+            else:
+                rs_points, rs_diff = _relative_strength_points(bars, benchmark, s) if is_stock else (0, None)
             regime_fit = (10 if rule.get("preferred") else 5) if permitted else 0
             scored = score(setup=setup, s=s, htf=htf, quality_bonus=bonus,
                            close_pos=_close_position(bars[-1], s), vol_ratio=ctx["vol_ratio"], geo=geo,
-                           regime_fit=regime_fit, is_stock=is_stock, rs_points=rs_points)
+                           regime_fit=regime_fit, is_stock=is_stock, rs_points=rs_points,
+                           oi_change_pct=(oi or {}).get("change_pct"), price_change=(oi or {}).get("price_change"))
             failed = []
             if not permitted:
                 failed.append(f"{setup} {direction} not allowed in {regime}")
+            if oi is not None:  # recorded for learning; adds score points, never blocks
+                soft_checks["oi_buildup"] = bool((oi.get("change_pct") or 0) >= 1.0
+                                                 and s * (oi.get("price_change") or 0) > 0)
             if soft.get("volume") is False:
                 failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
             if soft.get("rsi_turn") is False:
