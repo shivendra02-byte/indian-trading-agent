@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { SystemControl } from "@/components/layout/SystemControl";
 import { logout } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -104,6 +105,9 @@ export function Sidebar() {
             <h1 className="font-bold text-lg">Trading Agent</h1>
             <p className="text-xs text-muted-foreground">NSE/BSE - Indian Market</p>
           </div>
+        </div>
+        <div className="mt-4">
+          <SystemControl />
         </div>
       </div>
 

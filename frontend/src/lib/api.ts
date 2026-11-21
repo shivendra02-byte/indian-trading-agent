@@ -168,6 +168,13 @@ export const login = (credentials: LoginCredentials | string) =>
 export const logout = () => fetchAPI(`/api/auth/logout`, { method: "POST" });
 export const getAuthStatus = () => fetchAPI<AuthStatus>(`/api/auth/status`);
 
+// System pause switch + market calendar + market data layer
+export const getPauseState = () => fetchAPI(`/api/system/pause`);
+export const setPauseState = (paused: boolean, reason?: string) =>
+  fetchAPI(`/api/system/pause`, { method: "POST", body: JSON.stringify({ paused, reason }) });
+export const getMarketCalendarStatus = () => fetchAPI(`/api/market-calendar/status`);
+export const getMarketDataStatus = () => fetchAPI(`/api/marketdata/status`);
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
