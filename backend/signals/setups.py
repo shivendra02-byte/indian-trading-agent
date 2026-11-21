@@ -1,64 +1,105 @@
-"""Setups A (trend pullback), B (volume breakout) and C (range reversal),
-symmetrical for long and short, plus stop/target geometry and the 100-point score.
+"""Stages 2–5 of the decision engine for one instrument on one bar:
+regime gate → setup detection → trade construction (stop/target) → scoring.
 
-``evaluate()`` returns one candidate per (setup, direction) that was checked,
-each with ``valid`` and, if invalid, a ``reject_reason`` — so rejected ideas
-are logged too. Factor scores are kept separately for the learning review.
+All thresholds come from config/decision_engine.yaml (``get_config()``):
+strategy parameters per setup, geometry, scoring weights and the regime
+permission matrix. ``evaluate()`` returns one candidate per (setup, direction)
+checked, each with ``valid``, ``trackable``, ``reject_reason``, the factor
+scores and a ``stages`` list — the structured, timestamped audit trail.
+
+Hard vs soft: structure, higher-timeframe agreement, confirmation timeframes,
+geometry and range reversal's sideways requirement are hard. Regime permission
+for pullback/breakout, the RSI turn and each strategy's volume multiplier are
+soft: the candidate is still constructed, scored and shadow-tracked so the
+learning engine can measure whether those filters help.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Sequence
 
+from backend.decision.config import get_config
 from backend.signals.indicators import atr, ema, rsi, swing_points
-from backend.signals.regime import PERMISSIONS
 
 SETUPS = ("pullback", "breakout", "range_reversal")
-MIN_ENTRY_BARS = 60
 MIN_HTF_BARS = 50
+_FACTOR_MAX = {"htf_trend": 25, "setup_quality": 25, "volume_oi": 15, "rr_stop": 15,
+               "regime_fit": 10, "relative_strength": 10}
+
+# Default shortlist threshold; scans read the live value with ``min_score()``.
 SHORTLIST_SCORE = 60
 
-DEFAULTS = {
-    "stop_buffer_atr": 0.25,
-    "min_stop_atr": 1.0,
-    "max_stop_atr": 3.0,
-    "min_rr": 2.0,
-    "max_rr": 4.0,
-    "no_level_rr": 3.0,
-    "breakout_lookback": 20,
-    "breakout_volume_ratio": 1.5,
-    "range_lookback": 60,
-}
+
+def min_score() -> float:
+    return get_config().global_.scoring.min_shortlist_score
 
 
-def _context(bars: Sequence[dict]) -> dict:
+def _stamp() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def stage(name: str, decision: str, reason: str = "", **data) -> dict:
+    """One audit entry: stage name, pass / fail / soft_fail / pending, why, when."""
+    entry = {"stage": name, "decision": decision, "reason": reason, "at": _stamp()}
+    if data:
+        entry["data"] = data
+    return entry
+
+
+def volume_ratio(bars: Sequence[dict], lookback: int, intraday: bool) -> float:
+    """Volume of the signal bar vs comparable completed bars. Intraday: the same
+    bar slot (time of day) on previous days, so the busy opening hour isn't
+    compared with quiet midday hours. Daily/weekly: the previous ``lookback`` bars."""
+    vol = bars[-1].get("volume") or 0
+    if intraday:
+        slot = bars[-1]["ts"][11:16]
+        same = [b.get("volume") or 0 for b in bars[:-1] if b["ts"][11:16] == slot][-lookback:]
+        ref = same if len(same) >= 5 else [b.get("volume") or 0 for b in bars[-lookback - 1:-1]]
+    else:
+        ref = [b.get("volume") or 0 for b in bars[-lookback - 1:-1]]
+    avg = sum(ref) / len(ref) if ref else 0
+    return vol / avg if avg > 0 else 0.0
+
+
+def _is_intraday(bars: Sequence[dict]) -> bool:
+    """True when the bars are intraday (two consecutive bars share a date)."""
+    recent = bars[-10:]
+    return any(a["ts"][:10] == b["ts"][:10] for a, b in zip(recent, recent[1:]))
+
+
+def _context(bars: Sequence[dict], strategy: str = "pullback", intraday: bool | None = None) -> dict:
+    cfg = get_config()
+    st = cfg.strategy(strategy)
     closes = [b["close"] for b in bars]
-    vols = [b.get("volume") or 0 for b in bars]
-    prev = vols[-21:-1]
+    if intraday is None:
+        intraday = _is_intraday(bars)
     return {
         "closes": closes,
-        "e20": ema(closes, 20),
-        "e50": ema(closes, 50),
-        "rsi": rsi(closes, 14),
-        "atr": atr(bars, 14),
-        "vol_ratio": (vols[-1] / (sum(prev) / len(prev))) if prev and sum(prev) > 0 else 0.0,
-        "swings": swing_points(bars, 2),
+        "e20": ema(closes, st.ema_fast),
+        "e50": ema(closes, st.ema_slow),
+        "rsi": rsi(closes, st.rsi_period),
+        "atr": atr(bars, st.atr_period),
+        "vol_ratio": volume_ratio(bars, st.lookback, intraday),
+        "swings": swing_points(bars, cfg.global_.geometry.swing_fractal_bars),
+        "strategy": st,
     }
 
 
 def htf_trend(htf_bars: Sequence[dict]) -> float | None:
-    """+1 full uptrend, +0.5 above EMA50 only, 0 mixed, mirrored for down. None = not enough data."""
+    """+1 full uptrend, +0.5 above slow EMA only, 0 mixed, mirrored for down. None = not enough data."""
     if len(htf_bars) < MIN_HTF_BARS:
         return None
+    st = get_config().strategy("pullback")
     closes = [b["close"] for b in htf_bars]
-    c, e20, e50 = closes[-1], ema(closes, 20)[-1], ema(closes, 50)[-1]
-    if c > e20 > e50:
+    c, e_fast, e_slow = closes[-1], ema(closes, st.ema_fast)[-1], ema(closes, st.ema_slow)[-1]
+    if c > e_fast > e_slow:
         return 1.0
-    if c < e20 < e50:
+    if c < e_fast < e_slow:
         return -1.0
-    if c > e50:
+    if c > e_slow:
         return 0.5
-    if c < e50:
+    if c < e_slow:
         return -0.5
     return 0.0
 
@@ -74,25 +115,31 @@ def _rejection(bar: dict, s: int) -> bool:
     return s * (bar["close"] - bar["open"]) > 0 and _close_position(bar, s) >= 0.6
 
 
-# --- setup rules ---------------------------------------------------------------
+def _extra(st, key, default):
+    return (st.model_extra or {}).get(key, default)
+
+
+# --- Stage 3: setup detection ----------------------------------------------------
 
 def _pullback(bars, ctx, s) -> tuple[bool, str, int, dict]:
-    """Structural checks are hard; the RSI turn is a soft check (logged, shadow-tracked)."""
+    st = ctx["strategy"]
     c, e20, e50, a = ctx["closes"][-1], ctx["e20"][-1], ctx["e50"][-1], ctx["atr"][-1]
     if not (s * (c - e20) > 0 and s * (c - e50) > 0 and s * (e20 - e50) > 0):
-        return False, "not in trend (price/EMA20/EMA50 not aligned)", 0, {}
+        return False, "not in trend (price/fast EMA/slow EMA not aligned)", 0, {}
+    tol = _extra(st, "touch_tolerance_atr", 0.25)
     recent = bars[-3:]
-    touched = (min(b["low"] for b in recent) <= e20 + 0.25 * a) if s > 0 else \
-              (max(b["high"] for b in recent) >= e20 - 0.25 * a)
+    touched = (min(b["low"] for b in recent) <= e20 + tol * a) if s > 0 else \
+              (max(b["high"] for b in recent) >= e20 - tol * a)
     if not touched:
-        return False, "no pullback to EMA20", 0, {}
+        return False, "no pullback to the fast EMA", 0, {}
     if not _rejection(bars[-1], s):
         return False, "no rejection candle", 0, {}
     r = [v for v in ctx["rsi"][-3:] if v is not None]
     if len(r) < 3:
         return False, "RSI not ready", 0, {}
-    band_ok = (40 <= min(r) <= 50 and r[-1] > r[-2]) if s > 0 else (50 <= max(r) <= 60 and r[-1] < r[-2])
-    soft = {"rsi_turn": band_ok}
+    lo_l, hi_l = _extra(st, "rsi_band_long", [40, 50])
+    lo_s, hi_s = _extra(st, "rsi_band_short", [50, 60])
+    band_ok = (lo_l <= min(r) <= hi_l and r[-1] > r[-2]) if s > 0 else (lo_s <= max(r) <= hi_s and r[-1] < r[-2])
     # Trend structure: the higher low (lower high for shorts) that preceded the
     # latest swing high (low) must hold on a closing basis during the pullback.
     highs, lows = ctx["swings"]
@@ -105,23 +152,23 @@ def _pullback(bars, ctx, s) -> tuple[bool, str, int, dict]:
         return False, "no confirmed swing to define trend structure", 0, {}
     if any(s * (b["close"] - before[-1]) <= 0 for b in bars[last_peak_i:]):
         return False, "pullback broke trend structure", 0, {}
-    return True, "", 5 if band_ok else 0, soft
+    return True, "", 5 if band_ok else 0, {"rsi_turn": band_ok,
+                                           "volume": ctx["vol_ratio"] >= st.volume_multiplier}
 
 
-def _breakout(bars, ctx, s, min_volume_ratio) -> tuple[bool, str, int, dict]:
-    """Close beyond the 20-bar level is hard; the volume ratio is a soft check."""
-    n = DEFAULTS["breakout_lookback"]
+def _breakout(bars, ctx, s, volume_needed) -> tuple[bool, str, int, dict]:
+    st = ctx["strategy"]
+    n = st.lookback
     prior = bars[-n - 1:-1]
     level = max(b["high"] for b in prior) if s > 0 else min(b["low"] for b in prior)
     c, a = bars[-1]["close"], ctx["atr"][-1]
     if s * (c - level) <= 0:
-        return False, f"no close beyond {n}-bar {'high' if s > 0 else 'low'}", 0, {}
-    bonus = 5 if s * (c - level) >= 0.25 * a else 0
-    return True, "", bonus, {"volume": ctx["vol_ratio"] >= min_volume_ratio}
+        return False, f"no close beyond the {n}-bar {'high' if s > 0 else 'low'}", 0, {}
+    bonus = 5 if s * (c - level) >= _extra(st, "strong_close_atr", 0.25) * a else 0
+    return True, "", bonus, {"volume": ctx["vol_ratio"] >= volume_needed}
 
 
 def _clusters(points, tolerance):
-    """Groups of swing prices within ``tolerance``: [(level, count)]."""
     out = []
     for _, p in points:
         members = [q for _, q in points if abs(q - p) <= tolerance]
@@ -130,29 +177,30 @@ def _clusters(points, tolerance):
 
 
 def _range_reversal(bars, ctx, s) -> tuple[bool, str, int, dict]:
-    n = DEFAULTS["range_lookback"]
-    a = ctx["atr"][-1]
+    st = ctx["strategy"]
+    n, a = st.lookback, ctx["atr"][-1]
     window = bars[-n - 1:-1]
     rng_hi, rng_lo = max(b["high"] for b in window), min(b["low"] for b in window)
-    if rng_hi - rng_lo <= 2 * a:
+    if rng_hi - rng_lo <= _extra(st, "min_range_atr", 2.0) * a:
         return False, "range too narrow", 0, {}
     last = bars[-1]
     pos = (last["close"] - rng_lo) / (rng_hi - rng_lo)
-    if (s > 0 and pos > 0.25) or (s < 0 and pos < 0.75):
-        return False, "not at the edge of the range (middle 50% excluded)", 0, {}
+    edge = _extra(st, "edge_fraction", 0.25)
+    if (s > 0 and pos > edge) or (s < 0 and pos < 1 - edge):
+        return False, "not at the edge of the range (middle excluded)", 0, {}
     highs, lows = ctx["swings"]
     start = len(bars) - n - 1
     pts = [(i, p) for i, p in (lows if s > 0 else highs) if start <= i < len(bars) - 1]
-    clusters = [c for c in _clusters(pts, 0.5 * a) if c[1] >= 2]
+    tol = _extra(st, "level_tolerance_atr", 0.5) * a
+    clusters = [c for c in _clusters(pts, tol) if c[1] >= _extra(st, "min_reactions", 2)]
     if not clusters:
-        return False, "no level with 2+ prior reactions", 0, {}
+        return False, "no level with enough prior reactions", 0, {}
     level = min(clusters, key=lambda c: abs(c[0] - last["close"]))[0]
-    touched = (last["low"] <= level + 0.5 * a) if s > 0 else (last["high"] >= level - 0.5 * a)
+    touched = (last["low"] <= level + tol) if s > 0 else (last["high"] >= level - tol)
     if not touched:
         return False, "price not at the support/resistance level", 0, {}
     if not _rejection(last, s):
         return False, "no rejection candle", 0, {}
-    # RSI divergence: new extreme in price but not in RSI vs the previous swing.
     bonus = 0
     if pts:
         i_prev, p_prev = pts[-1]
@@ -160,51 +208,53 @@ def _range_reversal(bars, ctx, s) -> tuple[bool, str, int, dict]:
         extreme = last["low"] if s > 0 else last["high"]
         if r_prev is not None and r_now is not None and s * (p_prev - extreme) > 0 and s * (r_now - r_prev) > 0:
             bonus = 5
-    return True, "", bonus, {}
+    return True, "", bonus, {"volume": ctx["vol_ratio"] >= st.volume_multiplier}
 
 
-# --- stop / target -------------------------------------------------------------
+# --- Stage 5: trade construction (stop / target) ----------------------------------
 
-def geometry(bars, ctx, s, max_stop_pct: float | None = None) -> dict:
+def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | None = None) -> dict:
+    g = get_config().global_.geometry
+    st = ctx.get("strategy")
+    min_rr = min_rr or (st.min_rr if st else get_config().global_.scoring.min_rr)
+    swing_window = max(st.lookback if st else 20, 20) + 10
     entry, a = bars[-1]["close"], ctx["atr"][-1]
     highs, lows = ctx["swings"]
-    pivots = [(i, p) for i, p in (lows if s > 0 else highs) if s * (entry - p) > 0 and i >= len(bars) - 30]
+    pivots = [(i, p) for i, p in (lows if s > 0 else highs) if s * (entry - p) > 0 and i >= len(bars) - swing_window]
     swing = pivots[-1][1] if pivots else (min(b["low"] for b in bars[-5:]) if s > 0 else max(b["high"] for b in bars[-5:]))
-    stop = swing - s * DEFAULTS["stop_buffer_atr"] * a
-    if s * (entry - stop) < DEFAULTS["min_stop_atr"] * a:
-        stop = entry - s * DEFAULTS["min_stop_atr"] * a
+    stop = swing - s * g.stop_buffer_atr * a
+    if s * (entry - stop) < g.min_stop_atr * a:
+        stop = entry - s * g.min_stop_atr * a
     risk = s * (entry - stop)
     result = {"entry": round(entry, 2), "stop": round(stop, 2), "risk_per_unit": round(risk, 2),
               "stop_atr": round(risk / a, 2) if a else None}
-    if risk > DEFAULTS["max_stop_atr"] * a:
-        return {**result, "ok": False, "reason": f"stop too wide ({risk / a:.1f} ATR > {DEFAULTS['max_stop_atr']})"}
+    if risk > g.max_stop_atr * a:
+        return {**result, "ok": False, "reason": f"stop too wide ({risk / a:.1f} ATR > {g.max_stop_atr})"}
     if max_stop_pct is not None and risk / entry > max_stop_pct:
         return {**result, "ok": False, "reason": f"stop too wide ({100 * risk / entry:.1f}% of price)"}
-    # Next significant level in the trade direction: confirmed swings of the opposite side.
     levels = [p for _, p in (highs if s > 0 else lows) if s * (p - entry) > 0.1 * a]
     history = bars[-251:-1]  # exclude the signal bar itself
     extreme = max(b["high"] for b in history) if s > 0 else min(b["low"] for b in history)
     if s * (extreme - entry) > 0.1 * a:
         levels.append(extreme)
     level = min(levels, key=lambda p: abs(p - entry)) if levels else None
-    min_rr, max_rr = DEFAULTS["min_rr"], DEFAULTS["max_rr"]
     if level is not None:
         room = s * (level - 0.1 * s * a - entry)
         if room < min_rr * risk:
-            return {**result, "ok": False, "reason": f"no room for {min_rr:.0f}R before the next level ({level:.2f})",
+            return {**result, "ok": False, "reason": f"no room for {min_rr:g}R before the next level ({level:.2f})",
                     "next_level": round(level, 2)}
-        target = entry + s * min(room, max_rr * risk)
+        target = entry + s * min(room, g.max_rr * risk)
     else:
-        target = entry + s * DEFAULTS["no_level_rr"] * risk
+        target = entry + s * g.no_level_rr * risk
     rr = s * (target - entry) / risk
     return {**result, "ok": True, "reason": "", "target": round(target, 2), "rr": round(rr, 2),
             "next_level": round(level, 2) if level is not None else None}
 
 
-# --- scoring -------------------------------------------------------------------
+# --- Stage 4: scoring --------------------------------------------------------------
 
 def _relative_strength_points(bars, benchmark, s) -> tuple[int, float | None]:
-    if not benchmark:
+    if not benchmark or len(bars) < 21:
         return 0, None
     bench = {b["ts"][:10]: b["close"] for b in benchmark}
     start, end = bars[-21], bars[-1]
@@ -217,8 +267,8 @@ def _relative_strength_points(bars, benchmark, s) -> tuple[int, float | None]:
 
 
 def _volume_oi_points(vol_ratio: float, oi_change_pct: float | None, price_change: float | None, s: int) -> int:
-    """Without OI (cash, spot): volume only, up to 15. With futures OI: volume up to 10,
-    plus 5 when OI rises with price in the trade direction (long/short build-up)."""
+    """Without OI: volume only, up to 15. With futures OI: volume up to 10, plus 5
+    when OI rises with price in the trade direction (long/short build-up)."""
     if oi_change_pct is None:
         return 15 if vol_ratio >= 2 else 10 if vol_ratio >= 1.5 else 5 if vol_ratio >= 1.0 else 0
     vol = 10 if vol_ratio >= 2 else 7 if vol_ratio >= 1.5 else 3 if vol_ratio >= 1.0 else 0
@@ -228,72 +278,118 @@ def _volume_oi_points(vol_ratio: float, oi_change_pct: float | None, price_chang
 
 def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit, is_stock, rs_points,
           oi_change_pct=None, price_change=None) -> dict:
+    """Factor points on the reference scale, re-weighted by the configured weights.
+    Factors that don't apply (relative strength for non-stocks) are left out and
+    the score is scaled back to 100."""
     htf_aligned = htf * s
-    factors = {
+    raw = {
         "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup == "range_reversal" and htf_aligned == 0)) else 0,
-        "setup_quality": 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus,
+        "setup_quality": min(25, 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus),
         "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s),
         "rr_stop": (10 if geo["rr"] >= 3 else 7 if geo["rr"] >= 2.5 else 5)
                    + (5 if geo["stop_atr"] <= 2 else 2 if geo["stop_atr"] <= 3 else 0),
         "regime_fit": regime_fit,
         "relative_strength": rs_points if is_stock else None,
     }
-    raw = sum(v for v in factors.values() if v is not None)
-    total = raw if is_stock else raw * 100 / 90
-    return {"factors": factors, "score": round(min(total, 100), 1)}
+    weights = get_config().global_.scoring.weights
+    factors = {k: (None if v is None else round(v * weights[k] / _FACTOR_MAX[k], 1)) for k, v in raw.items()}
+    total = sum(v for v in factors.values() if v is not None)
+    possible = sum(weights[k] for k, v in factors.items() if v is not None)
+    return {"factors": factors, "score": round(min(100.0, 100 * total / possible), 1) if possible else 0.0}
 
 
-# --- entry point ---------------------------------------------------------------
+# --- entry point -------------------------------------------------------------------
+
+def _reject_all(reason: str) -> list[dict]:
+    return [{"setup": None, "direction": None, "valid": False, "trackable": False, "reject_reason": reason,
+             "stages": [stage("setup", "fail", reason)]}]
+
 
 def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
              directions=("long", "short"), is_stock=True, benchmark: Sequence[dict] | None = None,
              max_stop_pct: float | None = None, rs_override: dict | None = None,
-             oi: dict | None = None) -> list[dict]:
-    """``rs_override``: {"long": (points, diff), "short": (...)} computed elsewhere (e.g. on
-    daily bars for hourly futures). ``oi``: {"change_pct", "price_change"} for futures."""
-    """Check every setup allowed in ``regime`` for each direction."""
-    if len(bars) < MIN_ENTRY_BARS:
-        return [{"setup": None, "direction": None, "valid": False,
-                 "reject_reason": f"only {len(bars)} bars (need {MIN_ENTRY_BARS})"}]
+             oi: dict | None = None, confirmations: dict[str, Sequence[dict]] | None = None,
+             min_primary_bars: int = 60) -> list[dict]:
+    """Check every setup for each direction.
+
+    ``htf_bars``: the scored higher timeframe (must agree for pullback/breakout).
+    ``confirmations``: {timeframe: bars} that must not be against the trade (hard).
+    ``rs_override``: {"long": (points, diff), "short": ...} computed elsewhere.
+    ``oi``: {"change_pct", "price_change"} for futures."""
+    cfg = get_config()
+    if len(bars) < min_primary_bars:
+        return _reject_all(f"only {len(bars)} bars (need {min_primary_bars})")
     htf = htf_trend(htf_bars)
     if htf is None:
-        return [{"setup": None, "direction": None, "valid": False,
-                 "reject_reason": f"only {len(htf_bars)} higher-timeframe bars (need {MIN_HTF_BARS})"}]
-    ctx = _context(bars)
-    if ctx["atr"][-1] is None or ctx["e50"][-1] is None:
-        return [{"setup": None, "direction": None, "valid": False, "reject_reason": "indicators not ready"}]
-    allowed = PERMISSIONS.get(regime, {})
+        return _reject_all(f"only {len(htf_bars)} higher-timeframe bars (need {MIN_HTF_BARS})")
+    confirm_trends = {tf: htf_trend(b) for tf, b in (confirmations or {}).items()}
+    missing = [tf for tf, t in confirm_trends.items() if t is None]
+    if missing:
+        return _reject_all(f"not enough {', '.join(missing)} bars for confirmation")
+    contexts = {name: _context(bars, name) for name in SETUPS}
+    if any(c["atr"][-1] is None or c["e50"][-1] is None for c in contexts.values()):
+        return _reject_all("indicators not ready")
+    allowed = {k: v.model_dump() for k, v in cfg.global_.permissions.get(regime, {}).items()}
+    min_shortlist = cfg.global_.scoring.min_shortlist_score
     out = []
     for setup in SETUPS:
+        ctx = contexts[setup]
+        st = ctx["strategy"]
         rule = allowed.get(setup)
         for direction in directions:
             s = 1 if direction == "long" else -1
+            stages: list[dict] = []
             cand = {"setup": setup, "direction": direction, "valid": False, "trackable": False, "regime": regime,
-                    "htf_trend": htf, "vol_ratio": round(ctx["vol_ratio"], 2)}
+                    "htf_trend": htf, "confirmations": confirm_trends, "vol_ratio": round(ctx["vol_ratio"], 2),
+                    "stages": stages, "rule_version": cfg.rule_version}
             out.append(cand)
-            if setup in ("pullback", "breakout") and htf * s <= 0:
-                cand["reject_reason"] = "higher-timeframe trend does not agree"
+            # Stage 2: regime. A required regime (range reversal → SIDEWAYS) is hard;
+            # otherwise the permission matrix is a soft check.
+            required = _extra(st, "requires_regime", None)
+            if required and regime != required:
+                cand["reject_reason"] = f"{setup} requires a {required} regime (now {regime})"
+                stages.append(stage("regime", "fail", cand["reject_reason"]))
                 continue
-            # Regime permission is a soft check: a setup the regime doesn't allow is
-            # still evaluated and shadow-tracked, so the learning engine can measure it.
             permitted = bool(rule and direction in rule["directions"]
                              and not (rule.get("with_trend_only") and htf * s < 1))
-            volume_needed = (rule or {}).get("min_volume_ratio") or DEFAULTS["breakout_volume_ratio"]
+            stages.append(stage("regime", "pass" if permitted else "soft_fail",
+                                "" if permitted else f"{setup} {direction} not allowed in {regime}"))
+            if setup in ("pullback", "breakout") and htf * s <= 0:
+                cand["reject_reason"] = "higher-timeframe trend does not agree"
+                stages.append(stage("setup", "fail", cand["reject_reason"]))
+                continue
+            against = [tf for tf, t in confirm_trends.items() if t * s < 0]
+            if against:
+                cand["reject_reason"] = f"{', '.join(against)} trend against the trade"
+                stages.append(stage("setup", "fail", cand["reject_reason"]))
+                continue
+            # Stage 3: setup detection.
+            volume_needed = st.volume_multiplier
             if setup == "pullback":
                 ok, why, bonus, soft = _pullback(bars, ctx, s)
             elif setup == "breakout":
+                volume_needed = (rule or {}).get("min_volume_ratio") or st.volume_multiplier
                 ok, why, bonus, soft = _breakout(bars, ctx, s, volume_needed)
             else:
                 ok, why, bonus, soft = _range_reversal(bars, ctx, s)
             if not ok:
                 cand["reject_reason"] = why
+                stages.append(stage("setup", "fail", why))
                 continue
+            stages.append(stage("setup", "pass", vol_ratio=round(ctx["vol_ratio"], 2)))
+            # Stage 5 (trade construction) runs before scoring: the score uses R:R and stop quality.
             geo = geometry(bars, ctx, s, max_stop_pct)
             cand.update({k: v for k, v in geo.items() if k not in ("ok", "reason")})
             if not geo["ok"]:
                 cand["reject_reason"] = geo["reason"]
+                stages.append(stage("construction", "fail", geo["reason"]))
                 continue
+            stages.append(stage("construction", "pass", entry=geo["entry"], stop=geo["stop"],
+                                target=geo["target"], rr=geo["rr"]))
             soft_checks = {"regime": permitted, **soft}
+            if oi is not None:  # recorded for learning; adds score points, never blocks
+                soft_checks["oi_buildup"] = bool((oi.get("change_pct") or 0) >= 1.0
+                                                 and s * (oi.get("price_change") or 0) > 0)
             if rs_override is not None:
                 rs_points, rs_diff = rs_override.get(direction, (0, None))
             else:
@@ -306,13 +402,12 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             failed = []
             if not permitted:
                 failed.append(f"{setup} {direction} not allowed in {regime}")
-            if oi is not None:  # recorded for learning; adds score points, never blocks
-                soft_checks["oi_buildup"] = bool((oi.get("change_pct") or 0) >= 1.0
-                                                 and s * (oi.get("price_change") or 0) > 0)
             if soft.get("volume") is False:
                 failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
             if soft.get("rsi_turn") is False:
-                failed.append("RSI did not turn from the 40-50 zone" if s > 0 else "RSI did not turn from the 50-60 zone")
+                failed.append("RSI did not turn from its band")
+            stages.append(stage("scoring", "pass" if scored["score"] >= min_shortlist else "below_threshold",
+                                score=scored["score"]))
             cand.update(scored)
             cand.update({"valid": not failed, "trackable": True, "soft_checks": soft_checks,
                          "reject_reason": "; ".join(failed) or None,

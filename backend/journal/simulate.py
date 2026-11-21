@@ -29,7 +29,8 @@ def _touch(bar: dict, level: float, s: int, side: str) -> bool:
 
 
 def _run_exit(bars: Sequence[dict], start: int, fill: float, stop: float, target: float, s: int,
-              time_stop_date: str, atr: float | None, trailing: bool, fill_bar_done: bool) -> dict:
+              time_stop_date: str, atr: float | None, trailing: bool, fill_bar_done: bool,
+              trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR) -> dict:
     risk = s * (fill - stop)
     best_fav = worst_adv = 0.0                     # price distance from fill
     best_close = fill
@@ -54,8 +55,8 @@ def _run_exit(bars: Sequence[dict], start: int, fill: float, stop: float, target
         best_fav, worst_adv = max(best_fav, favour), max(worst_adv, adverse)
         if s * (b["close"] - best_close) > 0:
             best_close = b["close"]
-        if trailing and atr and best_fav >= TRAIL_START_R * risk:
-            candidate = max(fill, best_close - TRAIL_ATR * atr) if s > 0 else min(fill, best_close + TRAIL_ATR * atr)
+        if trailing and atr and best_fav >= trail_start_r * risk:
+            candidate = max(fill, best_close - trail_atr * atr) if s > 0 else min(fill, best_close + trail_atr * atr)
             trail = max(trail, candidate) if s > 0 else min(trail, candidate)
         if b["ts"][:10] >= time_stop_date and b.get("eod", True):
             return _exit(b, b["close"], "time_stop", fill, risk, s, best_fav, worst_adv, i)
@@ -70,7 +71,8 @@ def _exit(bar, price, reason, fill, risk, s, fav, adv, i) -> dict:
 
 
 def simulate(*, direction: str, entry: float, stop: float, target: float, atr: float | None,
-             bars: Sequence[dict], fill_until: str, time_stop_date: str) -> dict:
+             bars: Sequence[dict], fill_until: str, time_stop_date: str,
+             trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR) -> dict:
     """``bars``: chronological bars from the start of the entry window onward.
     ``fill_until``: last bar ts (exclusive) in which the limit entry may fill.
     ``time_stop_date``: exit at the close of the last bar of this date.
@@ -95,7 +97,8 @@ def simulate(*, direction: str, entry: float, stop: float, target: float, atr: f
     if base["risk_per_unit"] <= 0:
         return {"status": "no_fill", "reason": "fill at or beyond the stop"}
     fixed = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, trailing=False, fill_bar_done=True)
-    trail = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, trailing=True, fill_bar_done=True)
+    trail = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, trailing=True, fill_bar_done=True,
+                      trail_start_r=trail_start_r, trail_atr=trail_atr)
     out = {**base, **{k: v for k, v in fixed.items() if k != "exit_index"}}
     out["trail"] = {k: v for k, v in trail.items() if k in ("status", "exit_ts", "exit_price", "exit_reason", "pnl_r")}
     return out

@@ -123,21 +123,23 @@ def get_candles(token: int, interval: str, since: datetime | None = None,
 
 
 def resample_4h(rows: list[dict], exchange: str) -> list[dict]:
-    """Group hourly bars into session-anchored 4-hour bars.
+    """Session-anchored 4-hour bars (NSE 09:15/13:15; MCX 09:00/13:00/17:00/21:00)."""
+    return resample_hours(rows, exchange, 4)
 
-    NSE: 09:15–13:15 and 13:15–15:30. MCX: 09:00–13:00, 13:00–17:00,
-    17:00–21:00, 21:00–close. Bars never span two days.
-    """
+
+def resample_hours(rows: list[dict], exchange: str, hours: int) -> list[dict]:
+    """Group hourly bars into session-anchored ``hours``-hour bars (e.g. 2H, 4H).
+    Bars never span two days; the last bar of a session may be shorter."""
     anchor_h, anchor_m = SESSION_ANCHOR[exchange.upper()]
     buckets: dict[tuple[str, int], dict] = {}
     for r in rows:
         ts = datetime.fromisoformat(r["ts"])
         anchor = ts.replace(hour=anchor_h, minute=anchor_m, second=0)
-        key = (ts.date().isoformat(), int((ts - anchor).total_seconds() // (4 * 3600)))
+        key = (ts.date().isoformat(), int((ts - anchor).total_seconds() // (hours * 3600)))
         b = buckets.get(key)
         if b is None:
             buckets[key] = {
-                "ts": (anchor + timedelta(hours=4 * key[1])).isoformat(timespec="seconds"),
+                "ts": (anchor + timedelta(hours=hours * key[1])).isoformat(timespec="seconds"),
                 "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"],
                 "volume": r.get("volume") or 0, "oi": r.get("oi"),
             }
@@ -174,3 +176,39 @@ def resample_weekly(rows: list[dict]) -> list[dict]:
             w["volume"] += r.get("volume") or 0
             w["oi"] = r.get("oi")
     return [weeks[k] for k in sorted(weeks)]
+
+
+def bars_for_timeframe(token: int, tf: str, exchange: str, limit: int = 300) -> list[dict]:
+    """Stored bars for a configured timeframe name, resampling where needed."""
+    if tf in ("60minute", "1h"):
+        return get_candles(token, "60minute", limit=limit)
+    if tf in ("2h", "4h"):
+        hours = int(tf[0])
+        return resample_hours(get_candles(token, "60minute", limit=limit * hours + 16), exchange, hours)[-limit:]
+    if tf == "day":
+        return get_candles(token, "day", limit=limit)
+    if tf == "week":
+        return resample_weekly(get_candles(token, "day", limit=limit * 5 + 5))[-limit:]
+    if tf in ("10minute", "30m"):
+        mins = 10 if tf == "10minute" else 30
+        rows = get_candles(token, "10minute", limit=limit * (mins // 10) + 6)
+        return rows if mins == 10 else _resample_minutes(rows, exchange, mins)[-limit:]
+    raise ValueError(f"unknown timeframe {tf}")
+
+
+def _resample_minutes(rows: list[dict], exchange: str, minutes: int) -> list[dict]:
+    anchor_h, anchor_m = SESSION_ANCHOR[exchange.upper()]
+    out: dict[tuple[str, int], dict] = {}
+    for r in rows:
+        ts = datetime.fromisoformat(r["ts"])
+        anchor = ts.replace(hour=anchor_h, minute=anchor_m, second=0)
+        key = (ts.date().isoformat(), int((ts - anchor).total_seconds() // (minutes * 60)))
+        b = out.get(key)
+        if b is None:
+            out[key] = {"ts": (anchor + timedelta(minutes=minutes * key[1])).isoformat(timespec="seconds"),
+                        "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"],
+                        "volume": r.get("volume") or 0, "oi": r.get("oi")}
+        else:
+            b.update(high=max(b["high"], r["high"]), low=min(b["low"], r["low"]), close=r["close"],
+                     volume=b["volume"] + (r.get("volume") or 0), oi=r.get("oi"))
+    return [out[k] for k in sorted(out)]

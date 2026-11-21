@@ -17,21 +17,35 @@ from typing import Callable
 from backend.db import get_db
 from backend.journal.store import add_records as journal_add
 from backend.journal.tracker import track_open_records
-from backend.marketdata.candles import get_candles, resample_weekly
+from backend.decision.config import get_config
+from backend.marketdata.candles import bars_for_timeframe, get_candles
 from backend.marketdata.instruments import fno_universe, spot_instrument
 from backend.signals import events
 from backend.signals.regime import current_regime
-from backend.signals.setups import SHORTLIST_SCORE, evaluate
+from backend.signals.setups import evaluate, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, is_trading_day, previous_trading_day
 
 SEGMENT = "cash_swing"
-SCAN_AFTER = time(15, 45)
-HOLD_DAYS = 7
-MIN_TURNOVER = 50e7          # ₹50 crore 20-day average
-MAX_STOP_PCT = 0.08
-SHORTLIST_SIZE = 2
 DAILY_BARS = 300
+
+
+def settings() -> dict:
+    """Cash swing settings from config/decision_engine.yaml (instruments.cash_swing)."""
+    inst = get_config().instrument(SEGMENT)
+    extra = inst.model_extra or {}
+    h, m = (int(x) for x in extra.get("scan_after", "15:45").split(":"))
+    return {
+        "inst": inst,
+        "enabled": inst.enabled,
+        "scan_after": time(h, m),
+        "hold_days": inst.hold_trading_days,
+        "min_turnover": float(extra.get("min_turnover_cr", 50)) * 1e7,
+        "max_stop_pct": float(extra.get("max_stop_pct", 8.0)) / 100,
+        "shortlist": inst.shortlist_per_scan,
+        "entry_window": extra.get("entry_window", ["09:30", "11:00"]),
+        "min_bars": inst.min_primary_bars,
+    }
 
 
 def ensure_scan_tables() -> None:
@@ -137,12 +151,12 @@ def _finish_run(run_id: int, status: str, detail: dict) -> dict:
     return {"run_id": run_id, "status": status, **detail}
 
 
-def _journal_row(r: dict, signal_date: date, first: date, last: date) -> dict:
+def _journal_row(r: dict, signal_date: date, first: date, last: date, fill_until: str = "11:00") -> dict:
     if not r.get("valid"):
         decision = "soft_rejected"
     elif r.get("shortlisted"):
         decision = "shortlisted"
-    elif r["score"] >= SHORTLIST_SCORE:
+    elif r["score"] >= min_score():
         decision = "not_selected"
     else:
         decision = "below_score"
@@ -152,10 +166,11 @@ def _journal_row(r: dict, signal_date: date, first: date, last: date) -> dict:
         "regime": r.get("regime"), "score": r.get("score"), "factors": r.get("factors"),
         "soft_checks": r.get("soft_checks"), "decision": decision, "reject_reason": r.get("reject_reason"),
         "entry": r["entry"], "stop": r["stop"], "target": r["target"], "rr": r.get("rr"), "atr": r.get("atr"),
-        "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T11:00",
+        "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T{fill_until}",
         "time_stop_date": last.isoformat(),
         "extra": {k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend", "rs_vs_nifty_pct",
-                                         "risk_mult", "turnover_cr")},
+                                         "risk_mult", "turnover_cr", "confirmations")},
+        "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }
 
 
@@ -166,16 +181,19 @@ def run_scan(now: datetime | None = None, force: bool = False,
     today = now.date()
     # Outcome tracking is pure Python on stored candles: it runs even while paused.
     tracked = track_open_records()
+    cfg = settings()
+    if not cfg["enabled"]:
+        return {"status": "skipped", "reason": "cash swing disabled in config"}
     if is_paused():
         return {"status": "skipped", "reason": "paused"}
     if not is_trading_day(today):
         return {"status": "skipped", "reason": "not an NSE trading day"}
-    if now.time() < SCAN_AFTER and not force:
-        return {"status": "skipped", "reason": "before 15:45"}
+    if now.time() < cfg["scan_after"] and not force:
+        return {"status": "skipped", "reason": f"before {cfg['scan_after']:%H:%M}"}
 
     signal_date = expected_last_daily_bar(now)
     run_id = _start_run(signal_date.isoformat(), now)
-    window = events.trading_days_after(signal_date, HOLD_DAYS)
+    window = events.trading_days_after(signal_date, cfg["hold_days"])
     first, last = window[0], window[-1]
 
     # Market-level checks — fail closed for the whole scan.
@@ -197,28 +215,39 @@ def run_scan(now: datetime | None = None, force: bool = False,
         return _finish_run(run_id, "blocked", {"reason": "F&O universe is empty (instrument master missing)"})
     events.refresh_results([u["symbol"] for u in universe], fetch=results_fetch, today=today)
 
+    inst = cfg["inst"]
     rows: list[dict] = []
+
+    def reject(symbol: str, reason: str) -> None:
+        rows.append({"symbol": symbol, "valid": False, "reject_reason": reason,
+                     "stages": [stage("eligibility", "fail", reason)]})
+
     for stock in universe:
         symbol = stock["symbol"]
         if not stock["spot_token"]:
-            rows.append({"symbol": symbol, "valid": False, "reject_reason": "no NSE spot instrument"})
+            reject(symbol, "no NSE spot instrument")
             continue
         bars = get_candles(stock["spot_token"], "day", limit=DAILY_BARS)
-        problem = data_quality(bars, signal_date)
+        problem = data_quality(bars, signal_date, min_bars=cfg["min_bars"])
         if problem:
-            rows.append({"symbol": symbol, "valid": False, "reject_reason": problem})
+            reject(symbol, problem)
             continue
         turnover = avg_turnover(bars)
-        if turnover < MIN_TURNOVER:
-            rows.append({"symbol": symbol, "valid": False,
-                         "reject_reason": f"turnover ₹{turnover / 1e7:.0f} cr < ₹50 cr"})
+        if turnover < cfg["min_turnover"]:
+            reject(symbol, f"turnover ₹{turnover / 1e7:.0f} cr < ₹{cfg['min_turnover'] / 1e7:.0f} cr")
             continue
         ok, why = events.results_clear(symbol, first, last, today)
         if not ok:
-            rows.append({"symbol": symbol, "valid": False, "reject_reason": why})
+            reject(symbol, why)
             continue
-        candidates = evaluate(bars, resample_weekly(bars), regime["regime"], directions=("long",),
-                              is_stock=True, benchmark=nifty_bars, max_stop_pct=MAX_STOP_PCT)
+        htf = bars_for_timeframe(stock["spot_token"], inst.scored_htf or "week", "NSE")
+        confirmations = {tf: bars_for_timeframe(stock["spot_token"], tf, "NSE") for tf in inst.confirmation_tfs}
+        eligibility = stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1))
+        candidates = evaluate(bars, htf, regime["regime"], directions=tuple(inst.directions),
+                              is_stock=True, benchmark=nifty_bars, max_stop_pct=cfg["max_stop_pct"],
+                              confirmations=confirmations, min_primary_bars=cfg["min_bars"])
+        for c in candidates:
+            c["stages"] = [eligibility, *c.get("stages", [])]
         trackable = [c for c in candidates if c.get("trackable")]
         if trackable:
             for c in trackable:
@@ -226,19 +255,27 @@ def run_scan(now: datetime | None = None, force: bool = False,
                              "turnover_cr": round(turnover / 1e7, 1)})
         else:
             reasons = "; ".join(sorted({c["reject_reason"] for c in candidates if c.get("reject_reason")}))
-            rows.append({"symbol": symbol, "valid": False, "regime": regime["regime"], "reject_reason": reasons})
+            rows.append({"symbol": symbol, "valid": False, "regime": regime["regime"], "reject_reason": reasons,
+                         "stages": candidates[0].get("stages") if len(candidates) == 1 else [eligibility]})
 
-    ranked = sorted((r for r in rows if r.get("valid") and r["score"] >= SHORTLIST_SCORE),
+    ranked = sorted((r for r in rows if r.get("valid") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
-    for r in ranked[:SHORTLIST_SIZE]:
+    for r in ranked[:cfg["shortlist"]]:
         r["shortlisted"] = True
+    for r in rows:
+        if r.get("trackable"):
+            selected = bool(r.get("shortlisted"))
+            r["stages"] = [*r["stages"], stage("ai_panel", "pending" if selected else "not_sent"),
+                           stage("final_approval", "pending" if selected else "not_applicable")]
     _save(run_id, signal_date.isoformat(), rows)
-    journal_add([_journal_row(r, signal_date, first, last) for r in rows if r.get("trackable")])
+    journal_add([_journal_row(r, signal_date, first, last, cfg["entry_window"][1])
+                 for r in rows if r.get("trackable")])
     return _finish_run(run_id, "ok", {
         "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
-        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:SHORTLIST_SIZE]],
+        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:cfg["shortlist"]]],
         "journal_records": sum(1 for r in rows if r.get("trackable")), "tracking": tracked,
+        "rule_version": get_config().rule_version,
     })
 
 
