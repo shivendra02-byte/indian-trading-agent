@@ -192,7 +192,7 @@ class DecisionConfig(_Strict):
     version: int
     global_: GlobalCfg = Field(alias="global")
     instruments: dict[str, InstrumentCfg]
-    strategies: dict[Literal["pullback", "breakout", "range_reversal"], StrategyCfg]
+    strategies: dict[Literal["pullback", "breakout", "range_reversal", "orb"], StrategyCfg]
     rule_version: str = ""
 
     def instrument(self, name: str) -> InstrumentCfg:

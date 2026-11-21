@@ -18,6 +18,7 @@ from tradingagents.utils.market_calendar import IST, NSE
 
 HISTORY_DAILY_YEARS = 3
 HISTORY_HOURLY_MONTHS = 12
+HISTORY_10MIN_MONTHS = 24        # ORB: the most liquid stocks + NIFTY only
 
 # Live progress of the history download, read by GET /api/rule-backtests/history.
 PROGRESS: dict = {"status": "idle"}
@@ -69,7 +70,8 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
     """Daily and hourly spot history for every F&O stock and NIFTY.
 
     Daily: ``daily_years`` (the first ~300 sessions are indicator warm-up).
-    Hourly: ``hourly_months``. About 2 requests per series per year at 3/s;
+    Hourly: ``hourly_months``. 10-minute: 24 months for the ORB stocks and NIFTY
+    (the most liquid stocks by today's turnover). About 2 requests per series per year at 3/s;
     ~200 series take roughly 5-10 minutes the first time, seconds afterwards."""
     now = _naive_ist(datetime.now(IST))
     daily_start = now - timedelta(days=int(daily_years * 365))
@@ -80,6 +82,17 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
         if inst:
             tokens.append((index, inst["instrument_token"]))
     tokens += [(s["symbol"], s["spot_token"]) for s in fno_universe() if s["spot_token"]]
+    ten_min = set()
+    try:
+        from backend.signals.orb import orb_universe, settings as orb_settings
+        if orb_settings()["enabled"]:
+            ten_min = {s["spot_token"] for s in orb_universe(now.date())}
+            nifty = spot_instrument("NIFTY")
+            if nifty:
+                ten_min.add(nifty["instrument_token"])
+    except Exception:
+        pass
+    ten_min_start = now - timedelta(days=HISTORY_10MIN_MONTHS * 31)
     saved, errors = 0, []
     _set_progress(status="running", started_at=now.isoformat(timespec="seconds"), finished_at=None,
                   done=0, total=len(tokens), current=None, candles_saved=0, errors=[], message=None)
@@ -89,6 +102,8 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
             try:
                 saved += backfill_series(client, token, "day", daily_start, now)
                 saved += backfill_series(client, token, "60minute", hourly_start, now)
+                if token in ten_min:
+                    saved += backfill_series(client, token, "10minute", ten_min_start, now)
             except Exception as exc:
                 from backend.brokers.kite import KiteAuthExpired, _is_auth_error
                 if _is_auth_error(exc):

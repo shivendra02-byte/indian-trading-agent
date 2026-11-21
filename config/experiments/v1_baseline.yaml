@@ -123,6 +123,8 @@ instruments:
     max_spread_pct: 0.1
     min_primary_bars: 60
     htf_score_tf: 4h
+    orb_enabled: true
+    orb_universe_size: 25
   index_futures:
     enabled: true
     primary_tf: 60minute
@@ -285,3 +287,25 @@ strategies:
     min_range_atr: 2.0
     requires_regime: null
     volume_reference: previous_bars
+  orb:
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 1.5
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 20
+    range_minutes: 30
+    bar_minutes: 10
+    wide_range_atr: 0.6
+    min_range_atr: 0.15
+    max_range_atr: 1.2
+    max_gap_pct: 3.0
+    entry_valid_bars: 2
+    exit_time: '15:15'
+    score_weights:
+      volume: 30
+      nifty_alignment: 25
+      relative_strength: 15
+      range_quality: 15
+      close_strength: 15

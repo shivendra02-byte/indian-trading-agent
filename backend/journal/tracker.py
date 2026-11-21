@@ -63,10 +63,15 @@ def cash_swing_bars(token: int, entry_date: str, time_stop_date: str) -> tuple[l
 
 
 def hourly_bars(rec: dict) -> tuple[list[dict], str | None]:
-    """60-minute bars of the traded contract after the signal bar, with ``eod`` on
-    each day's last bar. Days fully in the past must be complete."""
+    """Intraday bars of the traded contract after the signal bar (60-minute, or the
+    record's ``extra.bar_interval`` — 10-minute for ORB), with ``eod`` on each
+    day's last bar. Days fully in the past must be complete. Records with an
+    ``extra.exit_time`` (ORB) exit with the bar that ends at/after that time."""
     exchange = "MCX" if rec["exchange"] == "MCX" else "NSE"
-    bars = [b for b in get_candles(rec["instrument_token"], "60minute",
+    extra = rec.get("extra") or {}
+    interval = extra.get("bar_interval", "60minute")
+    bar_minutes = int(extra.get("bar_minutes", 60))
+    bars = [b for b in get_candles(rec["instrument_token"], interval,
                                    since=datetime.fromisoformat(rec["signal_ts"]))
             if b["ts"] > rec["signal_ts"]]
     if not bars:
@@ -82,10 +87,13 @@ def hourly_bars(rec: dict) -> tuple[list[dict], str | None]:
         last_end = day_bars[-1]["ts"][11:16]
         for b in day_bars:
             b["eod"] = False
-        # The last hourly bar of a session starts within the final hour before the close.
-        day_bars[-1]["eod"] = day < today or _minutes(last_end) + 60 >= _minutes(close)
+        # The last bar of a session starts within the final bar length before the close.
+        day_bars[-1]["eod"] = day < today or _minutes(last_end) + bar_minutes >= _minutes(close)
         if day < today and not day_bars[-1]["eod"]:
-            problem = f"incomplete hourly bars on {day}"
+            problem = f"incomplete {interval} bars on {day}"
+    if extra.get("exit_time"):
+        from backend.signals.orb import mark_exit
+        bars = mark_exit(bars, extra["exit_time"], bar_minutes)   # the time stop is the same day
     return bars, problem
 
 

@@ -35,7 +35,7 @@ from backend.signals.regime import current_regime, label_series, regime_at
 from backend.signals.setups import _relative_strength_points, evaluate
 from tradingagents.utils.market_calendar import NSE, is_trading_day
 
-SEGMENTS = ("cash_swing", "cup_handle", "stock_futures_proxy", "index_futures_proxy")
+SEGMENTS = ("cash_swing", "cup_handle", "stock_futures_proxy", "orb_proxy", "index_futures_proxy")
 _COMMON = [
     "Portfolio limits are not applied: every candidate is counted on its own.",
     "Only RBI and Budget dates are checked for market-wide events.",
@@ -58,6 +58,12 @@ LIMITATIONS = {
         "Futures are approximated by the spot stock, because expired contracts cannot be downloaded.",
         "No historical F&O ban list, bid-ask spreads, open interest or company results dates, so those "
         "filters are not applied.",
+        *_COMMON],
+    "orb_proxy": [
+        "Universe is the most liquid F&O stocks by today's turnover (survivorship bias).",
+        "Stock futures are approximated by the spot stock (10-minute bars), because expired contracts cannot "
+        "be downloaded; no open interest, F&O ban list, bid-ask spreads or results dates.",
+        "10-minute history covers about 24 months.",
         *_COMMON],
     "index_futures_proxy": [
         "NIFTY and BANKNIFTY futures are approximated by the index, because expired contracts cannot be "
@@ -519,6 +525,88 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
     return trades
 
 
+def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
+            progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
+    """Opening range breakout on 10-minute spot bars of the most liquid stocks
+    (top N by 20-day turnover before ``start``). First breakout per stock per day,
+    exit at ``exit_time`` the same day."""
+    from backend.signals.orb import evaluate_orb, mark_exit
+    from backend.signals.orb import settings as orb_settings
+
+    cfg = get_config()
+    oc = orb_settings()
+    min_score = cfg.global_.scoring.min_shortlist_score
+    n_or = oc["range_minutes"] // oc["bar_minutes"]
+    last_min = int((cfg.instrument("stock_futures").model_extra or {}).get("no_entry_last_minutes", 30))
+    cutoff = (datetime.combine(date.today(), time(15, 30)) - timedelta(minutes=last_min)).time()
+    nifty_inst = spot_instrument("NIFTY")
+    nifty10 = get_candles(nifty_inst["instrument_token"], "10minute", limit=200000) if nifty_inst else []
+    nifty_days: dict[str, list[dict]] = {}
+    for b in nifty10:
+        nifty_days.setdefault(b["ts"][:10], []).append(b)
+    blocked_cache: dict = {}
+    days = [d for d in _trading_days(start, end) if not _market_blocked(d, d, blocked_cache)]
+
+    ranked = []
+    for stock in symbols:
+        daily = get_candles(stock["spot_token"], "day", limit=5000)
+        before = [b for b in daily if b["ts"][:10] < start.isoformat()][-20:]
+        if len(before) >= 20:
+            ranked.append((avg_turnover(before), stock, daily))
+    chosen = sorted(ranked, key=lambda x: -x[0])[:oc["universe_size"]]
+
+    trades = []
+    for n, (_, stock, daily) in enumerate(chosen, 1):
+        bars = get_candles(stock["spot_token"], "10minute", limit=200000)
+        by_day: dict[str, list[dict]] = {}
+        for b in bars:
+            by_day.setdefault(b["ts"][:10], []).append(b)
+        d_index = [b["ts"][:10] for b in daily]
+        history_days: list[str] = []
+        for day_key in sorted(by_day):
+            d = date.fromisoformat(day_key)
+            day_bars = by_day[day_key]
+            prev_bars = [b for k in history_days[-oc["volume_days"]:] for b in by_day[k]]
+            history_days.append(day_key)
+            if d not in days or len(day_bars) <= n_or:
+                continue
+            k = bisect.bisect_left(d_index, day_key)
+            prev_daily = daily[max(0, k - 60):k]
+            if len(prev_daily) < 30:
+                continue
+            nday = nifty_days.get(day_key, [])
+            for j in range(n_or, len(day_bars)):
+                sig = day_bars[j]
+                signal_end = datetime.fromisoformat(sig["ts"]) + timedelta(minutes=oc["bar_minutes"])
+                if signal_end.time() > cutoff:
+                    break
+                c = evaluate_orb(day_bars[:j + 1], prev_daily, prev_bars=prev_bars,
+                                 nifty_day_bars=[b for b in nday if b["ts"] <= sig["ts"]] or None, cfg=oc)
+                if c.get("reject_reason") == "no close outside the opening range":
+                    continue
+                if c.get("trackable"):
+                    path = mark_exit(day_bars[j + 1:], oc["exit_time"], oc["bar_minutes"])
+                    if path:
+                        fill_until = min(signal_end + timedelta(minutes=oc["entry_valid_bars"] * oc["bar_minutes"]),
+                                         datetime.combine(d, cutoff))
+                        outcome = _simulate(c, path, fill_until.isoformat(timespec="seconds"), d)
+                        c["regime"] = None
+                        rec = _record(c, stock["symbol"], sig["ts"], _decision(c, min_score), outcome)
+                        rec.update(data="10minute", untested=None, stop_type=c["stop_type"])
+                        trades.append(rec)
+                break   # first breakout of the day only
+        progress(f"{n}/{len(chosen)} stocks")
+    by_day_trades: dict[str, list[dict]] = {}
+    for t in trades:
+        if t["decision"] == "passed":
+            by_day_trades.setdefault(t["signal_ts"][:10], []).append(t)
+    per_day = cfg.instrument("stock_futures").shortlist_per_scan
+    for group in by_day_trades.values():
+        for t in sorted(group, key=lambda x: x["score"], reverse=True)[:per_day]:
+            t["shortlisted"] = True
+    return trades
+
+
 def mark_shortlist(trades: list[dict], per_scan: int) -> None:
     """Top ``per_scan`` by score among candidates that passed every rule, per scan time."""
     by_scan: dict[str, list[dict]] = {}
@@ -573,7 +661,7 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
             "all_trackable": block(closed),
         },
         "by_setup": by(lambda t: f"{t['setup']} {t['direction']}"),
-        "by_regime": by(lambda t: t["regime"] or "?"),
+        "by_regime": by(lambda t: t["regime"] or "n/a (intraday)" if t.get("setup") == "orb" else t["regime"] or "?"),
         "by_setup_regime": by(lambda t: f"{t['setup']} {t['direction']} | {t['regime'] or '?'}"),
         "by_data": by(lambda t: {"hourly": "hourly data", "daily_only": "daily only (older history)"}
                       .get(t.get("data") or "hourly", t.get("data"))),
@@ -581,6 +669,7 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
         "by_exit": by(lambda t: t["exit_reason"] or "?"),
         "by_month": by(lambda t: (t["exit_ts"] or "")[:7]),
         "by_year": by(lambda t: (t.get("signal_ts") or "?")[:4]),
+        "by_stop_type": by(lambda t: t.get("stop_type") or "swing"),
         "soft_checks": {
             name: {"passed": block([t for t in closed if (t.get("soft_checks") or {}).get(name) is True]),
                    "failed": block([t for t in closed if (t.get("soft_checks") or {}).get(name) is False])}
@@ -642,7 +731,7 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             symbols = symbols[:max_symbols] if max_symbols else symbols
             if not symbols:
                 raise RuntimeError("no instruments to test; run the history download first")
-            runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle,
+            runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle, "orb_proxy": run_orb,
                       "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures}[segment]
             trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg),
                             daily_only=daily_only)
