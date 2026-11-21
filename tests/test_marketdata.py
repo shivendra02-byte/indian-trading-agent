@@ -157,6 +157,16 @@ class InstrumentAndCandleTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual((bars[0]["open"], bars[0]["high"], bars[0]["close"]), (9, 13, 12.5))
         self.assertEqual(bars[1]["volume"], 30)
 
+    def test_weekly_bars_group_by_monday_and_skip_holidays(self):
+        from backend.marketdata.candles import resample_weekly
+        days = ["2026-11-19", "2026-11-20", "2026-11-23", "2026-11-25", "2026-11-27"]  # 24th holiday
+        rows = [{"ts": f"{d}T00:00:00", "open": i, "high": i + 2, "low": i - 1, "close": i + 1, "volume": 5}
+                for i, d in enumerate(days, start=10)]
+        weeks = resample_weekly(rows)
+        self.assertEqual([w["ts"][:10] for w in weeks], ["2026-11-16", "2026-11-23"])
+        self.assertEqual((weeks[1]["open"], weeks[1]["high"], weeks[1]["low"], weeks[1]["close"]), (12, 16, 11, 15))
+        self.assertEqual(weeks[1]["volume"], 15)
+
     def test_jobs_skip_when_paused(self):
         from backend.marketdata import jobs
         from backend.system_state import set_paused

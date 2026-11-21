@@ -148,3 +148,29 @@ def resample_4h(rows: list[dict], exchange: str) -> list[dict]:
             b["volume"] += r.get("volume") or 0
             b["oi"] = r.get("oi")
     return [buckets[k] for k in sorted(buckets)]
+
+
+def resample_weekly(rows: list[dict]) -> list[dict]:
+    """Group daily bars into Monday-anchored weekly bars (cash swing context).
+
+    Holidays simply leave fewer days in a week; the bar's ts is that week's
+    Monday even when Monday itself was a holiday.
+    """
+    weeks: dict[str, dict] = {}
+    for r in rows:
+        day = datetime.fromisoformat(r["ts"]).date()
+        monday = (day - timedelta(days=day.weekday())).isoformat()
+        w = weeks.get(monday)
+        if w is None:
+            weeks[monday] = {
+                "ts": f"{monday}T00:00:00", "open": r["open"], "high": r["high"],
+                "low": r["low"], "close": r["close"], "volume": r.get("volume") or 0,
+                "oi": r.get("oi"),
+            }
+        else:
+            w["high"] = max(w["high"], r["high"])
+            w["low"] = min(w["low"], r["low"])
+            w["close"] = r["close"]
+            w["volume"] += r.get("volume") or 0
+            w["oi"] = r.get("oi")
+    return [weeks[k] for k in sorted(weeks)]

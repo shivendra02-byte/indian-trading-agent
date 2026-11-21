@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from backend.brokers.kite import get_kite_status
 from backend.marketdata import jobs
-from backend.marketdata.candles import INTERVALS, get_candles, resample_4h
+from backend.marketdata.candles import INTERVALS, get_candles, resample_4h, resample_weekly
 from backend.marketdata.instruments import ban_status, fno_universe, instrument_summary
 from backend.marketdata.store import ensure_marketdata_tables
 from backend.system_state import get_pause_state, set_paused
@@ -84,7 +84,7 @@ def universe():
 @router.get("/api/marketdata/candles")
 def candles(
     token: int = Query(..., ge=1),
-    interval: Literal["10minute", "60minute", "day", "4h"] = "60minute",
+    interval: Literal["10minute", "60minute", "day", "4h", "week"] = "60minute",
     limit: int = Query(200, ge=1, le=5000),
 ):
     ensure_marketdata_tables()
@@ -97,6 +97,8 @@ def candles(
     exchange = "MCX" if inst["exchange"] == "MCX" else "NSE"
     if interval == "4h":
         rows = resample_4h(get_candles(token, "60minute", limit=limit * 4 + 8), exchange)[-limit:]
+    elif interval == "week":
+        rows = resample_weekly(get_candles(token, "day", limit=limit * 5 + 5))[-limit:]
     else:
         assert interval in INTERVALS
         rows = get_candles(token, interval, limit=limit)
