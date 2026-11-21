@@ -15,6 +15,8 @@ from datetime import date, datetime, time
 from typing import Callable
 
 from backend.db import get_db
+from backend.journal.store import add_records as journal_add
+from backend.journal.tracker import track_open_records
 from backend.marketdata.candles import get_candles, resample_weekly
 from backend.marketdata.instruments import fno_universe, spot_instrument
 from backend.signals import events
@@ -135,11 +137,35 @@ def _finish_run(run_id: int, status: str, detail: dict) -> dict:
     return {"run_id": run_id, "status": status, **detail}
 
 
+def _journal_row(r: dict, signal_date: date, first: date, last: date) -> dict:
+    if not r.get("valid"):
+        decision = "soft_rejected"
+    elif r.get("shortlisted"):
+        decision = "shortlisted"
+    elif r["score"] >= SHORTLIST_SCORE:
+        decision = "not_selected"
+    else:
+        decision = "below_score"
+    return {
+        "segment": SEGMENT, "symbol": r["symbol"], "instrument_token": r["token"], "exchange": "NSE",
+        "signal_date": signal_date.isoformat(), "setup": r["setup"], "direction": r["direction"],
+        "regime": r.get("regime"), "score": r.get("score"), "factors": r.get("factors"),
+        "soft_checks": r.get("soft_checks"), "decision": decision, "reject_reason": r.get("reject_reason"),
+        "entry": r["entry"], "stop": r["stop"], "target": r["target"], "rr": r.get("rr"), "atr": r.get("atr"),
+        "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T11:00",
+        "time_stop_date": last.isoformat(),
+        "extra": {k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend", "rs_vs_nifty_pct",
+                                         "risk_mult", "turnover_cr")},
+    }
+
+
 def run_scan(now: datetime | None = None, force: bool = False,
              results_fetch: Callable[[str], date | None] | None = None) -> dict:
     ensure_scan_tables()
     now = now or datetime.now(IST).replace(tzinfo=None)
     today = now.date()
+    # Outcome tracking is pure Python on stored candles: it runs even while paused.
+    tracked = track_open_records()
     if is_paused():
         return {"status": "skipped", "reason": "paused"}
     if not is_trading_day(today):
@@ -193,10 +219,11 @@ def run_scan(now: datetime | None = None, force: bool = False,
             continue
         candidates = evaluate(bars, resample_weekly(bars), regime["regime"], directions=("long",),
                               is_stock=True, benchmark=nifty_bars, max_stop_pct=MAX_STOP_PCT)
-        valid = [c for c in candidates if c["valid"]]
-        if valid:
-            for c in valid:
-                rows.append({**c, "symbol": symbol, "turnover_cr": round(turnover / 1e7, 1)})
+        trackable = [c for c in candidates if c.get("trackable")]
+        if trackable:
+            for c in trackable:
+                rows.append({**c, "symbol": symbol, "token": stock["spot_token"],
+                             "turnover_cr": round(turnover / 1e7, 1)})
         else:
             reasons = "; ".join(sorted({c["reject_reason"] for c in candidates if c.get("reject_reason")}))
             rows.append({"symbol": symbol, "valid": False, "regime": regime["regime"], "reject_reason": reasons})
@@ -206,10 +233,12 @@ def run_scan(now: datetime | None = None, force: bool = False,
     for r in ranked[:SHORTLIST_SIZE]:
         r["shortlisted"] = True
     _save(run_id, signal_date.isoformat(), rows)
+    journal_add([_journal_row(r, signal_date, first, last) for r in rows if r.get("trackable")])
     return _finish_run(run_id, "ok", {
         "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:SHORTLIST_SIZE]],
+        "journal_records": sum(1 for r in rows if r.get("trackable")), "tracking": tracked,
     })
 
 

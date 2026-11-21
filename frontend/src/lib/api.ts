@@ -178,6 +178,15 @@ export const getSchedulerStatus = () => fetchAPI(`/api/scheduler/status`);
 export const getCashSwingScan = (signalDate?: string) =>
   fetchAPI(`/api/scans/cash-swing${signalDate ? `?signal_date=${encodeURIComponent(signalDate)}` : ""}`);
 export const runCashSwingScan = () => fetchAPI(`/api/scans/cash-swing/run`, { method: "POST" });
+export const getJournal = (params: { segment?: string; decision?: string; status?: string; limit?: number } = {}) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
+  const qs = q.toString();
+  return fetchAPI(`/api/journal${qs ? `?${qs}` : ""}`);
+};
+export const getLearningReport = (segment?: string) =>
+  fetchAPI(`/api/journal/learning${segment ? `?segment=${encodeURIComponent(segment)}` : ""}`);
+export const trackJournal = () => fetchAPI(`/api/journal/track`, { method: "POST" });
 
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);

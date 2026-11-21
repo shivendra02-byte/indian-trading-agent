@@ -64,6 +64,7 @@ const navGroups: NavGroup[] = [
   {
     title: "VALIDATE",
     items: [
+      { href: "/journal", label: "Trade Journal", icon: History, hint: "Every signal, MFE/MAE, learning" },
       { href: "/performance", label: "Performance", icon: Award, hint: "Strategy win rates" },
       { href: "/simulation", label: "Simulation", icon: FlaskConical, hint: "Paper trade + backtest" },
       { href: "/insights", label: "Learning Insights", icon: Brain, hint: "What works for YOU" },
