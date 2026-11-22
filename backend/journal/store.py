@@ -19,6 +19,8 @@ from typing import Any
 from backend.db import get_db
 
 JSON_FIELDS = ("factors", "soft_checks", "panel", "trail", "extra", "stages")
+USER_COLUMNS = {"user_action": "TEXT", "user_fill_price": "REAL", "user_exit_price": "REAL", "user_note": "TEXT"}
+USER_ACTIONS = ("taken", "skipped")
 
 
 def _migrate(conn) -> None:
@@ -102,6 +104,10 @@ def ensure_journal_table() -> None:
         for col in ("stages", "rule_version"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE trade_journal ADD COLUMN {col} TEXT")
+        # What you actually did (execution is manual): taken / skipped, your fills, a note.
+        for col, kind in USER_COLUMNS.items():
+            if col not in cols:
+                conn.execute(f"ALTER TABLE trade_journal ADD COLUMN {col} {kind}")
 
 
 def add_records(rows: list[dict]) -> int:
@@ -146,3 +152,23 @@ def update_record(record_id: int, fields: dict[str, Any]) -> None:
     values = [json.dumps(v) if k in JSON_FIELDS and v is not None else v for k, v in fields.items()]
     with get_db() as conn:
         conn.execute(f"UPDATE trade_journal SET {sets} WHERE id = ?", (*values, record_id))
+
+
+def get_record(record_id: int) -> dict | None:
+    rows = list_records("id = ?", (record_id,), limit=1)
+    return rows[0] if rows else None
+
+
+def set_user_action(record_id: int, action: str | None, fill_price: float | None = None,
+                    exit_price: float | None = None, note: str | None = None) -> dict | None:
+    """Record what you did with a signal. Only these four columns change; the
+    simulated outcome stays as it is so the two can be compared."""
+    if action is not None and action not in USER_ACTIONS:
+        raise ValueError(f"action must be one of {USER_ACTIONS} or empty")
+    if get_record(record_id) is None:
+        return None
+    with get_db() as conn:
+        conn.execute("UPDATE trade_journal SET user_action = ?, user_fill_price = ?, user_exit_price = ?, "
+                     "user_note = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                     (action, fill_price, exit_price, (note or None) and note[:500], record_id))
+    return get_record(record_id)

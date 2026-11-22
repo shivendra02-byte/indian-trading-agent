@@ -22,6 +22,7 @@ import {
   Brain,
   PieChart,
   LogOut,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -67,6 +68,7 @@ const navGroups: NavGroup[] = [
     title: "VALIDATE",
     items: [
       { href: "/journal", label: "Trade Journal", icon: History, hint: "Every signal, MFE/MAE, learning" },
+      { href: "/postmortem", label: "Weekly Post-mortem", icon: ClipboardCheck, hint: "Saturday review of the week's trades" },
       { href: "/rule-backtests", label: "Rule Backtest", icon: FlaskConical, hint: "Compare rule versions on history" },
       { href: "/performance", label: "Performance", icon: Award, hint: "Strategy win rates" },
       { href: "/simulation", label: "Simulation", icon: FlaskConical, hint: "Paper trade + backtest" },

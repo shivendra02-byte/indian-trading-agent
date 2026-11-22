@@ -27,6 +27,7 @@ from typing import Sequence
 
 from backend.decision.config import get_config
 from backend.signals.indicators import atr
+from backend.signals.selection import choose_shortlist
 from backend.signals.setups import stage
 
 SETUP = "orb"
@@ -320,6 +321,7 @@ def run_orb_scan(now: datetime | None = None, client=None, force: bool = False) 
                 r["stages"].append(stage("eligibility", "fail", r["reject_reason"]))
     ranked = sorted((r for r in rows if r.get("valid") and r.get("trackable") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
+    ranked = choose_shortlist(ranked, None, lambda r: "stock_futures")
     for r in rows:
         if r.get("trackable"):
             r["shortlisted"] = r in ranked
