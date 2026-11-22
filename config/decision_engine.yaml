@@ -102,7 +102,7 @@ instruments:
     context_tfs: [day]             # passed to the AI panel
     context_must_not_oppose: [day]
     directions: [long, short]
-    shortlist_per_scan: 5
+    shortlist_per_scan: 2          # agreed 22 Nov 2026 (was 5): keeps AI reviews within the daily limit
     entry_valid_bars: 2
     hold_trading_days: 3
     no_entry_first_minutes: 15
