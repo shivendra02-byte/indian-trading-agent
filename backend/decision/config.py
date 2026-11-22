@@ -167,6 +167,30 @@ class OptionDataCfg(_Strict):
     bse_url: str = "https://www.bseindia.com/download/Bhavcopy/Derivative/BhavCopy_BSE_FO_0_0_0_{yyyymmdd}_F_0000.CSV"
 
 
+class DivergenceCfg(_Strict):
+    """Regular RSI divergence on daily bars (trend-reversal warning). Alerts are
+    information only: sent whether or not anything is shortlisted, never reviewed
+    by the AI, never a paper trade. Every alert is tracked so its record can be judged."""
+    enabled: bool = True
+    rsi_period: int = Field(default=14, ge=2, le=50)
+    swing_bars: int = Field(default=2, ge=1, le=5)            # fractal: k bars each side (2 = 5-bar swing)
+    min_bars_apart: int = Field(default=5, ge=2, le=100)      # between the two swing points
+    max_bars_apart: int = Field(default=60, ge=5, le=250)
+    bullish_rsi_max: float = Field(default=40, ge=0, le=100)  # first low's RSI must be at or below this
+    bearish_rsi_min: float = Field(default=60, ge=0, le=100)  # first high's RSI must be at or above this
+    min_rsi_gap: float = Field(default=2.0, ge=0, le=50)      # RSI must differ by at least this
+    trend_ema: int = Field(default=50, ge=5, le=400)          # reversal needs a prior trend: below (bullish) / above (bearish) this EMA
+    require_trend: bool = True
+    stop_atr: float = Field(default=0.25, ge=0, le=3)         # risk unit: beyond the second swing by this many ATR
+    track_bars: int = Field(default=20, ge=5, le=120)         # outcome window
+    min_turnover_cr: float = Field(default=50, ge=0)          # stocks only: 20-day average, crore
+    include_stocks: bool = True
+    include_indices: bool = True
+    include_mcx: bool = True
+    notify_telegram: bool = True
+    max_alerts_per_message: int = Field(default=25, ge=1, le=100)
+
+
 class SelectionCfg(_Strict):
     """How non-safety technical checks are applied.
 
@@ -202,6 +226,7 @@ class GlobalCfg(_Strict):
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
     option_data: OptionDataCfg = OptionDataCfg()
+    divergence: DivergenceCfg = DivergenceCfg()
 
 
 class InstrumentCfg(BaseModel):

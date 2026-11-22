@@ -241,6 +241,14 @@ export const runBackup = (data: { kind: "essentials" | "full"; to_telegram?: boo
   fetchAPI(`/api/backups`, { method: "POST", body: JSON.stringify(data) });
 export const backupDownloadUrl = (name: string) => `${getApiBase()}/api/backups/${encodeURIComponent(name)}/download`;
 
+// RSI divergence alerts (information only)
+export const getDivergence = (status?: "open" | "closed") =>
+  fetchAPI(`/api/divergence${status ? `?status=${status}` : ""}`);
+export const runDivergenceScan = (group: "nse" | "mcx") =>
+  fetchAPI(`/api/divergence/run?group=${group}`, { method: "POST" });
+export const getDivergenceStudy = () => fetchAPI(`/api/divergence/study`);
+export const runDivergenceStudy = () => fetchAPI(`/api/divergence/study`, { method: "POST" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>

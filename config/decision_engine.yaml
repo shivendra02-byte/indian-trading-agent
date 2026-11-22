@@ -86,6 +86,25 @@ global:
     notify_telegram: true          # Telegram alert for every approved trade
     notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
     timeout_seconds: 90
+  divergence:                      # RSI divergence alerts on daily bars, information only (asked 22 Nov 2026)
+    enabled: true
+    rsi_period: 14
+    swing_bars: 2                  # 5-bar fractal swings
+    min_bars_apart: 5              # the two swing points are 5-60 daily bars apart
+    max_bars_apart: 60
+    bullish_rsi_max: 40            # bullish: price lower low, RSI higher low, first RSI low <= 40
+    bearish_rsi_min: 60            # bearish: price higher high, RSI lower high, first RSI high >= 60
+    min_rsi_gap: 2.0
+    trend_ema: 50                  # needs a trend to reverse: bullish below the 50 EMA, bearish above
+    require_trend: true
+    stop_atr: 0.25                 # outcome tracking: risk = beyond the second swing + 0.25 ATR
+    track_bars: 20
+    min_turnover_cr: 50
+    include_stocks: true
+    include_indices: true
+    include_mcx: true
+    notify_telegram: true
+    max_alerts_per_message: 25
   option_data:                     # end-of-day NSE/BSE option files for the spread strategy (data only, asked 22 Nov 2026)
     enabled: true
     symbols: {NSE: [NIFTY, BANKNIFTY], BSE: [SENSEX]}
