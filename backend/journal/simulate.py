@@ -9,8 +9,18 @@ later by the backtester. Conservative conventions:
 * A gap through the stop exits at the open (no free stop); a gap through the
   target exits at the open too.
 * MFE/MAE are measured from the fill, in R and in price.
+* Exit management (``global.exit_management`` in the YAML) decides the real
+  exit: ``fixed`` (stop/target/time stop only), ``breakeven`` (after
+  ``breakeven_at_r`` in favour the stop moves to entry + ``breakeven_lock_r``)
+  or ``breakeven_trail`` (breakeven as above, then from ``trail_start_r`` the
+  stop trails ``trail_atr`` ATR behind the best close, never below breakeven).
+  The stop only moves after a bar has closed, and only to a level that bar
+  closed beyond: a bar that reaches 1R and closes back below the entry leaves
+  the original stop in place until a later bar closes above breakeven.
 * Trailing shadow exit: after 1.5R in favour, the stop moves to breakeven, then
-  trails 2 ATR behind the best close. Same target and time stop.
+  trails 2 ATR behind the best close. Same target and time stop. Recorded next
+  to the real exit for comparison, as is the plain fixed exit when the real
+  exit is managed.
 """
 
 from __future__ import annotations
@@ -28,36 +38,56 @@ def _touch(bar: dict, level: float, s: int, side: str) -> bool:
     return bar["high"] >= level if s > 0 else bar["low"] <= level
 
 
+EXIT_MODES = ("fixed", "breakeven", "breakeven_trail")
+
+
 def _run_exit(bars: Sequence[dict], start: int, fill: float, stop: float, target: float, s: int,
               time_stop_date: str, atr: float | None, trailing: bool, fill_bar_done: bool,
-              trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR) -> dict:
+              trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR,
+              breakeven_at_r: float | None = None, breakeven_lock_r: float = 0.0) -> dict:
+    """``trailing``: trail ``trail_atr`` ATR behind the best close once the trade
+    is ``trail_start_r`` in favour (floor: breakeven). ``breakeven_at_r``: move
+    the stop to fill + ``breakeven_lock_r`` R once that far in favour."""
     risk = s * (fill - stop)
     best_fav = worst_adv = 0.0                     # price distance from fill
     best_close = fill
     trail = stop
+    breakeven = fill + s * breakeven_lock_r * risk
+
+    def reason_for(level: float, gap: bool) -> str:
+        if level == stop:
+            return "gap_stop" if gap else "stop"
+        return "breakeven_stop" if abs(level - breakeven) < 1e-9 else "trail_stop"
     for i in range(start, len(bars)):
         b = bars[i]
         first = i == start and fill_bar_done       # the fill bar: no gap logic, open already used
         if not first:
             if s * (b["open"] - trail) <= 0:
-                return _exit(b, b["open"], "gap_stop" if trail == stop else "trail_stop", fill, risk, s,
+                return _exit(b, b["open"], reason_for(trail, True), fill, risk, s,
                              best_fav, max(worst_adv, s * (fill - b["open"])), i)
             if s * (b["open"] - target) >= 0:
                 return _exit(b, b["open"], "target", fill, risk, s, max(best_fav, s * (b["open"] - fill)), worst_adv, i)
         adverse = s * (fill - (b["low"] if s > 0 else b["high"]))
         favour = s * ((b["high"] if s > 0 else b["low"]) - fill)
         if _touch(b, trail, s, "adverse"):
-            reason = "stop" if trail == stop else "trail_stop"
-            return _exit(b, trail, reason, fill, risk, s, best_fav, max(worst_adv, s * (fill - trail)), i)
+            return _exit(b, trail, reason_for(trail, False), fill, risk, s, best_fav, max(worst_adv, s * (fill - trail)), i)
         if _touch(b, target, s, "favour"):
             return _exit(b, target, "target", fill, risk, s, max(best_fav, s * (target - fill)),
                          max(worst_adv, adverse), i)
         best_fav, worst_adv = max(best_fav, favour), max(worst_adv, adverse)
         if s * (b["close"] - best_close) > 0:
             best_close = b["close"]
-        if trailing and atr and best_fav >= trail_start_r * risk:
-            candidate = max(fill, best_close - trail_atr * atr) if s > 0 else min(fill, best_close + trail_atr * atr)
-            trail = max(trail, candidate) if s > 0 else min(trail, candidate)
+        managed = breakeven_at_r is not None
+        # Managed exits only move the stop to a level the bar closed beyond: a stop
+        # can't be placed on the wrong side of the market, so it waits for a better close.
+        if managed and best_fav >= breakeven_at_r * risk and s * (breakeven - trail) > 0 \
+                and s * (b["close"] - breakeven) > 0:
+            trail = breakeven
+        if trailing and atr and best_fav >= trail_start_r * risk and (not managed or s * (trail - breakeven) >= 0):
+            floor = breakeven if managed else fill
+            candidate = max(floor, best_close - trail_atr * atr) if s > 0 else min(floor, best_close + trail_atr * atr)
+            if not managed or s * (b["close"] - candidate) > 0:
+                trail = max(trail, candidate) if s > 0 else min(trail, candidate)
         if b["ts"][:10] >= time_stop_date and b.get("eod", True):
             return _exit(b, b["close"], "time_stop", fill, risk, s, best_fav, worst_adv, i)
     return {"status": "open", "mfe_r": round(best_fav / risk, 3), "mae_r": round(worst_adv / risk, 3),
@@ -70,14 +100,33 @@ def _exit(bar, price, reason, fill, risk, s, fav, adv, i) -> dict:
             "mae_r": round(adv / risk, 3), "exit_index": i}
 
 
+def _managed_kwargs(exit_rule: dict | None) -> dict | None:
+    """``_run_exit`` arguments for the real exit; None = fixed exit."""
+    rule = exit_rule or {}
+    mode = rule.get("mode", "fixed")
+    if mode not in EXIT_MODES:
+        raise ValueError(f"exit mode must be one of {EXIT_MODES}")
+    if mode == "fixed":
+        return None
+    kw = {"breakeven_at_r": float(rule.get("breakeven_at_r", 1.0)),
+          "breakeven_lock_r": float(rule.get("breakeven_lock_r", 0.0)), "trailing": False}
+    if mode == "breakeven_trail":
+        kw.update(trailing=True, trail_start_r=float(rule.get("trail_start_r", kw["breakeven_at_r"])),
+                  trail_atr=float(rule.get("trail_atr", TRAIL_ATR)))
+    return kw
+
+
 def simulate(*, direction: str, entry: float, stop: float, target: float, atr: float | None,
              bars: Sequence[dict], fill_until: str, time_stop_date: str,
-             trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR) -> dict:
+             trail_start_r: float = TRAIL_START_R, trail_atr: float = TRAIL_ATR,
+             exit_rule: dict | None = None) -> dict:
     """``bars``: chronological bars from the start of the entry window onward.
     ``fill_until``: last bar ts (exclusive) in which the limit entry may fill.
     ``time_stop_date``: exit at the close of the last bar of this date.
     Daily bars are end-of-day bars; intraday bars mark their last bar of the day
-    with ``eod=True`` (the caller sets it)."""
+    with ``eod=True`` (the caller sets it).
+    ``exit_rule``: ``global.exit_management`` as a dict (None = fixed exit).
+    ``trail_start_r`` / ``trail_atr``: the trailing *shadow* exit."""
     s = 1 if direction == "long" else -1
     fill = fill_i = None
     for i, b in enumerate(bars):
@@ -96,11 +145,19 @@ def simulate(*, direction: str, entry: float, stop: float, target: float, atr: f
     base = {"fill_ts": bars[fill_i]["ts"], "fill_price": round(fill, 4), "risk_per_unit": round(s * (fill - stop), 4)}
     if base["risk_per_unit"] <= 0:
         return {"status": "no_fill", "reason": "fill at or beyond the stop"}
+    keep = ("status", "exit_ts", "exit_price", "exit_reason", "pnl_r")
     fixed = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, trailing=False, fill_bar_done=True)
     trail = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, trailing=True, fill_bar_done=True,
                       trail_start_r=trail_start_r, trail_atr=trail_atr)
-    out = {**base, **{k: v for k, v in fixed.items() if k != "exit_index"}}
-    out["trail"] = {k: v for k, v in trail.items() if k in ("status", "exit_ts", "exit_price", "exit_reason", "pnl_r")}
+    managed = _managed_kwargs(exit_rule)
+    real = fixed
+    if managed is not None:
+        real = _run_exit(bars, fill_i, fill, stop, target, s, time_stop_date, atr, fill_bar_done=True, **managed)
+    out = {**base, **{k: v for k, v in real.items() if k != "exit_index"}}
+    out["trail"] = {k: v for k, v in trail.items() if k in keep}
+    if managed is not None:
+        out["exit_mode"] = (exit_rule or {}).get("mode")
+        out["fixed"] = {k: v for k, v in fixed.items() if k in keep}
     return out
 
 

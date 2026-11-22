@@ -123,7 +123,8 @@ def track_record(rec: dict) -> dict:
                       atr=rec.get("atr"), bars=bars, fill_until=rec["fill_until"],
                       time_stop_date=rec["time_stop_date"],
                       trail_start_r=get_config().global_.trailing_shadow.start_r,
-                      trail_atr=get_config().global_.trailing_shadow.trail_atr)
+                      trail_atr=get_config().global_.trailing_shadow.trail_atr,
+                      exit_rule=get_config().global_.exit_management.model_dump())
     status = result["status"]
     if status == "pending":
         return {}
@@ -131,10 +132,13 @@ def track_record(rec: dict) -> dict:
         return {"track_status": "no_fill", "no_fill_reason": result["reason"]}
     fields = {"fill_ts": result["fill_ts"], "fill_price": result["fill_price"],
               "mfe_r": result["mfe_r"], "mae_r": result["mae_r"], "trail": result["trail"]}
+    if result.get("fixed"):   # managed exit: keep the plain fixed exit for comparison
+        fields["extra"] = {**(rec.get("extra") or {}), "exit_mode": result["exit_mode"],
+                           "fixed_exit": result["fixed"]}
     if status == "open" or problem:
         fields["track_status"] = "open"
         if problem:
-            fields["extra"] = {**(rec.get("extra") or {}), "data_problem": problem}
+            fields["extra"] = {**(fields.get("extra") or rec.get("extra") or {}), "data_problem": problem}
         return fields
     s = 1 if rec["direction"] == "long" else -1
     qty, per_point = _size(rec, result["fill_price"], result["risk_per_unit"])

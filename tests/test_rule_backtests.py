@@ -216,6 +216,24 @@ class IndexAndDailyOnlyTests(EndToEndTests):
             self.assertEqual(t["symbol"], "NIFTY")
             self.assertEqual(t["untested"], ["volume", "oi"])
             self.assertIsNone((t["soft_checks"] or {}).get("volume"))
+        funnel = summary["funnel"]
+        self.assertGreater(funnel["counts"]["bars_evaluated"], 0)
+        self.assertGreater(sum(funnel["regime_days"].values()), 0)
+        self.assertTrue(funnel["rejections"])
+        self.assertEqual(summary["exit_mode"], "fixed")
+
+    def test_index_futures_with_sideways_mean_reversion_and_managed_exit(self):
+        from backend.marketdata.candles import save_candles
+        save_candles(256265, "60minute", hourly_series(date(2025, 11, 3), date(2026, 11, 20), start=20000, seed=9,
+                                                      volume=0))
+        summary, run = self._run("index_futures_proxy", "sideways_mr_1r")
+        self.assertEqual(run["status"], "done", run.get("progress"))
+        self.assertEqual(summary["exit_mode"], "breakeven_trail")
+        for t in run["trades"]:
+            if t["status"] == "closed":
+                self.assertIsNotNone(t["fixed_pnl_r"])     # the plain exit is kept for comparison
+            if t["regime"] == "SIDEWAYS" and t["setup"] in ("pullback", "breakout"):
+                self.assertNotEqual(t["decision"], "passed")
 
     def test_cash_swing_uses_daily_bars_before_hourly_history(self):
         from backend.backtest import engine

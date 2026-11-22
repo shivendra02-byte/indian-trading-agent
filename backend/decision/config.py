@@ -115,6 +115,27 @@ class TrailingCfg(_Strict):
     trail_atr: float = Field(gt=0)
 
 
+class ExitCfg(_Strict):
+    """The real exit (journal and backtests). ``fixed``: stop, target, time stop.
+    ``breakeven``: once ``breakeven_at_r`` in favour (on a closed bar), the stop
+    moves to entry + ``breakeven_lock_r`` R. ``breakeven_trail``: breakeven, then
+    from ``trail_start_r`` the stop trails ``trail_atr`` ATR behind the best
+    close (never below breakeven). The target and time stop stay in place."""
+    mode: Literal["fixed", "breakeven", "breakeven_trail"] = "fixed"
+    breakeven_at_r: float = Field(default=1.0, gt=0, le=5)
+    breakeven_lock_r: float = Field(default=0.0, ge=0, lt=1)
+    trail_start_r: float = Field(default=1.0, gt=0, le=5)
+    trail_atr: float = Field(default=2.0, gt=0, le=10)
+
+    @model_validator(mode="after")
+    def _order(self):
+        if self.breakeven_lock_r >= self.breakeven_at_r:
+            raise ValueError("breakeven_lock_r must be below breakeven_at_r")
+        if self.mode == "breakeven_trail" and self.trail_start_r < self.breakeven_at_r:
+            raise ValueError("trail_start_r must be at or above breakeven_at_r")
+        return self
+
+
 class SelectionCfg(_Strict):
     """How non-safety technical checks are applied.
 
@@ -128,6 +149,10 @@ class SelectionCfg(_Strict):
     htf_against_penalty: float = Field(default=20, ge=0, le=100)
     confirmation_against_penalty: float = Field(default=10, ge=0, le=100)   # per timeframe
     required_regime_penalty: float = Field(default=15, ge=0, le=100)
+    # Regimes where the setup × regime permission matrix is hard in both modes:
+    # a setup or direction not listed for the regime is never valid (still
+    # shadow-tracked for comparison). E.g. [SIDEWAYS] = range setups only there.
+    hard_permission_regimes: list[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"]] = []
 
 
 class GlobalCfg(_Strict):
@@ -140,8 +165,9 @@ class GlobalCfg(_Strict):
     geometry: GeometryCfg
     regime: RegimeCfg
     permissions: dict[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"],
-                      dict[Literal["pullback", "breakout", "range_reversal"], Permission]]
+                      dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion"], Permission]]
     trailing_shadow: TrailingCfg
+    exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
 
 
@@ -192,7 +218,7 @@ class DecisionConfig(_Strict):
     version: int
     global_: GlobalCfg = Field(alias="global")
     instruments: dict[str, InstrumentCfg]
-    strategies: dict[Literal["pullback", "breakout", "range_reversal", "orb"], StrategyCfg]
+    strategies: dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion", "orb"], StrategyCfg]
     rule_version: str = ""
 
     def instrument(self, name: str) -> InstrumentCfg:

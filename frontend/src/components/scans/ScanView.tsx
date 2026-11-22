@@ -68,6 +68,7 @@ const SETUP_LABEL: Record<string, string> = {
   pullback: "Trend pullback",
   breakout: "Volume breakout",
   range_reversal: "Range reversal",
+  mean_reversion: "Mean reversion (band)",
   cup_handle: "Cup and handle",
   orb: "Opening range breakout",
 };
