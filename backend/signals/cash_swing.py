@@ -273,7 +273,10 @@ def run_scan(now: datetime | None = None, force: bool = False,
     _save(run_id, signal_date.isoformat(), rows)
     journal_add([_journal_row(r, signal_date, first, last, cfg["entry_window"][1])
                  for r in rows if r.get("trackable")])
+    from backend.journal.panel import review_after_scan
+    panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
+        "ai_panel": panel,
         "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],

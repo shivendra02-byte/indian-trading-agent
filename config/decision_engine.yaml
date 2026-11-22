@@ -80,6 +80,12 @@ global:
   trailing_shadow:                 # recorded next to the fixed exit; not used for exits
     start_r: 1.5
     trail_atr: 2.0
+  ai_panel:                        # agreed 22 Nov 2026: AI reviews every shortlisted trade
+    enabled: true
+    min_confidence: 60             # approve only at 60+ confidence
+    notify_telegram: true          # Telegram alert for every approved trade
+    notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
+    timeout_seconds: 90
   selection:                       # strict: technical checks reject; scored: two-stage (see config/experiments/two_stage.yaml)
     mode: strict
     htf_against_penalty: 20

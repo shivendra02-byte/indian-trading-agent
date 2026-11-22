@@ -84,3 +84,12 @@ def postmortem_get(week_start: date):
 @router.post("/postmortem/run")
 def postmortem_run(data: PostmortemRun):
     return postmortem.run_weekly_postmortem(data.week_start, with_ai=data.with_ai)
+
+
+# --- AI panel ------------------------------------------------------------------------------
+
+@router.post("/panel/run")
+def panel_run():
+    """Review pending shortlisted trades now (the scans also do this after every run)."""
+    from backend.journal.panel import review_pending
+    return review_pending()

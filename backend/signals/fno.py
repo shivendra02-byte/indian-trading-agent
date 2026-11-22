@@ -347,7 +347,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         days = [d for d in hold if d < expiry] or [hold[0]]
         journal_rows.append(_journal_row(r, now.date(), bar_start, fill_until, days[-1], exchange))
     journal_add(journal_rows)
+    from backend.journal.panel import review_after_scan
+    panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
+        "ai_panel": panel,
         "signal_bar": bar_start.isoformat(timespec="minutes"), "regime": regime_nse,
         "instruments": len(instruments), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],

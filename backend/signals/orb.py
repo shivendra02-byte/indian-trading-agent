@@ -339,7 +339,10 @@ def run_orb_scan(now: datetime | None = None, client=None, force: bool = False) 
                                  "stop_type": r["stop_type"]})
             records.append(rec)
     journal_add(records)
+    from backend.journal.panel import review_after_scan
+    panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
+        "ai_panel": panel,
         "signal_bar": bar_start.isoformat(timespec="minutes"), "instruments": len(rows),
         "breakouts": len([r for r in rows if r.get("trackable")]), "shortlisted": [r["symbol"] for r in ranked],
         "journal_records": len(records), "rule_version": get_config().rule_version,

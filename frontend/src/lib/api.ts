@@ -197,6 +197,7 @@ export const markJournalAction = (
   id: number,
   data: { action: "taken" | "skipped" | null; fill_price?: number | null; exit_price?: number | null; note?: string | null },
 ) => fetchAPI(`/api/journal/${id}/action`, { method: "PUT", body: JSON.stringify(data) });
+export const runAiPanel = () => fetchAPI(`/api/journal/panel/run`, { method: "POST" });
 export const listPostmortems = () => fetchAPI(`/api/journal/postmortem`);
 export const getPostmortem = (weekStart: string) => fetchAPI(`/api/journal/postmortem/${weekStart}`);
 export const runPostmortem = (data: { week_start?: string; with_ai?: boolean }) =>

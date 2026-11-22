@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Bot, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getJournal, getLearningReport, markJournalAction, trackJournal } from "@/lib/api";
+import { getJournal, getLearningReport, markJournalAction, runAiPanel, trackJournal } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -61,7 +61,18 @@ type JournalRecord = {
   user_fill_price?: number | null;
   user_exit_price?: number | null;
   user_note?: string | null;
+  panel?: { confidence?: number; reasons?: string[]; risks?: string[]; error?: string; skipped?: string } | null;
 };
+
+function panelText(r: JournalRecord): string {
+  const p = r.panel;
+  if (!p) return r.reject_reason ?? "";
+  if (p.skipped) return `AI panel not run: ${p.skipped}`;
+  if (p.error) return p.error;
+  const parts = [`AI confidence ${p.confidence}`, ...(p.reasons ?? [])];
+  if (p.risks?.length) parts.push(`Risks: ${p.risks.join("; ")}`);
+  return parts.join(" · ");
+}
 
 // What you did with a shortlisted signal (execution is manual). Feeds the weekly post-mortem,
 // which compares your fill and exit with the rules' version of the same trade.
@@ -174,6 +185,21 @@ export default function JournalPage() {
     fetchData(value);
   };
 
+  const runPanel = async () => {
+    setLoading(true);
+    try {
+      const r = (await runAiPanel()) as { status: string; reason?: string; approved?: string[]; rejected?: string[] };
+      if (r.status === "ok") {
+        toast.success(`AI panel: ${r.approved?.length ?? 0} approved, ${r.rejected?.length ?? 0} rejected`);
+      } else {
+        toast.message(`AI panel ${r.status}${r.reason ? `: ${r.reason}` : ""}`);
+      }
+    } catch (e) {
+      toast.error(errorMessage(e, "AI panel failed"));
+    }
+    fetchData(decision);
+  };
+
   const refresh = async () => {
     setLoading(true);
     try {
@@ -193,7 +219,11 @@ export default function JournalPage() {
             Every signal — taken or rejected — followed to its outcome. The learning engine only recommends; it never changes rules.
           </p>
         </div>
-        <Button className="ml-auto" variant="outline" size="sm" onClick={refresh} disabled={loading}>
+        <Button className="ml-auto" variant="outline" size="sm" onClick={runPanel} disabled={loading}
+          title="Review shortlisted trades whose entry window is still open (the scans do this automatically)">
+          <Bot className="mr-1 h-4 w-4" /> Run AI panel
+        </Button>
+        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className="mr-1 h-4 w-4" /> Update outcomes
         </Button>
       </div>
@@ -268,7 +298,12 @@ export default function JournalPage() {
                       <td className="px-2 py-1">{r.setup} {r.direction === "short" ? "↓" : "↑"}</td>
                       <td className="px-2 py-1">{r.regime}</td>
                       <td className="px-2 py-1">{r.score?.toFixed(0)}</td>
-                      <td className="px-2 py-1" title={r.reject_reason ?? ""}><Badge variant="outline">{r.decision}</Badge></td>
+                      <td className="px-2 py-1" title={panelText(r)}>
+                        <Badge variant={r.decision === "approved" ? "default" : "outline"}>{r.decision}</Badge>
+                        {r.panel?.confidence !== undefined && (
+                          <span className="ml-1 text-muted-foreground">AI {r.panel.confidence}</span>
+                        )}
+                      </td>
                       <td className="px-2 py-1">{r.entry} / {r.stop} / {r.target}</td>
                       <td className="px-2 py-1">{r.track_status}</td>
                       <td className="px-2 py-1">{r.exit_reason ?? "—"}</td>
