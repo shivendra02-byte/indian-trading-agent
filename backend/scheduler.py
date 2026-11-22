@@ -14,6 +14,8 @@ Jobs:
 * ``scan:cash_swing`` — once per NSE trading day from 15:45 (followed by the
   cup-and-handle scan on the same daily bars), after today's
   daily candles are stored.
+* ``scan:orb`` — after each synced 10-minute NSE bar from 09:55 to 14:50
+  (opening range breakout on the most liquid stock futures).
 * ``scan:nse_1h`` / ``scan:mcx_1h`` — after each completed 1h bar has been
   synced (futures and MCX hourly scans; open journal records are tracked too).
 
@@ -41,6 +43,9 @@ MORNING_RETRY = timedelta(minutes=15)
 CASH_SWING_SCAN_AT = time(15, 45)
 BAR_LENGTH = {"10minute": timedelta(minutes=10), "60minute": timedelta(hours=1)}
 # (exchange, interval) pairs the scheduler keeps fresh.
+# ORB: first possible signal bar ends 09:55 (after the 30-minute range); no entry in the last 30 minutes.
+ORB_FIRST_SIGNAL_END = time(9, 55)
+ORB_LAST_SIGNAL_END = time(14, 50)
 SCHEDULE = ((NSE, "10minute"), (NSE, "60minute"), (NSE, "day"), (MCX, "60minute"), (MCX, "day"))
 
 
@@ -103,6 +108,12 @@ def due_jobs(now: datetime, state: dict) -> list[str]:
         if (bar and synced and synced >= bar and f"candles:{exchange}:60minute" not in jobs
                 and state.get("scans_done", {}).get(key) != bar):
             jobs.append(f"scan:{key}")
+    bar10 = latest_closed_bar(NSE, "10minute", now)
+    synced10 = done.get("candles:NSE:10minute")
+    if (bar10 and synced10 and synced10 >= bar10 and "candles:NSE:10minute" not in jobs
+            and ORB_FIRST_SIGNAL_END <= bar10.time() <= ORB_LAST_SIGNAL_END
+            and state.get("scans_done", {}).get("orb") != bar10):
+        jobs.append("scan:orb")
     nse_close = latest_closed_bar(NSE, "day", now)
     day_synced = done.get("candles:NSE:day")
     if (nse_close and now.time() >= CASH_SWING_SCAN_AT and day_synced and day_synced >= nse_close
@@ -183,6 +194,10 @@ class MarketDataScheduler:
                 exchange = NSE if key == "nse_1h" else MCX
                 result = run_hourly_scan("nse" if key == "nse_1h" else "mcx", now=now)
                 self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
+            elif job == "scan:orb":
+                from backend.signals.orb import run_orb_scan
+                result = run_orb_scan(now=now)
+                self.scans_done["orb"] = latest_closed_bar(NSE, "10minute", now)
             elif job == "scan:cash_swing":
                 from backend.signals.cash_swing import run_scan
                 result = run_scan(now=now)

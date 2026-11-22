@@ -40,6 +40,9 @@ type Candidate = {
     lots?: number;
     oi_change_pct?: number | null;
     pattern?: Pattern | null;
+    or_high?: number | null;
+    or_low?: number | null;
+    stop_type?: string | null;
     penalties?: Record<string, number> | null;
   };
 };
@@ -66,6 +69,7 @@ const SETUP_LABEL: Record<string, string> = {
   breakout: "Volume breakout",
   range_reversal: "Range reversal",
   cup_handle: "Cup and handle",
+  orb: "Opening range breakout",
 };
 const FACTOR_LABEL: [string, string, number][] = [
   ["htf_trend", "Higher-timeframe trend", 25],
@@ -80,6 +84,11 @@ const FACTOR_LABEL: [string, string, number][] = [
   ["cup_depth", "Cup depth", 15],
   ["handle_dry_up", "Handle volume dry-up", 10],
   ["near_pivot", "Close near pivot", 10],
+  // opening range breakout
+  ["volume", "Breakout volume", 30],
+  ["nifty_alignment", "NIFTY same direction", 25],
+  ["range_quality", "Range quality", 15],
+  ["close_strength", "Close strength", 15],
 ];
 
 function pct(a: number, b: number) {
@@ -112,7 +121,7 @@ function SetupCard({ c }: { c: Candidate }) {
               c.factors && c.factors[key] !== null && c.factors[key] !== undefined ? (
                 <div key={key} className="flex justify-between">
                   <span className="text-muted-foreground">{label}</span>
-                  <span>{c.factors[key]}/{max}</span>
+                  <span>{c.factors[key]}/{c.setup === "orb" && key === "relative_strength" ? 15 : max}</span>
                 </div>
               ) : null,
             )}
@@ -121,6 +130,9 @@ function SetupCard({ c }: { c: Candidate }) {
         <p className="text-xs text-muted-foreground">
           {c.extra.tradingsymbol ? `${c.extra.tradingsymbol} · ${c.extra.lots} lot(s) · ` : ""}
           {c.direction === "short" ? "Short · " : ""}
+          {c.extra.or_high !== undefined && c.extra.or_high !== null
+            ? `Opening range ${c.extra.or_low}–${c.extra.or_high} · stop at ${c.extra.stop_type === "midpoint" ? "range midpoint" : "other side"} · `
+            : ""}
           {c.extra.pattern
             ? `Pivot ${c.extra.pattern.pivot} · cup ${c.extra.pattern.cup_weeks} wk, ${c.extra.pattern.cup_depth_pct}% deep · handle ${c.extra.pattern.handle_days} d, ${c.extra.pattern.handle_depth_pct}% deep · `
             : c.extra.stop_atr !== undefined && c.extra.stop_atr !== null ? `Stop ${c.extra.stop_atr} ATR · ` : ""}

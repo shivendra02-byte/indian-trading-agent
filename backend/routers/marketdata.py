@@ -68,6 +68,20 @@ def cup_handle_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/orb")
+def orb_latest():
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.orb import SCAN_SEGMENT
+    return latest_run(segment=SCAN_SEGMENT) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/orb/run")
+def orb_run():
+    """Run the opening range breakout scan now on the latest completed 10-minute bar."""
+    from backend.signals.orb import run_orb_scan
+    return run_orb_scan(force=True)
+
+
 @router.get("/api/scans/hourly/{group}")
 def hourly_latest(group: Literal["nse", "mcx"]):
     from backend.signals.cash_swing import latest_run

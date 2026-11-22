@@ -31,7 +31,8 @@ def _now() -> datetime:
 def build_sync_plan(today: date | None = None) -> list[dict]:
     """Every (instrument, interval) the scanner needs, with backfill depth.
 
-    Stocks: spot 1h (4H is resampled) + daily. Indices: spot 1h, daily and
+    Stocks: spot 1h (4H is resampled) + daily; the ORB stocks' active future
+    also 10-minute with OI. Indices: spot 1h, daily and
     10m (for options), plus the active future's 1h with OI. MCX: active mini
     future 1h with OI, and continuous daily for long-range context.
     """
@@ -52,6 +53,13 @@ def build_sync_plan(today: date | None = None) -> list[dict]:
             add(stock["symbol"], row, "day", NSE, 400)
         if stock["future_token"]:  # traded contract for the 1h futures scan, with OI
             add(f"{stock['symbol']} FUT", {"instrument_token": stock["future_token"]}, "60minute", NSE, 60, oi=True)
+    try:  # ORB: 10-minute bars (with OI) of the most liquid stocks' active futures
+        from backend.signals.orb import orb_universe, settings as orb_settings
+        if orb_settings()["enabled"]:
+            for stock in orb_universe(today or date.today()):
+                add(f"{stock['symbol']} FUT 10m", stock["contract"], "10minute", NSE, 35, oi=True)
+    except Exception:  # never let the ORB list break the main sync plan
+        pass
     for name in SCANNED_INDICES:
         spot = spot_instrument(name)
         add(name, spot, "60minute", NSE, 120)

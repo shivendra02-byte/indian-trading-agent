@@ -92,6 +92,8 @@ global:
 instruments:
   stock_futures:
     enabled: true
+    orb_enabled: true              # opening range breakout on the most liquid stocks (shares the F&O book limits)
+    orb_universe_size: 25          # top F&O stocks by 20-day turnover
     primary_tf: 60minute
     confirmation_tfs: [2h, 4h]     # must not be against the trade; the highest is scored
     context_tfs: [day]             # passed to the AI panel
@@ -234,3 +236,20 @@ strategies:
     edge_fraction: 0.25            # entries only in the outer 25% of the range
     min_range_atr: 2.0
     requires_regime: SIDEWAYS      # hard: candidates only when the classifier says sideways
+  orb:                             # opening range breakout — intraday, stock futures (agreed 21 Nov 2026)
+    ema_fast: 20                   # (unused by ORB; required fields)
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 1.5         # breakout bar vs the same 10-minute slot on previous days (scored)
+    atr_period: 14                 # daily ATR
+    min_rr: 2.0                    # target = 2R
+    lookback: 20                   # days of same-slot volume
+    range_minutes: 30              # opening range 09:15–09:45
+    bar_minutes: 10
+    wide_range_atr: 0.6            # range wider than this × daily ATR → stop at the range midpoint (proposed)
+    min_range_atr: 0.15            # skip a range narrower than this × daily ATR (proposed)
+    max_range_atr: 1.2             # skip a range wider than this × daily ATR (proposed)
+    max_gap_pct: 3.0               # skip after an opening gap bigger than this (proposed)
+    entry_valid_bars: 2            # limit at the breakout close, valid for 2 bars
+    exit_time: "15:15"             # exit with the bar ending at/after 15:15 the same day
+    score_weights: {volume: 30, nifty_alignment: 25, relative_strength: 15, range_quality: 15, close_strength: 15}

@@ -52,6 +52,7 @@ type Summary = {
   by_setup_regime?: Record<string, Stats>;
   by_data?: Record<string, Stats>;
   by_year?: Record<string, Stats>;
+  by_stop_type?: Record<string, Stats>;
   untested?: string[];
   soft_checks: Record<string, { passed: Stats; failed: Stats }>;
   limitations: string[];
@@ -73,6 +74,7 @@ const SEGMENT_LABEL: Record<string, string> = {
   cash_swing: "Cash swing (daily)",
   cup_handle: "Cup & handle (daily, ~8 weeks)",
   stock_futures_proxy: "Stock futures (1H, spot proxy)",
+  orb_proxy: "Stock futures ORB (10-min, spot proxy)",
   index_futures_proxy: "Index futures (1H, NIFTY/BANKNIFTY spot proxy)",
 };
 
@@ -214,6 +216,12 @@ function RunDetailCard({ run }: { run: RunDetail }) {
           <div>
             <p className="mb-1 text-xs font-medium">By year (signal date)</p>
             <StatsTable rows={Object.entries(s.by_year)} />
+          </div>
+        )}
+        {s.by_stop_type && Object.keys(s.by_stop_type).length > 1 && (
+          <div>
+            <p className="mb-1 text-xs font-medium">By stop type</p>
+            <StatsTable rows={Object.entries(s.by_stop_type)} />
           </div>
         )}
         {s.by_data && Object.keys(s.by_data).length > 1 && (

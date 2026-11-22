@@ -181,6 +181,8 @@ export const runCashSwingScan = () => fetchAPI(`/api/scans/cash-swing/run`, { me
 export const getCupHandleScan = () => fetchAPI(`/api/scans/cup-handle`);
 export const runCupHandleScan = () => fetchAPI(`/api/scans/cup-handle/run`, { method: "POST" });
 export const getHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}`);
+export const getOrbScan = () => fetchAPI(`/api/scans/orb`);
+export const runOrbScan = () => fetchAPI(`/api/scans/orb/run`, { method: "POST" });
 export const runHourlyScan = (group: "nse" | "mcx") => fetchAPI(`/api/scans/hourly/${group}/run`, { method: "POST" });
 export const getJournal = (params: { segment?: string; decision?: string; status?: string; limit?: number } = {}) => {
   const q = new URLSearchParams();

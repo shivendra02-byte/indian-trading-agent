@@ -56,9 +56,19 @@ class DueJobsTests(unittest.TestCase):
         done = {"candles:NSE:60minute": datetime(2026, 11, 23, 11, 15),
                 "candles:NSE:10minute": datetime(2026, 11, 23, 11, 15),
                 "candles:MCX:60minute": datetime(2026, 11, 23, 11, 0)}
-        self.assertEqual(due_jobs(now, state(done=done)), ["scan:nse_1h", "scan:mcx_1h"])
-        scans = {"nse_1h": datetime(2026, 11, 23, 11, 15), "mcx_1h": datetime(2026, 11, 23, 11, 0)}
+        self.assertEqual(due_jobs(now, state(done=done)), ["scan:nse_1h", "scan:mcx_1h", "scan:orb"])
+        scans = {"nse_1h": datetime(2026, 11, 23, 11, 15), "mcx_1h": datetime(2026, 11, 23, 11, 0),
+                 "orb": datetime(2026, 11, 23, 11, 15)}
         self.assertEqual(due_jobs(now, state(done=done, scans_done=scans)), [])
+
+    def test_orb_scan_only_between_09_55_and_14_50(self):
+        from backend.scheduler import latest_closed_bar
+        for hhmm, expected in (("09:52", False), ("09:58", True), ("14:53", True), ("15:03", False)):
+            h, m = map(int, hhmm.split(":"))
+            now = datetime(2026, 11, 23, h, m)
+            bar = latest_closed_bar("NSE", "10minute", now)
+            jobs = due_jobs(now, state(done={"candles:NSE:10minute": bar}))
+            self.assertEqual("scan:orb" in jobs, expected, hhmm)
 
     def test_mcx_only_day_runs_mcx_jobs(self):
         jobs = due_jobs(datetime(2026, 11, 24, 18, 3), state())
