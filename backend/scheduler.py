@@ -135,6 +135,7 @@ class MarketDataScheduler:
         self.last_results: dict[str, dict] = {}
         self.waiting_for: str | None = None
         self.scans_done: dict[str, date | datetime] = {}
+        self.options_attempt: datetime | None = None
 
     # --- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -195,6 +196,7 @@ class MarketDataScheduler:
             self.scans_done["postmortem"] = week
             self.last_results["postmortem:weekly"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
             ran.append("postmortem:weekly")
+        ran += self._option_data(now)
         state = self._state(now)
         self.waiting_for = self._waiting_reason(now, state)
         for job in due_jobs(now, state):
@@ -236,6 +238,22 @@ class MarketDataScheduler:
                 break  # try the rest on the next tick
         return ran
 
+    def _option_data(self, now: datetime) -> list[str]:
+        """Evening NSE/BSE option file download (data only: no Kite login needed,
+        runs while paused)."""
+        from backend.options.jobs import daily_update, eod_due
+        if not eod_due(now, self.scans_done.get("options_eod"), self.options_attempt):
+            return []
+        self.options_attempt = now
+        try:
+            result = daily_update(now=now)
+        except Exception as exc:   # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        if result.get("complete"):
+            self.scans_done["options_eod"] = now.date()
+        self.last_results["options:eod"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+        return ["options:eod"]
+
     def _postmortem_week(self, now: datetime) -> date | None:
         from backend.journal.postmortem import exists, postmortem_due
         week = postmortem_due(now, self.scans_done.get("postmortem"))
@@ -269,7 +287,7 @@ class MarketDataScheduler:
 
 def _brief(result: dict) -> dict:
     keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
-            "closed", "ai_status")
+            "closed", "ai_status", "counts", "complete")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

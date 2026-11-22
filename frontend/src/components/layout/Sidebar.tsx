@@ -23,6 +23,7 @@ import {
   PieChart,
   LogOut,
   ClipboardCheck,
+  Layers,
   type LucideIcon,
 } from "lucide-react";
 
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
       { href: "/analysis", label: "Deep Analysis", icon: Search, hint: "AI-powered (paid)" },
       { href: "/equity-portfolio-analysis", label: "Equity portfolio analysis", icon: PieChart, hint: "Kite holdings review" },
       { href: "/charts", label: "Charts", icon: CandlestickChart, hint: "Candlestick charts" },
+      { href: "/options-data", label: "Option Data", icon: Layers, hint: "NIFTY/BANKNIFTY/SENSEX option history, IV, delta" },
     ],
   },
   {
