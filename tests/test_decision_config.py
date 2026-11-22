@@ -34,7 +34,7 @@ class ConfigTests(unittest.TestCase):
         cfg = get_config()
         g = cfg.global_
         self.assertEqual((g.risk.risk_per_trade_pct, g.risk.max_open_positions, g.risk.max_open_risk_pct),
-                         (1.0, 3, 3.0))
+                         (1.0, 10, 10.0))   # raised from 3 / 3% on 22 Nov 2026
         self.assertEqual((g.limits.max_new_trades_day, g.limits.max_new_trades_week, g.limits.max_ai_evaluations_day),
                          (5, 15, 5))
         self.assertEqual((g.scoring.min_shortlist_score, g.scoring.min_rr), (60, 2.0))
