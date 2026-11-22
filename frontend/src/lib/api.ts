@@ -215,6 +215,8 @@ export const startRuleBacktest = (data: {
   daily_only?: boolean;
   split_date?: string;
 }) => fetchAPI(`/api/rule-backtests`, { method: "POST", body: JSON.stringify(data) });
+export const deleteRuleBacktest = (id: number) => fetchAPI(`/api/rule-backtests/${id}`, { method: "DELETE" });
+export const deleteFinishedRuleBacktests = () => fetchAPI(`/api/rule-backtests`, { method: "DELETE" });
 export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
 export const getHistoryProgress = () => fetchAPI(`/api/rule-backtests/history`);
 
