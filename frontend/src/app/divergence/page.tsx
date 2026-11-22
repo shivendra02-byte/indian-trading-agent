@@ -42,6 +42,8 @@ type Study = {
   first_date?: string | null;
   groups?: Record<string, Summary>;
   baseline_10d?: { bullish: number | null; bearish: number | null };
+  split_date?: string;
+  uptrend_sma?: number;
 };
 type ScanResult = { status: string; reason?: string; new?: number; instruments?: number; alert?: string };
 
@@ -98,6 +100,7 @@ export default function DivergencePage() {
   };
 
   const groups = study?.groups ?? {};
+  const sma = study?.uptrend_sma ?? 200;
   const pick = (keys: string[]) => keys.filter((k) => groups[k]).map((k) => [k, groups[k]] as [string, Summary]);
   const yearKeys = Object.keys(groups).filter((k) => /\| \d{4}$/.test(k));
   const segmentKeys = Object.keys(groups).filter((k) => /\| (stock|index|mcx)$/.test(k));
@@ -134,7 +137,9 @@ export default function DivergencePage() {
           <p>
             <b>Bullish:</b> price makes a lower swing low while RSI(14) makes a higher low; the first RSI low is 40 or
             below; the two lows are 5–60 days apart; price is below its 50-day EMA (a downtrend to reverse).
-            <b> Bearish</b> is the mirror image (RSI first high 60 or above, price above the 50 EMA).
+            <b> Bearish</b> is the mirror image (RSI first high 60 or above, price above the 50 EMA). Bearish
+            divergence lost money as a short in the history study, so it is sent only as an <b>exit warning</b> for
+            symbols you hold long (shortlisted or approved trades, open ideas, positions); all are still tracked.
           </p>
           <p>
             A swing is confirmed 2 days after it forms, so the alert comes on that day. It is &quot;invalid&quot; beyond the
@@ -170,18 +175,28 @@ export default function DivergencePage() {
               <span className="text-muted-foreground">* fewer than 30 signals</span>
             </div>
             <SummaryTable
-              rows={pick([
-                "bullish",
-                "bullish | with trend filter",
-                "bullish | against the filter",
-                "bearish",
-                "bearish | with trend filter",
-                "bearish | against the filter",
-              ])}
+              rows={pick(["bullish", `bullish | above ${sma} SMA`, `bullish | below ${sma} SMA`, "bearish",
+                `bearish | above ${sma} SMA`, `bearish | below ${sma} SMA`])}
             />
+            {study.split_date && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  Train (before {study.split_date}) vs test (from {study.split_date})
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  A variant is only worth switching to if it is better in both halves. &quot;Above {sma} SMA&quot; is the
+                  pullback-in-an-uptrend version (config <code>bullish_context: pullback_in_uptrend</code>).
+                </p>
+                <SummaryTable
+                  rows={pick(["train", "test"].flatMap((p) => [`bullish | ${p}`, `bullish | above ${sma} SMA | ${p}`,
+                    `bullish | below ${sma} SMA | ${p}`, `bearish | ${p}`]))}
+                />
+              </div>
+            )}
             <details>
-              <summary className="cursor-pointer text-sm text-muted-foreground">By instrument type and by year</summary>
+              <summary className="cursor-pointer text-sm text-muted-foreground">Trend filter, instrument type and year</summary>
               <div className="mt-2 space-y-3">
+                <SummaryTable rows={pick(["bullish | with trend filter", "bullish | against the filter", "bearish | with trend filter", "bearish | against the filter"])} />
                 <SummaryTable rows={pick(segmentKeys)} />
                 <SummaryTable rows={pick(yearKeys)} />
               </div>
