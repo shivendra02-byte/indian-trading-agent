@@ -83,13 +83,27 @@ class PanelTests(IsolatedStateTestCase, unittest.TestCase):
 
     def test_portfolio_limits_stop_new_approvals(self):
         from backend.journal.panel import review_pending
-        for i in range(4):
+        for i in range(7):
             self.add(f"S{i}", score=90 - i)
         out = review_pending(NOW, llm_call=approve())
-        # 3 open positions (and 3% open risk) is the limit.
-        self.assertEqual(len(out["approved"]), 3)
-        self.assertIn("open position limit", out["not_sent"][0]["reason"])
-        self.assertEqual(self.rec("S3")["panel_decision"], "not_sent")
+        # 5 new trades a day is the first limit hit (10 positions / 10% open risk allowed).
+        self.assertEqual(len(out["approved"]), 5)
+        self.assertIn("daily trade limit", out["not_sent"][0]["reason"])
+        self.assertEqual(self.rec("S6")["panel_decision"], "not_sent")
+
+    def test_open_position_limit_per_book(self):
+        from backend.journal.panel import limit_block
+        from backend.journal.store import update_record
+        for i in range(10):
+            update_record(self.add(f"F{i}", signal_date="2026-11-16")["id"], {"decision": "approved"})
+        self.assertEqual(limit_block(NOW.date(), "stock_futures"), "open position limit reached (10/10)")
+        self.assertEqual(limit_block(NOW.date(), "mcx"), "open position limit reached (10/10)")   # same F&O book
+        self.assertIsNone(limit_block(NOW.date(), "cash_swing"))                                # own book (2)
+
+    def test_live_risk_limits(self):
+        from backend.decision.config import get_config
+        g = get_config().global_
+        self.assertEqual((g.risk.max_open_positions, g.risk.max_open_risk_pct), (10, 10.0))
 
     def test_ai_error_keeps_shortlisted_and_says_so(self):
         from backend.journal.panel import review_pending

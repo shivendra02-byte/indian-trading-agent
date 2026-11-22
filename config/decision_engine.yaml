@@ -25,8 +25,8 @@ global:
     forced_trades: false           # no trade is a valid outcome; never fill a quota
   risk:
     risk_per_trade_pct: 1.0
-    max_open_positions: 3          # F&O book (stock/index futures, options, MCX)
-    max_open_risk_pct: 3.0
+    max_open_positions: 10         # F&O book (stock/index futures, options, MCX); raised from 3 on 22 Nov 2026
+    max_open_risk_pct: 10.0        # 10 positions x 1% risk (raised from 3% with the position limit)
     max_margin_blocked_pct: 60
     max_total_deployed_pct: 85     # F&O margin + cash swing holdings
   limits:

@@ -57,8 +57,20 @@ def evaluations_today(today: date) -> int:
                   (today.isoformat(),))
 
 
-def limit_block(today: date) -> str | None:
-    """Why no new trade can be approved right now, or None."""
+FNO_BOOK = ("stock_futures", "index_futures", "mcx", "index_options", "stock_options")
+
+
+def _book_segments(segment: str) -> tuple[str, ...]:
+    """Position books: every F&O segment shares one book; cash swing and cup & handle have their own."""
+    return FNO_BOOK if segment in FNO_BOOK else (segment,)
+
+
+def limit_block(today: date, segment: str = "stock_futures") -> str | None:
+    """Why no new trade can be approved in ``segment``'s book right now, or None.
+    Trades per day/week and the daily loss stop count every book; open positions and
+    open risk count the trade's own book (F&O: ``global.risk``; cash swing / cup &
+    handle: their instrument block's ``max_open_positions`` / ``max_open_risk_pct`` /
+    ``max_new_trades_day`` when set)."""
     g = get_config().global_
     week_start = today - timedelta(days=today.weekday())
     approved_today = _count("decision = ? AND signal_date = ?", (APPROVED, today.isoformat()))
@@ -67,11 +79,26 @@ def limit_block(today: date) -> str | None:
     approved_week = _count("decision = ? AND signal_date >= ?", (APPROVED, week_start.isoformat()))
     if approved_week >= g.limits.max_new_trades_week:
         return f"weekly trade limit reached ({approved_week}/{g.limits.max_new_trades_week})"
-    open_now = _count("decision = ? AND track_status IN ('pending', 'open')", (APPROVED,))
-    if open_now >= g.risk.max_open_positions:
-        return f"open position limit reached ({open_now}/{g.risk.max_open_positions})"
-    if (open_now + 1) * g.risk.risk_per_trade_pct > g.risk.max_open_risk_pct + 1e-9:
-        return f"open risk would exceed {g.risk.max_open_risk_pct}%"
+
+    book = _book_segments(segment)
+    marks = ", ".join("?" * len(book))
+    max_positions, max_risk, book_day = g.risk.max_open_positions, g.risk.max_open_risk_pct, None
+    if book != FNO_BOOK:
+        extra = get_config().instrument(segment).model_extra or {}
+        max_positions = int(extra.get("max_open_positions", max_positions))
+        max_risk = float(extra.get("max_open_risk_pct", max_risk))
+        book_day = extra.get("max_new_trades_day")
+    if book_day is not None:
+        book_today = _count(f"decision = ? AND signal_date = ? AND segment IN ({marks})",
+                            (APPROVED, today.isoformat(), *book))
+        if book_today >= int(book_day):
+            return f"{segment} daily trade limit reached ({book_today}/{book_day})"
+    open_now = _count(f"decision = ? AND track_status IN ('pending', 'open') AND segment IN ({marks})",
+                      (APPROVED, *book))
+    if open_now >= max_positions:
+        return f"open position limit reached ({open_now}/{max_positions})"
+    if (open_now + 1) * g.risk.risk_per_trade_pct > max_risk + 1e-9:
+        return f"open risk would exceed {max_risk}%"
     with get_db() as conn:
         realised = conn.execute("SELECT COALESCE(SUM(pnl_rupees), 0) FROM trade_journal WHERE decision = ? "
                                 "AND track_status = 'closed' AND substr(exit_ts, 1, 10) = ?",
@@ -244,7 +271,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
     for rec in pending_records(now):
         evaluated_at = now.isoformat(timespec="seconds")
-        blocked = limit_block(now.date())
+        blocked = limit_block(now.date(), rec["segment"])
         if blocked:
             panel = {"evaluated_at": None, "skipped": blocked}
             update_record(rec["id"], {"panel": panel, "panel_decision": "not_sent", "stages": _set_stages(
