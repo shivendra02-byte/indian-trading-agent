@@ -321,7 +321,10 @@ def run_scan(now: datetime | None = None, force: bool = False,
     for r in rows:
         if not r.get("trackable"):
             rejected[r["reject_reason"]] = rejected.get(r["reject_reason"], 0) + 1
+    from backend.journal.panel import review_after_scan
+    panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
+        "ai_panel": panel,
         "signal_date": signal_date.isoformat(), "entry_day": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "patterns": len([r for r in rows if r.get("trackable")]),
         "shortlisted": [r["symbol"] for r in shortlist],

@@ -41,6 +41,7 @@ class IsolatedStateTestCase:
                 "KITE_ACCESS_TOKEN_DATE",
                 "CORS_ORIGINS",
                 "TRADINGAGENTS_SCHEDULER",
+                "TRADINGAGENTS_AI_PANEL",
             )
         }
         self.home = tempfile.TemporaryDirectory(prefix="tradingagents-test-home-")
@@ -48,6 +49,7 @@ class IsolatedStateTestCase:
         os.environ["TRADINGAGENTS_HOME"] = self.home.name
         os.environ["TRADINGAGENTS_DB_PATH"] = self.db_path
         os.environ["TRADINGAGENTS_SCHEDULER"] = "off"
+        os.environ["TRADINGAGENTS_AI_PANEL"] = "off"   # scans never call the AI in tests
         os.environ.pop("KITE_API_KEY", None)
         os.environ.pop("KITE_API_SECRET", None)
         os.environ.pop("KITE_ACCESS_TOKEN", None)

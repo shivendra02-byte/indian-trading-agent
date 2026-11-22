@@ -140,6 +140,17 @@ class ExitCfg(_Strict):
         return self
 
 
+class AiPanelCfg(_Strict):
+    """AI review of shortlisted trades (one Claude call per trade, at most
+    ``limits.max_ai_evaluations_day`` a day). Only reviews: it approves or rejects,
+    never changes entry, stop, target or size. Approved trades are the paper book."""
+    enabled: bool = True
+    min_confidence: int = Field(default=60, ge=0, le=100)   # approve needs at least this
+    notify_telegram: bool = True                             # alert every approved trade
+    notify_unreviewed: bool = True                           # also alert shortlisted trades the AI limit skipped
+    timeout_seconds: int = Field(default=90, ge=10, le=600)
+
+
 class SelectionCfg(_Strict):
     """How non-safety technical checks are applied.
 
@@ -173,6 +184,7 @@ class GlobalCfg(_Strict):
     trailing_shadow: TrailingCfg
     exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
+    ai_panel: AiPanelCfg = AiPanelCfg()
 
 
 class InstrumentCfg(BaseModel):
