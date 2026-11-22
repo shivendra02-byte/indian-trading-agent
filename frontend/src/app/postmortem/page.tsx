@@ -45,6 +45,18 @@ type Summary = {
   paper_tags: Record<string, number>;
   tag_labels: Record<string, string>;
   user_marked: { taken: number; skipped: number; unmarked_paper: number };
+  your_execution?: {
+    taken_with_fill: number;
+    taken_with_exit: number;
+    avg_entry_diff_r: number | null;
+    your_avg_r: number | null;
+    rules_avg_r_same_trades: number | null;
+    total_deviation_r: number | null;
+    exit_better: number;
+    exit_worse: number;
+    same_as_rules: number;
+    skip_notes: { symbol: string; note: string }[];
+  };
   open_at_week_end: { symbol: string; segment: string; setup: string; direction: string; mfe_r: number | null }[];
   backtest_expectation: Record<string, Expectation>;
   adherence: { shortlisted_week: number; max_open_at_once: number; issues: string[] };
@@ -63,6 +75,9 @@ type Trade = {
   mfe_r: number | null;
   tags: string[];
   user_action: string | null;
+  user_r?: number;
+  deviation_r?: number;
+  entry_diff_r?: number;
 };
 type Postmortem = {
   week_start: string;
@@ -246,6 +261,36 @@ export default function PostmortemPage() {
             </CardContent>
           </Card>
 
+          {s.your_execution && s.your_execution.taken_with_fill > 0 && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Your execution vs the rules</CardTitle></CardHeader>
+              <CardContent className="space-y-1 text-xs">
+                <p>
+                  {s.your_execution.taken_with_fill} trades with your fill · entry vs plan{" "}
+                  {s.your_execution.avg_entry_diff_r ?? "—"}R on average (+ = you paid more than planned).
+                </p>
+                {s.your_execution.taken_with_exit > 0 ? (
+                  <p>
+                    {s.your_execution.taken_with_exit} trades with your exit: your average {s.your_execution.your_avg_r}R vs the
+                    rules&apos; {s.your_execution.rules_avg_r_same_trades}R on the same trades (total difference{" "}
+                    <span className={(s.your_execution.total_deviation_r ?? 0) < 0 ? "text-red-600" : "text-emerald-600"}>
+                      {s.your_execution.total_deviation_r}R
+                    </span>
+                    ). Your exit was better {s.your_execution.exit_better}×, worse {s.your_execution.exit_worse}×, about the same{" "}
+                    {s.your_execution.same_as_rules}×.
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">Add your exit price on the Trade Journal to compare exits.</p>
+                )}
+                {s.your_execution.skip_notes.length > 0 && (
+                  <p className="text-muted-foreground">
+                    Why you skipped: {s.your_execution.skip_notes.map((n) => `${n.symbol}: ${n.note}`).join(" · ")}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">Why trades won or lost</CardTitle></CardHeader>
             <CardContent>
@@ -328,7 +373,7 @@ export default function PostmortemPage() {
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-left">
                   <tr>
-                    {["Exit", "Symbol", "Setup", "Book", "Regime", "Exit reason", "R", "MFE", "Causes", "You"].map((h) => (
+                    {["Exit", "Symbol", "Setup", "Book", "Regime", "Exit reason", "R", "MFE", "Causes", "You", "Your R"].map((h) => (
                       <th key={h} className="px-2 py-1.5 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -346,6 +391,9 @@ export default function PostmortemPage() {
                       <td className="px-2 py-1">{t.mfe_r}</td>
                       <td className="px-2 py-1">{t.tags.map((g) => g.replaceAll("_", " ")).join(", ")}</td>
                       <td className="px-2 py-1">{t.user_action ?? "—"}</td>
+                      <td className="px-2 py-1">
+                        {t.user_r !== undefined ? `${t.user_r} (${(t.deviation_r ?? 0) >= 0 ? "+" : ""}${t.deviation_r})` : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, Play, RefreshCw } from "lucide-react";
+import { Download, Loader2, Play, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  deleteFinishedRuleBacktests,
+  deleteRuleBacktest,
   downloadBacktestHistory,
   getHistoryProgress,
   getRuleBacktest,
@@ -446,6 +448,30 @@ export default function RuleBacktestsPage() {
     }
   };
 
+  // Two clicks to delete: the first arms the button, the second deletes.
+  const [armed, setArmed] = useState<number | "all" | null>(null);
+  const remove = async (target: number | "all") => {
+    if (armed !== target) {
+      setArmed(target);
+      return;
+    }
+    setArmed(null);
+    try {
+      if (target === "all") {
+        const r = (await deleteFinishedRuleBacktests()) as { deleted: number };
+        toast.success(`Deleted ${r.deleted} runs`);
+        setSelected([]);
+      } else {
+        await deleteRuleBacktest(target);
+        toast.success(`Deleted run #${target}`);
+        setSelected(selected.filter((x) => x.id !== target));
+      }
+      fetchData();
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not delete"));
+    }
+  };
+
   const toggle = async (id: number) => {
     if (selected.some((r) => r.id === id)) {
       setSelected(selected.filter((r) => r.id !== id));
@@ -525,7 +551,15 @@ export default function RuleBacktestsPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Runs</CardTitle>
+          <CardTitle className="flex items-center text-sm">
+            Runs
+            {runs.some((r) => r.status !== "running") && (
+              <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs text-red-600" onClick={() => remove("all")}>
+                <Trash2 className="mr-1 h-3 w-3" />
+                {armed === "all" ? "Click again to delete all finished runs" : "Delete all finished"}
+              </Button>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -558,6 +592,19 @@ export default function RuleBacktestsPage() {
                       {r.status === "running" && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
                       {r.progress}
                     </span>
+                  )}
+                  {r.status !== "running" && (
+                    <button
+                      type="button"
+                      className="text-red-600 hover:underline"
+                      title="Delete this run"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void remove(r.id);
+                      }}
+                    >
+                      {armed === r.id ? "Delete?" : <Trash2 className="h-3 w-3" />}
+                    </button>
                   )}
                 </label>
               ))}

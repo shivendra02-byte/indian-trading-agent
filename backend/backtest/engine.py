@@ -142,6 +142,26 @@ def list_runs(limit: int = 30) -> list[dict]:
     return out
 
 
+def delete_run(run_id: int) -> str:
+    """'deleted', 'running' (refused: still in progress) or 'not_found'."""
+    ensure_tables()
+    with get_db() as conn:
+        row = conn.execute("SELECT status FROM rule_backtests WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            return "not_found"
+        if row["status"] == "running":
+            return "running"
+        conn.execute("DELETE FROM rule_backtests WHERE id = ?", (run_id,))
+    return "deleted"
+
+
+def delete_finished_runs() -> int:
+    """Delete every run that is not still running. Returns how many were deleted."""
+    ensure_tables()
+    with get_db() as conn:
+        return conn.execute("DELETE FROM rule_backtests WHERE status != 'running'").rowcount
+
+
 def recover_interrupted() -> None:
     """A restart kills the worker thread; mark its run so the UI doesn't spin forever."""
     ensure_tables()

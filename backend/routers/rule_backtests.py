@@ -75,6 +75,22 @@ def compare(ids: str = Query(..., pattern=r"^\d+(,\d+){0,5}$")):
     return engine.compare([int(i) for i in ids.split(",")])
 
 
+@router.delete("")
+def delete_finished():
+    """Delete every finished, failed or interrupted run (running ones are kept)."""
+    return {"deleted": engine.delete_finished_runs()}
+
+
+@router.delete("/{run_id}")
+def delete(run_id: int):
+    outcome = engine.delete_run(run_id)
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="Backtest not found")
+    if outcome == "running":
+        raise HTTPException(status_code=409, detail="This backtest is still running; delete it when it finishes")
+    return {"deleted": run_id}
+
+
 @router.get("/{run_id}")
 def run(run_id: int, trades: bool = False):
     result = engine.get_run(run_id, with_trades=trades)

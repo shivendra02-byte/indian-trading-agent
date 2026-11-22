@@ -49,6 +49,8 @@ TAGS = {
     "clean_loss": "Loser with none of the above",
 }
 
+USER_DEVIATION_R = 0.25                 # your result vs the rules' result: smaller gaps are noise
+
 # Journal segment (+ ORB setup) -> backtest segment used for the expectation.
 BACKTEST_SEGMENT = {"cash_swing": "cash_swing", "cup_handle": "cup_handle",
                     "stock_futures": "stock_futures_proxy", "index_futures": "index_futures_proxy"}
@@ -281,12 +283,54 @@ def _adherence(start: date, end: date) -> dict:
             "max_open_at_once": peak, "issues": issues}
 
 
+def user_result(rec: dict) -> dict:
+    """Your execution vs the plan, in R of the planned risk (entry to stop).
+    ``entry_diff_r``: your fill vs the planned entry (+ = worse for you).
+    ``user_r``: your fill to your exit. ``deviation_r``: your R minus the rules' R."""
+    if rec.get("user_action") != "taken" or not rec.get("user_fill_price"):
+        return {}
+    risk = abs(rec["entry"] - rec["stop"])
+    if not risk:
+        return {}
+    s = _sign(rec)
+    out = {"entry_diff_r": round(s * (rec["user_fill_price"] - rec["entry"]) / risk, 2)}
+    if rec.get("user_exit_price"):
+        out["user_r"] = round(s * (rec["user_exit_price"] - rec["user_fill_price"]) / risk, 2)
+        if rec.get("pnl_r") is not None:
+            dev = round(out["user_r"] - rec["pnl_r"], 2)
+            out["deviation_r"] = dev
+            out["user_tag"] = ("your_exit_better" if dev >= USER_DEVIATION_R
+                               else "your_exit_worse" if dev <= -USER_DEVIATION_R else "same_as_rules")
+    return out
+
+
+def _execution_summary(closed: list[dict]) -> dict:
+    """How your real trades compared with the rules' version of the same trades."""
+    rows = [(r, user_result(r)) for r in closed]
+    filled = [u for _, u in rows if "entry_diff_r" in u]
+    exited = [(r, u) for r, u in rows if "user_r" in u and "deviation_r" in u]
+    avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None   # noqa: E731
+    return {
+        "taken_with_fill": len(filled),
+        "taken_with_exit": len(exited),
+        "avg_entry_diff_r": avg([u["entry_diff_r"] for u in filled]),
+        "your_avg_r": avg([u["user_r"] for _, u in exited]),
+        "rules_avg_r_same_trades": avg([r["pnl_r"] for r, _ in exited]),
+        "total_deviation_r": round(sum(u["deviation_r"] for _, u in exited), 2) if exited else None,
+        "exit_better": sum(1 for _, u in exited if u["user_tag"] == "your_exit_better"),
+        "exit_worse": sum(1 for _, u in exited if u["user_tag"] == "your_exit_worse"),
+        "same_as_rules": sum(1 for _, u in exited if u["user_tag"] == "same_as_rules"),
+        "skip_notes": [{"symbol": r["symbol"], "note": r.get("user_note")} for r in closed
+                       if r.get("user_action") == "skipped" and r.get("user_note")][:20],
+    }
+
+
 def _trade_row(r: dict, tags: list[str]) -> dict:
     keep = ("id", "segment", "symbol", "setup", "direction", "regime", "score", "decision", "signal_ts",
             "fill_ts", "exit_ts", "exit_reason", "entry", "stop", "target", "pnl_r", "mfe_r", "mae_r",
             "pnl_rupees", "user_action", "user_fill_price", "user_exit_price", "user_note")
     return {**{k: r.get(k) for k in keep}, "book": _book(r), "tags": tags,
-            "reject_reason": r.get("reject_reason")}
+            "reject_reason": r.get("reject_reason"), **user_result(r)}
 
 
 def build_summary(start: date, end: date, tagger: Callable[[dict], list[str]] = tag_trade) -> tuple[dict, list[dict]]:
@@ -318,6 +362,7 @@ def build_summary(start: date, end: date, tagger: Callable[[dict], list[str]] = 
         "tag_labels": TAGS,
         "user_marked": {"taken": len(taken), "skipped": sum(1 for r in closed if r.get("user_action") == "skipped"),
                         "unmarked_paper": sum(1 for r in paper if not r.get("user_action"))},
+        "your_execution": _execution_summary(closed),
         "open_at_week_end": [{"symbol": r["symbol"], "segment": r["segment"], "setup": r["setup"],
                               "direction": r["direction"], "mfe_r": r.get("mfe_r"), "mae_r": r.get("mae_r")}
                              for r in open_now],
@@ -343,7 +388,9 @@ def _prompt(summary: dict, trades: list[dict]) -> str:
     return (
         "You are reviewing one week of an Indian F&O/cash swing paper-trading journal for its owner, who executes "
         "trades manually. Results are in R (1R = the planned risk). 'paper' = trades the system shortlisted; "
-        "'shadow' = candidates it tracked but did not pick; 'taken' = trades the owner marked as actually taken.\n\n"
+        "'shadow' = candidates it tracked but did not pick; 'taken' = trades the owner marked as actually taken. "
+        "'your_execution' compares the owner's own fills and exits with the rules' version of the same trades "
+        "(deviation_r > 0 = the owner did better than the rules); skip_notes are the owner's reasons for skipping.\n\n"
         "Write a short review in markdown with exactly these headings:\n"
         "## What went right\n## What went wrong\n## Patterns\n## Proposed experiments\n\n"
         "Rules:\n"

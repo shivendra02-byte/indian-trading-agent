@@ -59,31 +59,43 @@ type JournalRecord = {
   pnl_rupees: number | null;
   user_action?: "taken" | "skipped" | null;
   user_fill_price?: number | null;
+  user_exit_price?: number | null;
+  user_note?: string | null;
 };
 
-// What you did with a shortlisted signal (execution is manual). Feeds the weekly post-mortem.
+// What you did with a shortlisted signal (execution is manual). Feeds the weekly post-mortem,
+// which compares your fill and exit with the rules' version of the same trade.
 function ActionCell({ r }: { r: JournalRecord }) {
   const [action, setAction] = useState<string>(r.user_action ?? "");
   const [fill, setFill] = useState<string>(r.user_fill_price ? String(r.user_fill_price) : "");
-  const save = async (nextAction: string, nextFill: string) => {
+  const [exit, setExit] = useState<string>(r.user_exit_price ? String(r.user_exit_price) : "");
+  const [note, setNote] = useState<string>(r.user_note ?? "");
+  const save = async (next: { action?: string; fill?: string; exit?: string; note?: string } = {}) => {
+    const a = next.action ?? action;
+    const f = next.fill ?? fill;
+    const x = next.exit ?? exit;
+    const n = next.note ?? note;
     try {
       await markJournalAction(r.id, {
-        action: nextAction ? (nextAction as "taken" | "skipped") : null,
-        fill_price: nextAction === "taken" && nextFill ? Number(nextFill) : null,
+        action: a ? (a as "taken" | "skipped") : null,
+        fill_price: a === "taken" && f ? Number(f) : null,
+        exit_price: a === "taken" && x ? Number(x) : null,
+        note: a && n ? n : null,
       });
     } catch (e) {
       toast.error(errorMessage(e, "Could not save"));
     }
   };
   if (!["shortlisted", "approved"].includes(r.decision)) return <span className="text-muted-foreground">—</span>;
+  const input = "rounded border bg-background px-1 py-0.5";
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
       <select
-        className="rounded border bg-background px-1 py-0.5"
+        className={input}
         value={action}
         onChange={(e) => {
           setAction(e.target.value);
-          void save(e.target.value, fill);
+          void save({ action: e.target.value });
         }}
       >
         <option value="">—</option>
@@ -91,15 +103,16 @@ function ActionCell({ r }: { r: JournalRecord }) {
         <option value="skipped">Skipped</option>
       </select>
       {action === "taken" && (
-        <input
-          type="number"
-          step="0.05"
-          placeholder="fill"
-          className="w-20 rounded border bg-background px-1 py-0.5"
-          value={fill}
-          onChange={(e) => setFill(e.target.value)}
-          onBlur={() => void save(action, fill)}
-        />
+        <>
+          <input type="number" step="0.05" placeholder="your fill" className={`w-20 ${input}`} value={fill}
+            onChange={(e) => setFill(e.target.value)} onBlur={() => void save()} />
+          <input type="number" step="0.05" placeholder="your exit" className={`w-20 ${input}`} value={exit}
+            onChange={(e) => setExit(e.target.value)} onBlur={() => void save()} />
+        </>
+      )}
+      {action && (
+        <input type="text" maxLength={500} placeholder={action === "skipped" ? "why skipped?" : "note"}
+          className={`w-32 ${input}`} value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => void save()} />
       )}
     </div>
   );
