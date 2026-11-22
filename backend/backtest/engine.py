@@ -691,6 +691,72 @@ def mark_shortlist(trades: list[dict], per_scan: int) -> None:
             t["shortlisted"] = True
 
 
+# --- position books: one open trade per instrument ----------------------------------------
+
+# Which config block sets the shortlist size, and what counts as one scan.
+_SHORTLIST = {
+    "cash_swing": ("cash_swing", "ts"), "stock_futures_proxy": ("stock_futures", "ts"),
+    "index_futures_proxy": ("index_futures", "ts"), "orb_proxy": ("stock_futures", "day"),
+    "cup_handle": ("cup_handle", "ts"),
+}
+OPEN_FOREVER = "9999-12-31"
+
+
+def _busy_until(t: dict) -> str | None:
+    """Until when a counted trade blocks its symbol: its exit, forever while open,
+    and not at all when the entry never filled."""
+    if t["status"] == "closed":
+        return t.get("exit_ts") or OPEN_FOREVER
+    if t["status"] == "open":
+        return OPEN_FOREVER
+    return None
+
+
+def _is_busy(book: dict, t: dict) -> bool:
+    until = book.get(t["symbol"])
+    return until is not None and until > t["signal_ts"]
+
+
+def apply_position_books(trades: list[dict], per_scan: int, scan_key: str = "ts") -> dict:
+    """One open trade per instrument, applied separately to each group the summary
+    reports, the way the live scan would see it: a signal on a symbol that already has
+    a counted trade still running in that group is left out (``stacked_all`` /
+    ``stacked_passed`` set, ``shortlisted`` re-chosen from the rest, top ``per_scan``
+    per scan, at most one per symbol). Returns how many signals each group dropped."""
+    trades.sort(key=lambda t: (t["signal_ts"], -(t.get("score") or 0)))
+    books = {"all": {}, "passed": {}}
+    for t in trades:
+        t["stacked_all"] = _is_busy(books["all"], t)
+        if not t["stacked_all"] and (until := _busy_until(t)):
+            books["all"][t["symbol"]] = until
+        if t["decision"] == "passed":
+            t["stacked_passed"] = _is_busy(books["passed"], t)
+            if not t["stacked_passed"] and (until := _busy_until(t)):
+                books["passed"][t["symbol"]] = until
+    shortlist_book: dict = {}
+    scans: dict[str, list[dict]] = {}
+    for t in trades:
+        t["shortlisted"] = False
+        if t["decision"] == "passed":
+            scans.setdefault(t["signal_ts"][:10] if scan_key == "day" else t["signal_ts"], []).append(t)
+    skipped_short = 0
+    for key in sorted(scans):
+        picked: set[str] = set()
+        for t in sorted(scans[key], key=lambda x: x["score"], reverse=True):
+            if len(picked) >= per_scan:
+                break
+            if t["symbol"] in picked or _is_busy(shortlist_book, t):
+                skipped_short += 1
+                continue
+            t["shortlisted"] = True
+            picked.add(t["symbol"])
+            if until := _busy_until(t):
+                shortlist_book[t["symbol"]] = until
+    return {"all_trackable": sum(1 for t in trades if t["stacked_all"]),
+            "passed_all_rules": sum(1 for t in trades if t.get("stacked_passed")),
+            "shortlist_skips": skipped_short}
+
+
 # --- summary -----------------------------------------------------------------------------
 
 def max_drawdown_r(trades: list[dict]) -> float:
@@ -716,7 +782,24 @@ def block(rows: list[dict]) -> dict:
     return st
 
 
-def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
+SCORE_BANDS = ((0, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 101))
+
+
+def score_band(score: float | None) -> str:
+    if score is None:
+        return "no score"
+    for lo, hi in SCORE_BANDS:
+        if lo <= score < hi:
+            return f"{lo}-{min(hi, 100)}"
+    return "no score"
+
+
+def summarize(trades: list[dict], segment: str = "cash_swing", split_date: str | None = None) -> dict:
+    """``stacked_all`` trades (a second signal on a symbol already in a trade) are left
+    out of every table; ``passed_all_rules`` also drops ``stacked_passed``.
+    ``split_date``: adds ``by_period`` (train = signals before it, test = on/after)."""
+    trades_all = trades
+    trades = [t for t in trades if not t.get("stacked_all")]
     closed = [t for t in trades if t["status"] == "closed"]
 
     def by(key) -> dict:
@@ -732,9 +815,11 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
         "no_fill": sum(1 for t in trades if t["status"] == "no_fill"),
         "groups": {
             "shortlisted": block([t for t in closed if t.get("shortlisted")]),
-            "passed_all_rules": block([t for t in closed if t["decision"] == "passed"]),
+            "passed_all_rules": block([t for t in closed if t["decision"] == "passed"
+                                       and not t.get("stacked_passed")]),
             "all_trackable": block(closed),
         },
+        "by_score_band": by(lambda t: score_band(t.get("score"))),
         "by_setup": by(lambda t: f"{t['setup']} {t['direction']}"),
         "by_regime": by(lambda t: t["regime"] or "n/a (intraday)" if t.get("setup") == "orb" else t["regime"] or "?"),
         "by_setup_regime": by(lambda t: f"{t['setup']} {t['direction']} | {t['regime'] or '?'}"),
@@ -751,13 +836,38 @@ def summarize(trades: list[dict], segment: str = "cash_swing") -> dict:
             for name in soft_names
         },
         "limitations": LIMITATIONS.get(segment, _COMMON),
+        **({"by_period": _by_period(closed, split_date)} if split_date else {}),
+        "stacked_signals": sum(1 for t in trades_all if t.get("stacked_all")),
     }
+
+
+def _by_period(closed: list[dict], split_date: str) -> dict:
+    """Train (signals before ``split_date``) vs test (on/after) for the three headline
+    groups and every setup, so one run shows whether a result holds out of sample."""
+    out = {}
+    for name, rows in (("train", [t for t in closed if t["signal_ts"][:10] < split_date]),
+                       ("test", [t for t in closed if t["signal_ts"][:10] >= split_date])):
+        setups: dict[str, list[dict]] = {}
+        bands: dict[str, list[dict]] = {}
+        for t in rows:
+            setups.setdefault(f"{t['setup']} {t['direction']}", []).append(t)
+            bands.setdefault(score_band(t.get("score")), []).append(t)
+        out[name] = {
+            "groups": {"shortlisted": block([t for t in rows if t.get("shortlisted")]),
+                       "passed_all_rules": block([t for t in rows if t["decision"] == "passed"
+                                                  and not t.get("stacked_passed")]),
+                       "all_trackable": block(rows)},
+            "by_setup": {k: block(v) for k, v in sorted(setups.items())},
+            "by_score_band": {k: block(v) for k, v in sorted(bands.items())},
+        }
+    out["split_date"] = split_date
+    return out
 
 
 # --- entry points ------------------------------------------------------------------------
 
 def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symbols: int | None = None,
-                   daily_only: bool = False) -> int:
+                   daily_only: bool = False, split_date: date | None = None) -> int:
     if segment not in SEGMENTS:
         raise ValueError(f"segment must be one of {', '.join(SEGMENTS)}")
     sets = available_rule_sets()
@@ -765,6 +875,8 @@ def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symb
         raise ValueError(f"rule set must be one of {', '.join(sorted(sets))}")
     if end < start:
         raise ValueError("end date is before start date")
+    if split_date and not (start < split_date <= end):
+        raise ValueError("split date must be after the start date and on/before the end date")
     if _run_lock.locked():
         raise RuntimeError("a backtest is already running")
     ensure_tables()
@@ -776,8 +888,10 @@ def start_backtest(segment: str, rule_set: str, start: date, end: date, max_symb
                                           options)
                VALUES (?, ?, ?, ?, ?, 'running', 'starting', ?)""",
             (segment, rule_set, version, start.isoformat(), end.isoformat(),
-             json.dumps({"daily_only": daily_only}))).lastrowid
-    threading.Thread(target=_run_safely, args=(run_id, segment, sets[rule_set], start, end, max_symbols, daily_only),
+             json.dumps({"daily_only": daily_only,
+                         "split_date": split_date.isoformat() if split_date else None}))).lastrowid
+    threading.Thread(target=_run_safely, args=(run_id, segment, sets[rule_set], start, end, max_symbols, daily_only,
+                                               split_date),
                      daemon=True, name=f"backtest-{run_id}").start()
     return run_id
 
@@ -790,7 +904,7 @@ def _run_safely(*args) -> None:
 
 
 def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
-                 max_symbols: int | None = None, daily_only: bool = False) -> dict:
+                 max_symbols: int | None = None, daily_only: bool = False, split_date: date | None = None) -> dict:
     """Run synchronously (the API runs it in a thread). Returns the summary."""
     with _run_lock, use_config(config_file):
         try:
@@ -811,8 +925,16 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             funnel = Funnel()
             trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg),
                             daily_only=daily_only, funnel=funnel)
-            summary = summarize(trades, segment)
+            cfg = get_config()
+            stacking = None
+            if cfg.global_.limits.one_open_trade_per_instrument:
+                block_name, scan_key = _SHORTLIST[segment]
+                per_scan = (cup_handle_settings()["shortlist"] if segment == "cup_handle"
+                            else cfg.instrument(block_name).shortlist_per_scan)
+                stacking = apply_position_books(trades, per_scan, scan_key)
+            summary = summarize(trades, segment, split_date.isoformat() if split_date else None)
             summary.update({"symbols": len(symbols), "rule_version": get_config().rule_version,
+                            "one_open_trade_per_instrument": stacking is not None, "stacking": stacking,
                             "daily_only": daily_only, "funnel": funnel.as_dict(),
                             "exit_mode": get_config().global_.exit_management.mode})
             _update(run_id, status="done", progress="done", summary=summary, trades=trades)
@@ -820,6 +942,11 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
         except Exception as exc:
             _update(run_id, status="error", progress=f"{type(exc).__name__}: {exc}"[:300])
             raise
+
+
+def cup_handle_settings() -> dict:
+    from backend.signals import cup_handle
+    return cup_handle.settings()
 
 
 def compare(run_ids: list[int]) -> dict:

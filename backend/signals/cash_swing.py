@@ -22,6 +22,7 @@ from backend.marketdata.candles import bars_for_timeframe, get_candles
 from backend.marketdata.instruments import fno_universe, spot_instrument
 from backend.signals import events
 from backend.signals.regime import current_regime
+from backend.signals.selection import choose_shortlist
 from backend.signals.setups import evaluate, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, is_trading_day, previous_trading_day
@@ -263,8 +264,7 @@ def run_scan(now: datetime | None = None, force: bool = False,
 
     ranked = sorted((r for r in rows if r.get("valid") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
-    for r in ranked[:cfg["shortlist"]]:
-        r["shortlisted"] = True
+    shortlist = choose_shortlist(ranked, cfg["shortlist"], lambda r: SEGMENT)
     for r in rows:
         if r.get("trackable"):
             selected = bool(r.get("shortlisted"))
@@ -276,7 +276,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
     return _finish_run(run_id, "ok", {
         "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
-        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:cfg["shortlist"]]],
+        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],
+        "skipped_open_trade": [r["symbol"] for r in ranked if r.get("selection_skip")],
         "journal_records": sum(1 for r in rows if r.get("trackable")), "tracking": tracked,
         "rule_version": get_config().rule_version,
     })

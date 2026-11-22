@@ -18,6 +18,9 @@ Jobs:
   (opening range breakout on the most liquid stock futures).
 * ``scan:nse_1h`` / ``scan:mcx_1h`` — after each completed 1h bar has been
   synced (futures and MCX hourly scans; open journal records are tracked too).
+* ``postmortem:weekly`` — Saturday from 08:00 (Sunday catches up), once a week:
+  the weekly post-mortem over the journal. Runs on weekends and while paused
+  (it only reads the journal; its AI review is skipped while paused).
 
 Nothing runs while the system is paused, on weekends/holidays, or before
 today's Kite login. Disable with ``TRADINGAGENTS_SCHEDULER=off``.
@@ -181,9 +184,19 @@ class MarketDataScheduler:
             run = latest_run(now.date().isoformat())
             if run and run["status"] in ("ok", "blocked"):
                 self.scans_done["cash_swing"] = now.date()  # already ran today (e.g. before a restart)
+        ran = []
+        week = self._postmortem_week(now)
+        if week:
+            from backend.journal.postmortem import run_weekly_postmortem
+            try:
+                result = run_weekly_postmortem(week)
+            except Exception as exc:   # never let it stop the scheduler
+                result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+            self.scans_done["postmortem"] = week
+            self.last_results["postmortem:weekly"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+            ran.append("postmortem:weekly")
         state = self._state(now)
         self.waiting_for = self._waiting_reason(now, state)
-        ran = []
         for job in due_jobs(now, state):
             if job == "morning_refresh":
                 self.last_morning_attempt = now
@@ -223,6 +236,14 @@ class MarketDataScheduler:
                 break  # try the rest on the next tick
         return ran
 
+    def _postmortem_week(self, now: datetime) -> date | None:
+        from backend.journal.postmortem import exists, postmortem_due
+        week = postmortem_due(now, self.scans_done.get("postmortem"))
+        if week and exists(week):
+            self.scans_done["postmortem"] = week   # already done (e.g. before a restart, or by hand)
+            return None
+        return week
+
     @staticmethod
     def _waiting_reason(now: datetime, state: dict) -> str | None:
         if state["paused"]:
@@ -247,7 +268,8 @@ class MarketDataScheduler:
 
 
 def _brief(result: dict) -> dict:
-    keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted")
+    keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
+            "closed", "ai_status")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

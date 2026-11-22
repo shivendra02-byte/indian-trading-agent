@@ -33,6 +33,7 @@ global:
     max_new_trades_day: 5
     max_new_trades_week: 15
     max_ai_evaluations_day: 5
+    one_open_trade_per_instrument: true   # agreed 22 Nov 2026: no stacking signals on an open position
   drawdown:
     daily_loss_pct: 2.0            # stop new trades for the day
     weekly_loss_pct: 4.0           # half size next week

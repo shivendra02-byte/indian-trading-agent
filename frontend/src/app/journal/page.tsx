@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getJournal, getLearningReport, trackJournal } from "@/lib/api";
+import { getJournal, getLearningReport, markJournalAction, trackJournal } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,7 +57,53 @@ type JournalRecord = {
   mfe_r: number | null;
   mae_r: number | null;
   pnl_rupees: number | null;
+  user_action?: "taken" | "skipped" | null;
+  user_fill_price?: number | null;
 };
+
+// What you did with a shortlisted signal (execution is manual). Feeds the weekly post-mortem.
+function ActionCell({ r }: { r: JournalRecord }) {
+  const [action, setAction] = useState<string>(r.user_action ?? "");
+  const [fill, setFill] = useState<string>(r.user_fill_price ? String(r.user_fill_price) : "");
+  const save = async (nextAction: string, nextFill: string) => {
+    try {
+      await markJournalAction(r.id, {
+        action: nextAction ? (nextAction as "taken" | "skipped") : null,
+        fill_price: nextAction === "taken" && nextFill ? Number(nextFill) : null,
+      });
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not save"));
+    }
+  };
+  if (!["shortlisted", "approved"].includes(r.decision)) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        className="rounded border bg-background px-1 py-0.5"
+        value={action}
+        onChange={(e) => {
+          setAction(e.target.value);
+          void save(e.target.value, fill);
+        }}
+      >
+        <option value="">—</option>
+        <option value="taken">Taken</option>
+        <option value="skipped">Skipped</option>
+      </select>
+      {action === "taken" && (
+        <input
+          type="number"
+          step="0.05"
+          placeholder="fill"
+          className="w-20 rounded border bg-background px-1 py-0.5"
+          value={fill}
+          onChange={(e) => setFill(e.target.value)}
+          onBlur={() => void save(action, fill)}
+        />
+      )}
+    </div>
+  );
+}
 
 function StatLine({ label, s }: { label: string; s: Stats }) {
   return (
@@ -196,7 +242,7 @@ export default function JournalPage() {
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-left">
                   <tr>
-                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Status", "Exit", "R", "MFE / MAE", "₹"].map((h) => (
+                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Status", "Exit", "R", "MFE / MAE", "₹", "You"].map((h) => (
                       <th key={h} className="px-2 py-1.5 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -216,10 +262,11 @@ export default function JournalPage() {
                       <td className={`px-2 py-1 ${r.pnl_r !== null && r.pnl_r < 0 ? "text-red-600" : "text-green-600"}`}>{r.pnl_r ?? "—"}</td>
                       <td className="px-2 py-1">{r.mfe_r ?? "—"} / {r.mae_r ?? "—"}</td>
                       <td className="px-2 py-1">{r.pnl_rupees?.toLocaleString("en-IN") ?? "—"}</td>
+                      <td className="px-2 py-1"><ActionCell r={r} /></td>
                     </tr>
                   ))}
                   {records.length === 0 && (
-                    <tr><td colSpan={12} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
+                    <tr><td colSpan={13} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
                   )}
                 </tbody>
               </table>

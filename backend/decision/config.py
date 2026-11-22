@@ -59,6 +59,10 @@ class LimitsCfg(_Strict):
     max_new_trades_day: int = Field(ge=0)
     max_new_trades_week: int = Field(ge=0)
     max_ai_evaluations_day: int = Field(ge=0)
+    # A signal on an instrument that already has a trade open in the same book
+    # (segment + symbol) is not taken: live it is journaled as not_selected
+    # (shadow-tracked); backtests leave it out of the trade counts.
+    one_open_trade_per_instrument: bool = True
 
 
 class DrawdownCfg(_Strict):

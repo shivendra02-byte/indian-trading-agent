@@ -28,6 +28,7 @@ from typing import Callable, Sequence
 
 from backend.decision.config import get_config
 from backend.signals.indicators import swing_points
+from backend.signals.selection import choose_shortlist
 from backend.signals.setups import stage
 
 SEGMENT = "cup_handle"
@@ -307,8 +308,7 @@ def run_scan(now: datetime | None = None, force: bool = False,
 
     ranked = sorted((r for r in rows if r.get("valid") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
-    for r in ranked[:cfg["shortlist"]]:
-        r["shortlisted"] = True
+    shortlist = choose_shortlist(ranked, cfg["shortlist"], lambda r: SEGMENT)
     for r in rows:
         if r.get("trackable"):
             sel = bool(r.get("shortlisted"))
@@ -324,7 +324,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
     return _finish_run(run_id, "ok", {
         "signal_date": signal_date.isoformat(), "entry_day": first.isoformat(), "time_stop": last.isoformat(),
         "regime": regime, "stocks": len(universe), "patterns": len([r for r in rows if r.get("trackable")]),
-        "shortlisted": [r["symbol"] for r in ranked[:cfg["shortlist"]]],
+        "shortlisted": [r["symbol"] for r in shortlist],
+        "skipped_open_trade": [r["symbol"] for r in ranked if r.get("selection_skip")],
         "top_reject_reasons": dict(sorted(rejected.items(), key=lambda kv: -kv[1])[:5]),
         "rule_version": get_config().rule_version,
     })
@@ -338,7 +339,7 @@ def journal_row(r: dict, signal_date: date, first: date, last: date, fill_until:
         "segment": SEGMENT, "symbol": r["symbol"], "instrument_token": r["token"], "exchange": "NSE",
         "signal_date": signal_date.isoformat(), "setup": SETUP, "direction": "long",
         "regime": r.get("regime"), "score": r.get("score"), "factors": r.get("factors"),
-        "soft_checks": r.get("soft_checks"), "decision": decision, "reject_reason": None,
+        "soft_checks": r.get("soft_checks"), "decision": decision, "reject_reason": r.get("selection_skip"),
         "entry": r["entry"], "stop": r["stop"], "target": r["target"], "rr": r.get("rr"), "atr": None,
         "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T{fill_until}",
         "time_stop_date": last.isoformat(),

@@ -193,6 +193,14 @@ export const getJournal = (params: { segment?: string; decision?: string; status
 export const getLearningReport = (segment?: string) =>
   fetchAPI(`/api/journal/learning${segment ? `?segment=${encodeURIComponent(segment)}` : ""}`);
 export const trackJournal = () => fetchAPI(`/api/journal/track`, { method: "POST" });
+export const markJournalAction = (
+  id: number,
+  data: { action: "taken" | "skipped" | null; fill_price?: number | null; exit_price?: number | null; note?: string | null },
+) => fetchAPI(`/api/journal/${id}/action`, { method: "PUT", body: JSON.stringify(data) });
+export const listPostmortems = () => fetchAPI(`/api/journal/postmortem`);
+export const getPostmortem = (weekStart: string) => fetchAPI(`/api/journal/postmortem/${weekStart}`);
+export const runPostmortem = (data: { week_start?: string; with_ai?: boolean }) =>
+  fetchAPI(`/api/journal/postmortem/run`, { method: "POST", body: JSON.stringify(data) });
 
 // Rule backtester
 export const getRuleSets = () => fetchAPI(`/api/rule-backtests/rule-sets`);
@@ -205,6 +213,7 @@ export const startRuleBacktest = (data: {
   end_date: string;
   max_symbols?: number;
   daily_only?: boolean;
+  split_date?: string;
 }) => fetchAPI(`/api/rule-backtests`, { method: "POST", body: JSON.stringify(data) });
 export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
 export const getHistoryProgress = () => fetchAPI(`/api/rule-backtests/history`);

@@ -44,7 +44,12 @@ type RunRow = {
   progress: string | null;
   headline: Stats | null;
   trades: number | null;
-  options?: { daily_only?: boolean };
+  options?: { daily_only?: boolean; split_date?: string | null };
+};
+type PeriodBlock = {
+  groups: Record<string, Stats>;
+  by_setup: Record<string, Stats>;
+  by_score_band: Record<string, Stats>;
 };
 type Summary = {
   candidates: number;
@@ -64,6 +69,10 @@ type Summary = {
   limitations: string[];
   funnel?: Funnel;
   exit_mode?: string;
+  by_score_band?: Record<string, Stats>;
+  by_period?: { train: PeriodBlock; test: PeriodBlock; split_date: string };
+  stacked_signals?: number;
+  one_open_trade_per_instrument?: boolean;
 };
 type RunDetail = RunRow & { summary: Summary | null };
 type HistoryProgress = {
@@ -239,6 +248,24 @@ function FunnelView({ f }: { f: Funnel }) {
   );
 }
 
+function PeriodView({ p }: { p: { train: PeriodBlock; test: PeriodBlock; split_date: string } }) {
+  const half = (name: string, b: PeriodBlock) => [
+    ...Object.entries(GROUP_LABEL).map(([k, label]) => [`${name}: ${label}`, b.groups[k]] as [string, Stats | undefined]),
+  ];
+  const setups = Array.from(new Set([...Object.keys(p.train.by_setup), ...Object.keys(p.test.by_setup)])).sort();
+  const bands = Array.from(new Set([...Object.keys(p.train.by_score_band), ...Object.keys(p.test.by_score_band)])).sort();
+  return (
+    <div className="space-y-2 rounded border p-2">
+      <p className="text-xs font-medium">Train (before {p.split_date}) vs test (from {p.split_date})</p>
+      <StatsTable rows={[...half("Train", p.train), ...half("Test", p.test)]} />
+      <p className="text-xs font-medium">By setup</p>
+      <StatsTable rows={setups.flatMap((k) => [[`${k} · train`, p.train.by_setup[k]], [`${k} · test`, p.test.by_setup[k]]] as [string, Stats | undefined][])} />
+      <p className="text-xs font-medium">By score band</p>
+      <StatsTable rows={bands.flatMap((k) => [[`${k} · train`, p.train.by_score_band[k]], [`${k} · test`, p.test.by_score_band[k]]] as [string, Stats | undefined][])} />
+    </div>
+  );
+}
+
 function RunDetailCard({ run }: { run: RunDetail }) {
   const s = run.summary;
   if (!s) return null;
@@ -247,7 +274,8 @@ function RunDetailCard({ run }: { run: RunDetail }) {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
           #{run.id} · {SEGMENT_LABEL[run.segment] ?? run.segment} · {run.rule_set}
-          {run.options?.daily_only ? " · daily bars only" : ""}{" "}
+          {run.options?.daily_only ? " · daily bars only" : ""}
+          {run.options?.split_date ? ` · split ${run.options.split_date}` : ""}{" "}
           <span className="font-normal text-muted-foreground">
             ({run.rule_version}) · {run.start_date} → {run.end_date} · {s.symbols} stocks · {s.candidates} candidates,{" "}
             {s.no_fill} not filled
@@ -256,6 +284,18 @@ function RunDetailCard({ run }: { run: RunDetail }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <StatsTable rows={Object.entries(GROUP_LABEL).map(([k, label]) => [label, s.groups[k]])} />
+        {s.one_open_trade_per_instrument && (
+          <p className="text-xs text-muted-foreground">
+            One open trade per instrument: {s.stacked_signals ?? 0} signals on a stock already in a trade were left out.
+          </p>
+        )}
+        {s.by_period && <PeriodView p={s.by_period} />}
+        {s.by_score_band && Object.keys(s.by_score_band).length > 0 && (
+          <div>
+            <p className="mb-1 text-xs font-medium">By score band (does a higher score mean better trades?)</p>
+            <StatsTable rows={Object.entries(s.by_score_band)} />
+          </div>
+        )}
         <div>
           <p className="mb-1 text-xs font-medium">By setup (all trackable)</p>
           <StatsTable rows={Object.entries(s.by_setup)} />
@@ -331,6 +371,7 @@ export default function RuleBacktestsPage() {
   const [start, setStart] = useState(isoDaysAgo(365));
   const [end, setEnd] = useState(isoDaysAgo(10));
   const [dailyOnly, setDailyOnly] = useState(false);
+  const [splitDate, setSplitDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistoryProgress>({ status: "idle" });
@@ -378,7 +419,10 @@ export default function RuleBacktestsPage() {
   const run = async (rs: string) => {
     setBusy(true);
     try {
-      await startRuleBacktest({ segment, rule_set: rs, start_date: start, end_date: end, daily_only: dailyOnly });
+      await startRuleBacktest({
+        segment, rule_set: rs, start_date: start, end_date: end, daily_only: dailyOnly,
+        split_date: splitDate || undefined,
+      });
       toast.success(`Backtest started (${rs})`);
       fetchData();
     } catch (e) {
@@ -460,6 +504,10 @@ export default function RuleBacktestsPage() {
             <span className="text-xs text-muted-foreground">To</span>
             <input type="date" className="rounded border bg-background px-2 py-1" value={end} onChange={(e) => setEnd(e.target.value)} />
           </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">Train/test split (optional)</span>
+            <input type="date" className="rounded border bg-background px-2 py-1" value={splitDate} onChange={(e) => setSplitDate(e.target.value)} />
+          </label>
           <label className="flex items-center gap-2 pb-1 text-xs">
             <input type="checkbox" checked={dailyOnly} onChange={(e) => setDailyOnly(e.target.checked)} />
             Daily bars only
@@ -469,6 +517,7 @@ export default function RuleBacktestsPage() {
           </Button>
           <p className="w-full text-xs text-muted-foreground">
             One run at a time. To compare, run each rule set on the same segment and dates, then tick both below. Stock futures runs take longer (hourly bars).
+            A split date reports the rules&apos; results before it (train) and from it (test) side by side: set rules on the train half, trust only what holds in the test half.
             &quot;Daily bars only&quot; models every entry on the next day&apos;s daily bar and skips the 4H check, the same way the years before the hourly history are tested, so periods can be compared on equal terms.
           </p>
         </CardContent>

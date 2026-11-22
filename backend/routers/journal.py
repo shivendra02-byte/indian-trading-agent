@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from datetime import date
 
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from backend.journal import postmortem
 from backend.journal.learning import report
-from backend.journal.store import list_records
+from backend.journal.store import list_records, set_user_action
 from backend.journal.tracker import track_open_records
 
 router = APIRouter(prefix="/api/journal", tags=["journal"])
@@ -40,3 +44,43 @@ def learning(segment: str | None = Query(None, pattern=r"^[a-z_]{1,32}$")):
 @router.post("/track")
 def track():
     return track_open_records()
+
+
+class UserAction(BaseModel):
+    action: Literal["taken", "skipped"] | None = None
+    fill_price: float | None = Field(None, gt=0)
+    exit_price: float | None = Field(None, gt=0)
+    note: str | None = Field(None, max_length=500)
+
+
+@router.put("/{record_id}/action")
+def mark_action(record_id: int, data: UserAction):
+    rec = set_user_action(record_id, data.action, data.fill_price, data.exit_price, data.note)
+    if rec is None:
+        raise HTTPException(404, "journal record not found")
+    return {k: rec.get(k) for k in ("id", "user_action", "user_fill_price", "user_exit_price", "user_note")}
+
+
+# --- weekly post-mortem --------------------------------------------------------------------
+
+class PostmortemRun(BaseModel):
+    week_start: date | None = None     # any date in the week; default: this week
+    with_ai: bool = True
+
+
+@router.get("/postmortem")
+def postmortem_list():
+    return {"weeks": postmortem.list_postmortems()}
+
+
+@router.get("/postmortem/{week_start}")
+def postmortem_get(week_start: date):
+    item = postmortem.get_postmortem(postmortem.week_bounds(week_start)[0].isoformat())
+    if item is None:
+        raise HTTPException(404, "no post-mortem for that week yet")
+    return item
+
+
+@router.post("/postmortem/run")
+def postmortem_run(data: PostmortemRun):
+    return postmortem.run_weekly_postmortem(data.week_start, with_ai=data.with_ai)

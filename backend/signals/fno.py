@@ -32,6 +32,7 @@ from backend.signals.cash_swing import (
     _finish_run, _save, _start_run, data_quality, ensure_scan_tables, expected_last_daily_bar,
 )
 from backend.signals.regime import current_regime
+from backend.signals.selection import choose_shortlist
 from backend.signals.setups import _relative_strength_points, evaluate, htf_trend, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
@@ -329,8 +330,7 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     ranked = sorted((r for r in rows if r.get("valid") and r.get("trackable") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
     shortlist_n = _inst(lead).shortlist_per_scan
-    for r in ranked[:shortlist_n]:
-        r["shortlisted"] = True
+    shortlist = choose_shortlist(ranked, shortlist_n, lambda r: r["segment"])
     for r in rows:
         if r.get("trackable"):
             selected = bool(r.get("shortlisted"))
@@ -350,7 +350,8 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     return _finish_run(run_id, "ok", {
         "signal_bar": bar_start.isoformat(timespec="minutes"), "regime": regime_nse,
         "instruments": len(instruments), "valid_setups": sum(1 for r in rows if r.get("valid")),
-        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in ranked[:shortlist_n]],
+        "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],
+        "skipped_open_trade": [r["symbol"] for r in ranked if r.get("selection_skip")],
         "journal_records": len(journal_rows), "tracking": tracked, "rule_version": get_config().rule_version,
     })
 
