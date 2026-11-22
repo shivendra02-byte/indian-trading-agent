@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import bisect
 import json
+import re
 import threading
+from collections import Counter
 from datetime import date, datetime, time, timedelta
 from typing import Callable
 
@@ -253,20 +255,66 @@ def _record(c: dict, symbol: str, signal_ts: str, decision: str, outcome: dict) 
             "entry": c["entry"], "stop": c["stop"], "target": c["target"], "rr": c.get("rr"),
             "status": outcome["status"], "exit_reason": outcome.get("exit_reason"),
             "pnl_r": outcome.get("pnl_r"), "mfe_r": outcome.get("mfe_r"), "mae_r": outcome.get("mae_r"),
-            "exit_ts": outcome.get("exit_ts"), "trail_pnl_r": (outcome.get("trail") or {}).get("pnl_r")}
+            "exit_ts": outcome.get("exit_ts"), "trail_pnl_r": (outcome.get("trail") or {}).get("pnl_r"),
+            "fixed_pnl_r": (outcome.get("fixed") or {}).get("pnl_r")}
+
+
+# --- funnel: where candidates drop out ---------------------------------------------------
+
+def _reason_key(reason: str | None) -> str:
+    """'no room for 2R before the next level (24123.45)' → 'no room for NR before the next level'."""
+    text = re.sub(r"\([^)]*\)", "", reason or "unknown")
+    text = re.sub(r"\d+(\.\d+)?", "N", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+class Funnel:
+    """Counts for the run summary: days and bars checked, why days were skipped,
+    the market regime on the days checked, and every rejection reason per setup.
+    Answers "why so few trades?" without re-running anything."""
+
+    def __init__(self):
+        self.counts: Counter = Counter()
+        self.regimes: Counter = Counter()
+        self.rejects: dict[str, Counter] = {}
+
+    def add(self, key: str, n: int = 1) -> None:
+        self.counts[key] += n
+
+    def candidates(self, cands: list[dict]) -> None:
+        for c in cands:
+            if c.get("trackable"):
+                self.counts["candidates_trackable"] += 1
+                if c.get("valid"):
+                    self.counts["candidates_valid"] += 1
+                else:
+                    for part in (c.get("reject_reason") or "").split("; "):
+                        if part:
+                            self.rejects.setdefault(f"{c['setup']} (tracked, not valid)", Counter())[
+                                _reason_key(part)] += 1
+                continue
+            self.counts["candidates_rejected"] += 1
+            setup = c.get("setup") or "all setups"
+            self.rejects.setdefault(setup, Counter())[_reason_key(c.get("reject_reason"))] += 1
+
+    def as_dict(self) -> dict:
+        return {"counts": dict(self.counts), "regime_days": dict(self.regimes.most_common()),
+                "rejections": {k: dict(v.most_common(12)) for k, v in sorted(self.rejects.items())}}
 
 
 def _simulate(c: dict, path: list[dict], fill_until: str, time_stop: date) -> dict:
-    trail = get_config().global_.trailing_shadow
+    g = get_config().global_
     return simulate(direction=c["direction"], entry=c["entry"], stop=c["stop"], target=c["target"],
                     atr=c.get("atr"), bars=path, fill_until=fill_until, time_stop_date=time_stop.isoformat(),
-                    trail_start_r=trail.start_r, trail_atr=trail.trail_atr)
+                    trail_start_r=g.trailing_shadow.start_r, trail_atr=g.trailing_shadow.trail_atr,
+                    exit_rule=g.exit_management.model_dump())
 
 
 # --- segment runners ---------------------------------------------------------------------
 
 def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict],
-                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
+                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+                   funnel: Funnel | None = None) -> list[dict]:
     """Daily signals, long only. Where hourly history exists the entry window uses
     hourly bars and the 4H confirmation is applied; before that (older years) the
     entry is modelled on the next day's daily bar and timeframes that need hourly
@@ -280,17 +328,23 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
     min_score = cfg.global_.scoring.min_shortlist_score
     nifty_index = [b["ts"][:10] for b in nifty]
     blocked_cache: dict = {}
+    funnel = funnel or Funnel()
     plan = []          # (day, window, regime, nifty slice)
     for d in _trading_days(start, end):
         iso = d.isoformat()
+        funnel.add("trading_days")
         k = bisect.bisect_right(nifty_index, iso)
         if k < 250 or nifty_index[k - 1] != iso:
+            funnel.add("days_skipped_no_nifty_history")
             continue
         window = _next_days(d, inst.hold_trading_days)
         if _market_blocked(window[0], window[-1], blocked_cache):
+            funnel.add("days_skipped_rbi_budget")
             continue
         bench = nifty[max(0, k - 300):k]
-        plan.append((d, window, current_regime(bench)["regime"], bench))
+        regime = current_regime(bench)["regime"]
+        funnel.regimes[regime] += 1
+        plan.append((d, window, regime, bench))
 
     trades = []
     for n, stock in enumerate(symbols, 1):
@@ -309,7 +363,9 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
                 continue
             bars = daily[max(0, i - 300):i]
             if len(bars) < inst.min_primary_bars or avg_turnover(bars) < min_turnover:
+                funnel.add("stock_days_skipped_history_or_turnover")
                 continue
+            funnel.add("stock_days_evaluated")
             has_hourly = iso > hourly_from          # 4H needs ~25 sessions of hourly bars before the day
             j_end = bisect.bisect_right(h_index, f"{iso}T23:59:59") - 1
 
@@ -329,10 +385,12 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
             if hourly_tfs and any(len(confirmations[tf]) < 50 for tf in hourly_tfs):
                 untested = hourly_tfs
                 confirmations = {tf: b for tf, b in confirmations.items() if tf not in hourly_tfs}
-            for c in evaluate(bars, view(inst.scored_htf or "week"), regime, directions=tuple(inst.directions),
-                              is_stock=True, benchmark=bench, max_stop_pct=max_stop,
-                              confirmations=confirmations, min_primary_bars=inst.min_primary_bars,
-                              stock_regime=regime_at(stock_labels, i - 1)):
+            cands = evaluate(bars, view(inst.scored_htf or "week"), regime, directions=tuple(inst.directions),
+                             is_stock=True, benchmark=bench, max_stop_pct=max_stop,
+                             confirmations=confirmations, min_primary_bars=inst.min_primary_bars,
+                             stock_regime=regime_at(stock_labels, i - 1))
+            funnel.candidates(cands)
+            for c in cands:
                 if not c.get("trackable"):
                     continue
                 entry_day = window[0].isoformat()
@@ -360,7 +418,7 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
 
 def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[dict],
                      progress: Callable[[str], None] = lambda m: None, *, instrument: str = "stock_futures",
-                     is_stock: bool = True, daily_only: bool = False) -> list[dict]:
+                     is_stock: bool = True, daily_only: bool = False, funnel: Funnel | None = None) -> list[dict]:
     """Hourly signals on the spot price (expired futures can't be downloaded).
     ``instrument`` selects the config block (stock_futures / index_futures).
     Index spot has no volume: volume is recorded as not tested and left out of the score."""
@@ -373,16 +431,22 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
               - timedelta(minutes=int(extra.get("no_entry_last_minutes", 30)))).time()
     nifty_index = [b["ts"][:10] for b in nifty]
     blocked_cache: dict = {}
+    funnel = funnel or Funnel()
     days = {}
     for d in _trading_days(start, end):
+        funnel.add("trading_days")
         window = [d] + _next_days(d, inst.hold_trading_days - 1)
         if _market_blocked(window[0], window[-1], blocked_cache):
+            funnel.add("days_skipped_rbi_budget")
             continue
         k = bisect.bisect_left(nifty_index, d.isoformat())       # yesterday's close and before
         if k < 250:
+            funnel.add("days_skipped_no_nifty_history")
             continue
         bench = nifty[max(0, k - 300):k]
-        days[d.isoformat()] = (window, current_regime(bench)["regime"], bench)
+        regime = current_regime(bench)["regime"]
+        funnel.regimes[regime] += 1
+        days[d.isoformat()] = (window, regime, bench)
 
     trades = []
     for n, stock in enumerate(symbols, 1):
@@ -404,7 +468,9 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
             bar_start = datetime.fromisoformat(bar["ts"])
             bar_end = bar_start + timedelta(hours=1)
             if bar_end.time() > cutoff:
+                funnel.add("bars_skipped_last_minutes")
                 continue
+            funnel.add("bars_evaluated")
             if day not in daily_cache:
                 k = bisect.bisect_left(d_index, day)
                 ctx_daily = daily[max(0, k - 300):k]
@@ -424,10 +490,12 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
             confirmations = {tf: view(tf) for tf in inst.confirmation_tfs if tf != scored}
             context = {tf: view(tf) for tf in inst.context_must_not_oppose}
             primary = hourly[max(0, j - 399):j + 1]
-            for c in evaluate(primary, view(scored), regime, directions=tuple(inst.directions), is_stock=is_stock,
-                              rs_override=rs, confirmations=confirmations, context=context,
-                              min_primary_bars=inst.min_primary_bars, volume_available=volume_available,
-                              stock_regime=own_regime):
+            cands = evaluate(primary, view(scored), regime, directions=tuple(inst.directions), is_stock=is_stock,
+                             rs_override=rs, confirmations=confirmations, context=context,
+                             min_primary_bars=inst.min_primary_bars, volume_available=volume_available,
+                             stock_regime=own_regime)
+            funnel.candidates(cands)
+            for c in cands:
                 if not c.get("trackable"):
                     continue
                 fill_until = min(bar_end + timedelta(hours=entry_bars), datetime.combine(bar_start.date(), cutoff))
@@ -438,6 +506,7 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
                         break
                     path.append(b)
                 if not path:
+                    funnel.add("candidates_without_forward_bars")
                     continue
                 outcome = _simulate(c, mark_eod(path), fill_until.isoformat(timespec="seconds"), window[-1])
                 rec = _record(c, stock["symbol"], bar["ts"], _decision(c, min_score), outcome)
@@ -448,16 +517,19 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
     return trades
 
 
-def run_futures_proxy(start, end, symbols, nifty, progress=lambda m: None, daily_only=False) -> list[dict]:
-    return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="stock_futures", is_stock=True)
+def run_futures_proxy(start, end, symbols, nifty, progress=lambda m: None, daily_only=False, funnel=None) -> list[dict]:
+    return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="stock_futures", is_stock=True,
+                            funnel=funnel)
 
 
-def run_index_futures(start, end, symbols, nifty, progress=lambda m: None, daily_only=False) -> list[dict]:
-    return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="index_futures", is_stock=False)
+def run_index_futures(start, end, symbols, nifty, progress=lambda m: None, daily_only=False, funnel=None) -> list[dict]:
+    return run_hourly_proxy(start, end, symbols, nifty, progress, instrument="index_futures", is_stock=False,
+                            funnel=funnel)
 
 
 def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict],
-                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
+                   progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+                   funnel: Funnel | None = None) -> list[dict]:
     """Daily cup-and-handle breakouts; entry on the next session (hourly bars where
     stored, otherwise the daily bar), then daily bars to the 8-week time stop."""
     from backend.signals import cup_handle
@@ -526,7 +598,8 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
 
 
 def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
-            progress: Callable[[str], None] = lambda m: None, daily_only: bool = False) -> list[dict]:
+            progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+            funnel: Funnel | None = None) -> list[dict]:
     """Opening range breakout on 10-minute spot bars of the most liquid stocks
     (top N by 20-day turnover before ``start``). First breakout per stock per day,
     exit at ``exit_time`` the same day."""
@@ -638,6 +711,8 @@ def block(rows: list[dict]) -> dict:
         st["max_drawdown_r"] = max_drawdown_r(rows)
         trail = [r["trail_pnl_r"] for r in rows if r.get("trail_pnl_r") is not None]
         st["trailing_avg_r"] = round(sum(trail) / len(trail), 3) if trail else None
+        fixed = [r["fixed_pnl_r"] for r in rows if r.get("fixed_pnl_r") is not None]
+        st["fixed_avg_r"] = round(sum(fixed) / len(fixed), 3) if fixed else None
     return st
 
 
@@ -733,11 +808,13 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
                 raise RuntimeError("no instruments to test; run the history download first")
             runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle, "orb_proxy": run_orb,
                       "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures}[segment]
+            funnel = Funnel()
             trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg),
-                            daily_only=daily_only)
+                            daily_only=daily_only, funnel=funnel)
             summary = summarize(trades, segment)
             summary.update({"symbols": len(symbols), "rule_version": get_config().rule_version,
-                            "daily_only": daily_only})
+                            "daily_only": daily_only, "funnel": funnel.as_dict(),
+                            "exit_mode": get_config().global_.exit_management.mode})
             _update(run_id, status="done", progress="done", summary=summary, trades=trades)
             return summary
         except Exception as exc:

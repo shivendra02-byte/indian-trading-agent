@@ -25,6 +25,12 @@ type Stats = {
   total_r?: number;
   max_drawdown_r?: number;
   trailing_avg_r?: number | null;
+  fixed_avg_r?: number | null;
+};
+type Funnel = {
+  counts: Record<string, number>;
+  regime_days: Record<string, number>;
+  rejections: Record<string, Record<string, number>>;
 };
 type RunRow = {
   id: number;
@@ -56,6 +62,8 @@ type Summary = {
   untested?: string[];
   soft_checks: Record<string, { passed: Stats; failed: Stats }>;
   limitations: string[];
+  funnel?: Funnel;
+  exit_mode?: string;
 };
 type RunDetail = RunRow & { summary: Summary | null };
 type HistoryProgress = {
@@ -181,6 +189,56 @@ function StatsTable({ rows }: { rows: [string, Stats | undefined][] }) {
   );
 }
 
+const FUNNEL_LABEL: Record<string, string> = {
+  trading_days: "Trading days in range",
+  days_skipped_rbi_budget: "Days skipped: RBI/Budget inside the hold",
+  days_skipped_no_nifty_history: "Days skipped: not enough NIFTY history",
+  bars_evaluated: "Hourly bars checked",
+  bars_skipped_last_minutes: "Bars skipped: entry would be in the last minutes",
+  stock_days_evaluated: "Stock-days checked",
+  stock_days_skipped_history_or_turnover: "Stock-days skipped: history or turnover",
+  candidates_rejected: "Setup checks rejected",
+  candidates_trackable: "Candidates tracked",
+  candidates_valid: "Candidates passing every rule",
+  candidates_without_forward_bars: "Candidates without later bars",
+};
+
+function FunnelView({ f }: { f: Funnel }) {
+  const counts = Object.entries(f.counts);
+  const regimes = Object.entries(f.regime_days);
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium">Funnel: where candidates drop out</p>
+      <div className="grid gap-1 text-xs sm:grid-cols-2">
+        {counts.map(([k, v]) => (
+          <div key={k} className="flex justify-between border-b py-0.5">
+            <span className="text-muted-foreground">{FUNNEL_LABEL[k] ?? k}</span>
+            <span className="font-medium">{v.toLocaleString("en-IN")}</span>
+          </div>
+        ))}
+      </div>
+      {regimes.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Market regime on the days checked: {regimes.map(([r, n]) => `${r} ${n}`).join(" · ")}
+        </p>
+      )}
+      {Object.entries(f.rejections).map(([setup, reasons]) => (
+        <div key={setup} className="text-xs">
+          <p className="font-medium">{setup}</p>
+          <ul className="pl-4 text-muted-foreground">
+            {Object.entries(reasons).map(([reason, n]) => (
+              <li key={reason} className="flex justify-between gap-2">
+                <span>{reason}</span>
+                <span>{n.toLocaleString("en-IN")}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RunDetailCard({ run }: { run: RunDetail }) {
   const s = run.summary;
   if (!s) return null;
@@ -246,6 +304,13 @@ function RunDetailCard({ run }: { run: RunDetail }) {
           <p className="mb-1 text-xs font-medium">By exit</p>
           <StatsTable rows={Object.entries(s.by_exit)} />
         </div>
+        {s.exit_mode && s.exit_mode !== "fixed" && (
+          <p className="text-xs text-muted-foreground">
+            Exit: {s.exit_mode.replace("_", " + ")}. Same trades with the fixed exit (avg R, all trackable):{" "}
+            {s.groups.all_trackable?.fixed_avg_r ?? "—"} vs {s.groups.all_trackable?.avg_r ?? "—"} managed.
+          </p>
+        )}
+        {s.funnel && <FunnelView f={s.funnel} />}
         <ul className="list-disc pl-5 text-xs text-muted-foreground">
           {s.limitations.map((l) => (
             <li key={l}>{l}</li>

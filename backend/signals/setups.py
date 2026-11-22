@@ -25,9 +25,15 @@ from datetime import datetime
 from typing import Sequence
 
 from backend.decision.config import get_config
-from backend.signals.indicators import atr, ema, rsi, swing_points
+from backend.signals.indicators import atr, ema, rsi, sma, swing_points
 
 SETUPS = ("pullback", "breakout", "range_reversal")
+OPTIONAL_SETUPS = ("mean_reversion",)      # checked only when the rule set configures them
+
+
+def active_setups() -> tuple[str, ...]:
+    configured = get_config().strategies
+    return SETUPS + tuple(name for name in OPTIONAL_SETUPS if name in configured)
 MIN_HTF_BARS = 50
 _FACTOR_MAX = {"htf_trend": 25, "setup_quality": 25, "volume_oi": 15, "rr_stop": 15,
                "regime_fit": 10, "relative_strength": 10}
@@ -174,6 +180,50 @@ def _breakout(bars, ctx, s, volume_needed) -> tuple[bool, str, int, dict]:
     return True, "", bonus, {"volume": ctx["vol_ratio"] >= volume_needed}
 
 
+def _bollinger(closes: Sequence[float], n: int, k: float) -> tuple[list, list, list]:
+    mid = sma(closes, n)
+    upper, lower = [None] * len(closes), [None] * len(closes)
+    for i in range(n - 1, len(closes)):
+        window = closes[i - n + 1:i + 1]
+        sd = (sum((c - mid[i]) ** 2 for c in window) / n) ** 0.5
+        upper[i], lower[i] = mid[i] + k * sd, mid[i] - k * sd
+    return mid, upper, lower
+
+
+def _mean_reversion(bars, ctx, s) -> tuple[bool, str, int, dict]:
+    """Sideways mean reversion: within the last ``probe_bars`` bars price traded
+    outside the Bollinger band (``lookback`` bars, ``band_std`` deviations); the
+    signal bar closes back inside it with a rejection candle. Stop beyond the
+    probe extreme; target the band middle (``target: mean``) or the far band."""
+    st = ctx["strategy"]
+    n, k = st.lookback, float(_extra(st, "band_std", 2.0))
+    probe = int(_extra(st, "probe_bars", 2))
+    mid, upper, lower = _bollinger(ctx["closes"], n, k)
+    if mid[-1] is None or len(bars) < n + probe + 1:
+        return False, "Bollinger band not ready", 0, {}
+    band = lower if s > 0 else upper
+    last = bars[-1]
+    if s * (last["close"] - band[-1]) <= 0:
+        return False, "close not back inside the band", 0, {}
+    recent = range(len(bars) - probe - 1, len(bars))
+    poked = [i for i in recent if band[i] is not None
+             and (bars[i]["low"] < band[i] if s > 0 else bars[i]["high"] > band[i])]
+    if not poked:
+        return False, "no move outside the band", 0, {}
+    if s * (mid[-1] - last["close"]) <= 0:
+        return False, "already beyond the band middle", 0, {}
+    if not _rejection(last, s):
+        return False, "no rejection candle", 0, {}
+    span = [bars[i] for i in recent]
+    ctx["stop_anchor"] = min(b["low"] for b in span) if s > 0 else max(b["high"] for b in span)
+    ctx["band"] = (lower[-1], mid[-1], upper[-1])
+    r = [v for v in ctx["rsi"][-probe - 1:] if v is not None]
+    lo, hi = _extra(st, "rsi_extreme", [30, 70])
+    stretched = bool(r) and (min(r) <= lo if s > 0 else max(r) >= hi)
+    return True, "", 5 if stretched else 0, {"rsi_extreme": stretched,
+                                             "volume": ctx["vol_ratio"] >= st.volume_multiplier}
+
+
 def _clusters(points, tolerance):
     out = []
     for _, p in points:
@@ -229,6 +279,8 @@ def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | No
     highs, lows = ctx["swings"]
     pivots = [(i, p) for i, p in (lows if s > 0 else highs) if s * (entry - p) > 0 and i >= len(bars) - swing_window]
     swing = pivots[-1][1] if pivots else (min(b["low"] for b in bars[-5:]) if s > 0 else max(b["high"] for b in bars[-5:]))
+    if ctx.get("stop_anchor") is not None:   # the setup names its own invalidation point
+        swing = ctx["stop_anchor"]
     stop = swing - s * g.stop_buffer_atr * a
     if s * (entry - stop) < g.min_stop_atr * a:
         stop = entry - s * g.min_stop_atr * a
@@ -240,11 +292,17 @@ def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | No
     if max_stop_pct is not None and risk / entry > max_stop_pct:
         return {**result, "ok": False, "reason": f"stop too wide ({100 * risk / entry:.1f}% of price)"}
     target_mode = _extra(st, "target", "levels") if st else "levels"
+    edge = name = None
     if target_mode in ("range_opposite", "range_middle") and ctx.get("range"):
         lo, hi = ctx["range"]
         edge = (hi if s > 0 else lo) if target_mode == "range_opposite" else (lo + hi) / 2
-        room = s * (edge - 0.1 * s * a - entry)
         name = "the opposite side of the range" if target_mode == "range_opposite" else "the middle of the range"
+    elif target_mode in ("mean", "band_opposite") and ctx.get("band"):
+        lo, mid, hi = ctx["band"]
+        edge = mid if target_mode == "mean" else (hi if s > 0 else lo)
+        name = "the band middle" if target_mode == "mean" else "the opposite band"
+    if edge is not None:
+        room = s * (edge - 0.1 * s * a - entry)
         if room < min_rr * risk:
             return {**result, "ok": False, "reason": f"no room for {min_rr:g}R before {name} ({edge:.2f})",
                     "next_level": round(edge, 2)}
@@ -302,7 +360,8 @@ def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit
     indices) are left out and the score is scaled back to 100."""
     htf_aligned = htf * s
     raw = {
-        "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup == "range_reversal" and htf_aligned == 0)) else 0,
+        "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup in ("range_reversal", "mean_reversion")
+                                                                             and htf_aligned == 0)) else 0,
         "setup_quality": min(25, 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus),
         "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s) if volume_available else None,
         "rr_stop": (10 if geo["rr"] >= 3 else 7 if geo["rr"] >= 2.5 else 5)
@@ -357,7 +416,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
     context_trends = {tf: htf_trend(b) or 0.0 for tf, b in (context or {}).items()}
     sel = cfg.global_.selection
     scored_mode = sel.mode == "scored"
-    contexts = {name: _context(bars, name) for name in SETUPS}
+    setups = active_setups()
+    contexts = {name: _context(bars, name) for name in setups}
     if any(c["atr"][-1] is None or c["e50"][-1] is None for c in contexts.values()):
         return _reject_all("indicators not ready")
     def permissions_for(r):
@@ -365,14 +425,16 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
 
     min_shortlist = cfg.global_.scoring.min_shortlist_score
     out = []
-    for setup in SETUPS:
-        ctx = contexts[setup]
+    for setup in setups:
+        ctx = dict(contexts[setup])    # per-direction copies below: setups write stop/target hints into it
         st = ctx["strategy"]
         use_stock = _extra(st, "regime_source", "market") == "stock" and stock_regime is not None
         setup_regime = stock_regime if use_stock else regime
         rule = permissions_for(setup_regime).get(setup)
+        base_ctx = ctx
         for direction in directions:
             s = 1 if direction == "long" else -1
+            ctx = dict(base_ctx)
             stages: list[dict] = []
             cand = {"setup": setup, "direction": direction, "valid": False, "trackable": False, "regime": regime,
                     "setup_regime": setup_regime, "regime_source": "stock" if use_stock else "market",
@@ -385,14 +447,15 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             required = _extra(st, "requires_regime", None)
             if required and setup_regime != required:
                 why = f"{setup} requires a {required} regime (now {setup_regime}{' for the stock' if use_stock else ''})"
-                if not scored_mode:
+                if not scored_mode or _extra(st, "requires_regime_hard", False):
                     cand["reject_reason"] = why
                     stages.append(stage("regime", "fail", why))
                     continue
                 penalties["required_regime"] = sel.required_regime_penalty
             permitted = bool(rule and direction in rule["directions"]
                              and not (rule.get("with_trend_only") and htf * s < 1))
-            stages.append(stage("regime", "pass" if permitted else "soft_fail",
+            hard_block = not permitted and setup_regime in sel.hard_permission_regimes
+            stages.append(stage("regime", "pass" if permitted else "fail" if hard_block else "soft_fail",
                                 "" if permitted else f"{setup} {direction} not allowed in {setup_regime}"))
             if setup in ("pullback", "breakout") and htf * s <= 0:
                 if not scored_mode:
@@ -415,6 +478,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             elif setup == "breakout":
                 volume_needed = (rule or {}).get("min_volume_ratio") or st.volume_multiplier
                 ok, why, bonus, soft = _breakout(bars, ctx, s, volume_needed)
+            elif setup == "mean_reversion":
+                ok, why, bonus, soft = _mean_reversion(bars, ctx, s)
             else:
                 ok, why, bonus, soft = _range_reversal(bars, ctx, s)
             if not ok:
@@ -442,6 +507,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             else:
                 rs_points, rs_diff = _relative_strength_points(bars, benchmark, s) if is_stock else (0, None)
             regime_fit = (10 if rule.get("preferred") else 5) if permitted else 0
+            if setup == "mean_reversion" and "band" in ctx:
+                cand["band"] = [round(v, 2) for v in ctx["band"]]
             scored = score(setup=setup, s=s, htf=htf, quality_bonus=bonus,
                            close_pos=_close_position(bars[-1], s), vol_ratio=ctx["vol_ratio"], geo=geo,
                            regime_fit=regime_fit, is_stock=is_stock, rs_points=rs_points,
@@ -451,14 +518,16 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
                 scored["score_before_penalties"] = scored["score"]
                 scored["score"] = round(max(0.0, scored["score"] - sum(penalties.values())), 1)
                 scored["penalties"] = penalties
-            failed = []   # soft checks that make the candidate invalid (strict mode only)
+            failed = []   # checks that make the candidate invalid (strict mode; hard regimes in both)
+            if not permitted and (hard_block or not scored_mode):
+                failed.append(f"{setup} {direction} not allowed in {setup_regime}")
             if not scored_mode:
-                if not permitted:
-                    failed.append(f"{setup} {direction} not allowed in {setup_regime}")
                 if soft.get("volume") is False:
                     failed.append(f"volume {ctx['vol_ratio']:.1f}x < {volume_needed}x")
                 if soft.get("rsi_turn") is False:
                     failed.append("RSI did not turn from its band")
+                if soft.get("rsi_extreme") is False and _extra(st, "rsi_extreme_required", False):
+                    failed.append("RSI not stretched")
             stages.append(stage("scoring", "pass" if scored["score"] >= min_shortlist else "below_threshold",
                                 score=scored["score"], **({"penalties": penalties} if penalties else {})))
             cand.update(scored)
