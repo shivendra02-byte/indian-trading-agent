@@ -368,8 +368,18 @@ def build_summary(start: date, end: date, tagger: Callable[[dict], list[str]] = 
                              for r in open_now],
         "backtest_expectation": _backtest_expectation({r["segment"] for r in closed}),
         "adherence": _adherence(start, end),
+        "ideas": _ideas_summary(start, end),
     }
     return summary, trades
+
+
+def _ideas_summary(start: date, end: date) -> dict:
+    """Ideas you logged from other sources: closed this week and the record by source."""
+    try:
+        from backend.ideas import week_summary
+        return week_summary(start, end)
+    except Exception as exc:   # the post-mortem never fails because of the ideas tracker
+        return {"error": f"{type(exc).__name__}: {exc}"[:200]}
 
 
 # --- AI review ---------------------------------------------------------------------------
@@ -390,7 +400,9 @@ def _prompt(summary: dict, trades: list[dict]) -> str:
         "trades manually. Results are in R (1R = the planned risk). 'paper' = trades the system shortlisted; "
         "'shadow' = candidates it tracked but did not pick; 'taken' = trades the owner marked as actually taken. "
         "'your_execution' compares the owner's own fills and exits with the rules' version of the same trades "
-        "(deviation_r > 0 = the owner did better than the rules); skip_notes are the owner's reasons for skipping.\n\n"
+        "(deviation_r > 0 = the owner did better than the rules); skip_notes are the owner's reasons for skipping. "
+        "'ideas' are trade ideas the owner logged from other sources (posts, chats) with their record by source "
+        "and pattern; say which sources or patterns are working only for groups with enough trades.\n\n"
         "Write a short review in markdown with exactly these headings:\n"
         "## What went right\n## What went wrong\n## Patterns\n## Proposed experiments\n\n"
         "Rules:\n"

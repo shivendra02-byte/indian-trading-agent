@@ -167,6 +167,64 @@ class OptionDataCfg(_Strict):
     bse_url: str = "https://www.bseindia.com/download/Bhavcopy/Derivative/BhavCopy_BSE_FO_0_0_0_{yyyymmdd}_F_0000.CSV"
 
 
+class DivergenceCfg(_Strict):
+    """Regular RSI divergence on daily bars (trend-reversal warning). Alerts are
+    information only: sent whether or not anything is shortlisted, never reviewed
+    by the AI, never a paper trade. Every alert is tracked so its record can be judged."""
+    enabled: bool = True
+    rsi_period: int = Field(default=14, ge=2, le=50)
+    swing_bars: int = Field(default=2, ge=1, le=5)            # fractal: k bars each side (2 = 5-bar swing)
+    min_bars_apart: int = Field(default=5, ge=2, le=100)      # between the two swing points
+    max_bars_apart: int = Field(default=60, ge=5, le=250)
+    bullish_rsi_max: float = Field(default=40, ge=0, le=100)  # first low's RSI must be at or below this
+    bearish_rsi_min: float = Field(default=60, ge=0, le=100)  # first high's RSI must be at or above this
+    min_rsi_gap: float = Field(default=2.0, ge=0, le=50)      # RSI must differ by at least this
+    trend_ema: int = Field(default=50, ge=5, le=400)          # reversal needs a prior trend: below (bullish) / above (bearish) this EMA
+    require_trend: bool = True
+    stop_atr: float = Field(default=0.25, ge=0, le=3)         # risk unit: beyond the second swing by this many ATR
+    track_bars: int = Field(default=20, ge=5, le=120)         # outcome window
+    min_turnover_cr: float = Field(default=50, ge=0)          # stocks only: 20-day average, crore
+    include_stocks: bool = True
+    include_indices: bool = True
+    include_mcx: bool = True
+    notify_telegram: bool = True
+    max_alerts_per_message: int = Field(default=25, ge=1, le=100)
+
+
+class ChartPatternsCfg(_Strict):
+    """Trendline, channel and triangle patterns on daily bars, from the chart ideas
+    shared on 22 Nov 2026. Information-only alerts like RSI divergence: tracked and
+    studied on history before any of them becomes a trade setup."""
+    enabled: bool = True
+    patterns: list[Literal["trendline_bounce", "trendline_break", "triangle_breakout"]] = [
+        "trendline_bounce", "trendline_break", "triangle_breakout"]
+    swing_bars: int = Field(default=2, ge=1, le=5)            # 5-bar fractal swings
+    max_swings: int = Field(default=6, ge=3, le=12)           # recent swings tried as line anchors
+    min_touches: int = Field(default=3, ge=2, le=6)           # swings on the line, the signal bar not counted
+    touch_atr: float = Field(default=0.3, ge=0.05, le=2)      # within this many ATR of the line counts as a touch
+    break_atr: float = Field(default=0.25, ge=0, le=2)        # a close this far through the line breaks it
+    min_span: int = Field(default=20, ge=5, le=250)           # first to last anchor, bars
+    max_span: int = Field(default=250, ge=20, le=750)
+    flat_tol_pct: float = Field(default=1.5, ge=0.1, le=10)   # triangle: swing highs (lows) within this % form the flat side
+    triangle_lookback: int = Field(default=60, ge=20, le=250)
+    volume_mult: float = Field(default=1.5, ge=0, le=10)      # breakouts: volume vs the 50-day average (0 = not checked)
+    volume_lookback: int = Field(default=50, ge=10, le=200)
+    stop_atr: float = Field(default=0.25, ge=0, le=3)
+    max_stop_atr: float = Field(default=3.0, ge=0.5, le=10)   # skip if the invalid level is further than this
+    target_r: float = Field(default=2.0, ge=1, le=10)
+    min_channel_rr: float = Field(default=1.5, ge=0.5, le=10) # channel bounce aims at the other line when that is at least this R
+    near_sma: int = Field(default=200, ge=20, le=400)         # recorded: is price near this SMA (the NIFTY 200-DMA idea)
+    near_sma_pct: float = Field(default=3.0, ge=0, le=20)
+    cooldown_bars: int = Field(default=10, ge=0, le=60)       # same pattern + direction on a symbol at most once in this many bars
+    track_bars: int = Field(default=30, ge=5, le=120)
+    min_turnover_cr: float = Field(default=50, ge=0)
+    include_stocks: bool = True
+    include_indices: bool = True
+    include_mcx: bool = True
+    notify_telegram: bool = True
+    max_alerts_per_message: int = Field(default=25, ge=1, le=100)
+
+
 class SelectionCfg(_Strict):
     """How non-safety technical checks are applied.
 
@@ -202,6 +260,8 @@ class GlobalCfg(_Strict):
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
     option_data: OptionDataCfg = OptionDataCfg()
+    divergence: DivergenceCfg = DivergenceCfg()
+    chart_patterns: ChartPatternsCfg = ChartPatternsCfg()
 
 
 class InstrumentCfg(BaseModel):

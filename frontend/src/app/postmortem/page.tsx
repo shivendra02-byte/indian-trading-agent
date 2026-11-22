@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/utils";
+import { OutcomeSummaryTable, type OutcomeSummary } from "@/components/scans/OutcomeSummaryTable";
 
 type Stats = {
   n: number;
@@ -56,6 +57,12 @@ type Summary = {
     exit_worse: number;
     same_as_rules: number;
     skip_notes: { symbol: string; note: string }[];
+  };
+  ideas?: {
+    error?: string;
+    closed_this_week?: { symbol: string; direction: string; source: string; pattern: string; exit_reason: string; result_r: number | null }[];
+    record_by_source?: Record<string, OutcomeSummary>;
+    all?: OutcomeSummary;
   };
   open_at_week_end: { symbol: string; segment: string; setup: string; direction: string; mfe_r: number | null }[];
   backtest_expectation: Record<string, Expectation>;
@@ -287,6 +294,23 @@ export default function PostmortemPage() {
                     Why you skipped: {s.your_execution.skip_notes.map((n) => `${n.symbol}: ${n.note}`).join(" · ")}
                   </p>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {s.ideas && !s.ideas.error && (s.ideas.all?.n ?? 0) > 0 && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Ideas from other sources</CardTitle></CardHeader>
+              <CardContent className="space-y-2 text-xs">
+                {(s.ideas.closed_this_week ?? []).length > 0 && (
+                  <p>
+                    Closed this week:{" "}
+                    {(s.ideas.closed_this_week ?? [])
+                      .map((i) => `${i.symbol} ${i.direction} (${i.source}, ${i.exit_reason}) ${i.result_r ?? "—"}R`)
+                      .join(" · ")}
+                  </p>
+                )}
+                <OutcomeSummaryTable rows={Object.entries(s.ideas.record_by_source ?? {})} showMoves={false} />
               </CardContent>
             </Card>
           )}
