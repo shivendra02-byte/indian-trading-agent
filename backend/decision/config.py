@@ -151,6 +151,22 @@ class AiPanelCfg(_Strict):
     timeout_seconds: int = Field(default=90, ge=10, le=600)
 
 
+class OptionDataCfg(_Strict):
+    """End-of-day option data (exchange bhavcopy files) for the option spread
+    strategy: download, implied volatility and Greeks. Data only — no signals."""
+    enabled: bool = True
+    symbols: dict[Literal["NSE", "BSE"], list[str]] = {"NSE": ["NIFTY", "BANKNIFTY"], "BSE": ["SENSEX"]}
+    risk_free_rate: float = Field(default=0.065, ge=0, le=0.2)      # annual, for Black-76
+    update_after: str = Field(default="19:00", pattern=r"^\d{2}:\d{2}$")   # IST, files are out by then
+    update_until: str = Field(default="23:30", pattern=r"^\d{2}:\d{2}$")
+    retry_minutes: int = Field(default=30, ge=5, le=240)
+    recent_days: int = Field(default=7, ge=1, le=30)               # the daily update re-checks this many trading days
+    max_history_days: int = Field(default=800, ge=30, le=2000)     # largest backfill range allowed
+    request_pause_seconds: float = Field(default=1.0, ge=0, le=30) # be polite to the exchange sites
+    nse_url: str = "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{yyyymmdd}_F_0000.csv.zip"
+    bse_url: str = "https://www.bseindia.com/download/Bhavcopy/Derivative/BhavCopy_BSE_FO_0_0_0_{yyyymmdd}_F_0000.CSV"
+
+
 class SelectionCfg(_Strict):
     """How non-safety technical checks are applied.
 
@@ -185,6 +201,7 @@ class GlobalCfg(_Strict):
     exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
+    option_data: OptionDataCfg = OptionDataCfg()
 
 
 class InstrumentCfg(BaseModel):

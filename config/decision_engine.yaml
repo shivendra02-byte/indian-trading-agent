@@ -86,6 +86,16 @@ global:
     notify_telegram: true          # Telegram alert for every approved trade
     notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
     timeout_seconds: 90
+  option_data:                     # end-of-day NSE/BSE option files for the spread strategy (data only, asked 22 Nov 2026)
+    enabled: true
+    symbols: {NSE: [NIFTY, BANKNIFTY], BSE: [SENSEX]}
+    risk_free_rate: 0.065          # annual, used for Black-76 implied volatility and Greeks
+    update_after: "19:00"          # daily download on trading days from this time (IST)...
+    update_until: "23:30"          # ...retrying every retry_minutes until this time
+    retry_minutes: 30
+    recent_days: 7                 # each daily update also fills gaps in the last 7 trading days
+    max_history_days: 800
+    request_pause_seconds: 1.0
   selection:                       # strict: technical checks reject; scored: two-stage (see config/experiments/two_stage.yaml)
     mode: strict
     htf_against_penalty: 20

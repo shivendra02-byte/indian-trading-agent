@@ -221,6 +221,20 @@ export const deleteFinishedRuleBacktests = () => fetchAPI(`/api/rule-backtests`,
 export const downloadBacktestHistory = () => fetchAPI(`/api/rule-backtests/history`, { method: "POST" });
 export const getHistoryProgress = () => fetchAPI(`/api/rule-backtests/history`);
 
+// Option data (end-of-day NSE/BSE files, India VIX, IV/Greeks)
+export const getOptionDataStatus = () => fetchAPI(`/api/options/status`);
+export const startOptionBackfill = (data: { start_date: string; end_date: string; force?: boolean }) =>
+  fetchAPI(`/api/options/backfill`, { method: "POST", body: JSON.stringify(data) });
+export const runOptionUpdate = () => fetchAPI(`/api/options/update`, { method: "POST" });
+export const uploadOptionFile = (exchange: "NSE" | "BSE", file: Blob) =>
+  fetchAPI(`/api/options/upload?exchange=${exchange}`, { method: "POST", body: file });
+export const getOptionChain = (symbol: string, date?: string, expiry?: string) => {
+  const params = new URLSearchParams({ symbol });
+  if (date) params.set("date", date);
+  if (expiry) params.set("expiry", expiry);
+  return fetchAPI(`/api/options/chain?${params.toString()}`);
+};
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
