@@ -235,6 +235,12 @@ export const getOptionChain = (symbol: string, date?: string, expiry?: string) =
   return fetchAPI(`/api/options/chain?${params.toString()}`);
 };
 
+// Backups (weekly; essentials copy also sent to Telegram)
+export const listBackups = () => fetchAPI(`/api/backups`);
+export const runBackup = (data: { kind: "essentials" | "full"; to_telegram?: boolean }) =>
+  fetchAPI(`/api/backups`, { method: "POST", body: JSON.stringify(data) });
+export const backupDownloadUrl = (name: string) => `${getApiBase()}/api/backups/${encodeURIComponent(name)}/download`;
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>

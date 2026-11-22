@@ -5,6 +5,7 @@ import { getConfig } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LLMSettings } from "@/components/settings/LLMSettings";
+import { BackupsCard } from "@/components/settings/BackupsCard";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { statusColors } from "@/lib/status-colors";
 
@@ -94,6 +95,8 @@ export default function SettingsPage() {
 
       {/* Unified Models & Keys — provider chips + inline keys + set-default */}
       <LLMSettings />
+
+      <BackupsCard />
 
       <div>
         <h2 className="text-lg font-semibold">System Configuration</h2>

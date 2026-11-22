@@ -197,6 +197,7 @@ class MarketDataScheduler:
             self.last_results["postmortem:weekly"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
             ran.append("postmortem:weekly")
         ran += self._option_data(now)
+        ran += self._weekly_backup(now)
         state = self._state(now)
         self.waiting_for = self._waiting_reason(now, state)
         for job in due_jobs(now, state):
@@ -237,6 +238,25 @@ class MarketDataScheduler:
             if result.get("status") == "busy":
                 break  # try the rest on the next tick
         return ran
+
+    def _weekly_backup(self, now: datetime) -> list[str]:
+        """Weekly backups of the app's data (runs while paused and without Kite)."""
+        from backend import backup
+        if not backup.enabled():
+            return []
+        last = self.scans_done.get("backup")
+        if isinstance(last, datetime) and now - last < timedelta(hours=6):
+            return []                     # failed or busy recently: retry later
+        try:
+            if not backup.backup_due(now, backup.last_backup_at("essentials")):
+                return []
+            self.scans_done["backup"] = now
+            result = backup.run_weekly_backup(now)
+        except Exception as exc:   # never let it stop the scheduler
+            self.scans_done["backup"] = now
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results["backup:weekly"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+        return ["backup:weekly"]
 
     def _option_data(self, now: datetime) -> list[str]:
         """Evening NSE/BSE option file download (data only: no Kite login needed,
@@ -287,7 +307,7 @@ class MarketDataScheduler:
 
 def _brief(result: dict) -> dict:
     keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
-            "closed", "ai_status", "counts", "complete")
+            "closed", "ai_status", "counts", "complete", "telegram")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]
