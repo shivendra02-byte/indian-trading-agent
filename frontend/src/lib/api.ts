@@ -249,6 +249,32 @@ export const runDivergenceScan = (group: "nse" | "mcx") =>
 export const getDivergenceStudy = () => fetchAPI(`/api/divergence/study`);
 export const runDivergenceStudy = () => fetchAPI(`/api/divergence/study`, { method: "POST" });
 
+// Chart patterns (trendline bounce / break, triangle breakout; information only)
+export const getChartPatterns = () => fetchAPI(`/api/chart-patterns`);
+export const runChartPatternScan = (group: "nse" | "mcx") =>
+  fetchAPI(`/api/chart-patterns/run?group=${group}`, { method: "POST" });
+export const getChartPatternStudy = () => fetchAPI(`/api/chart-patterns/study`);
+export const startChartPatternStudy = () => fetchAPI(`/api/chart-patterns/study`, { method: "POST" });
+
+// Ideas tracker
+export type IdeaInput = {
+  symbol: string;
+  direction: "long" | "short";
+  entry_type?: "market" | "limit" | "breakout";
+  entry?: number | null;
+  invalid: number;
+  target?: number | null;
+  idea_date?: string;
+  horizon_days?: number;
+  source?: string;
+  pattern?: string;
+  note?: string;
+};
+export const listIdeas = () => fetchAPI(`/api/ideas`);
+export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "POST", body: JSON.stringify(data) });
+export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
+export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/utils";
+import { OutcomeSummaryTable as SummaryTable, num, tone, type OutcomeSummary as Summary } from "@/components/scans/OutcomeSummaryTable";
 
 type Signal = {
   id: number;
@@ -33,18 +34,6 @@ type Signal = {
   ret_20: number | null;
   alert_status: string | null;
 };
-type Summary = {
-  n: number;
-  win_rate?: number;
-  hit_1r?: number;
-  hit_2r?: number;
-  avg_r?: number;
-  pf?: number | null;
-  small_sample?: boolean;
-  avg_ret_5?: number | null;
-  avg_ret_10?: number | null;
-  avg_ret_20?: number | null;
-};
 type Recent = { signals: Signal[]; live_record: Record<string, Summary> };
 type Study = {
   created_at?: string;
@@ -55,55 +44,6 @@ type Study = {
   baseline_10d?: { bullish: number | null; bearish: number | null };
 };
 type ScanResult = { status: string; reason?: string; new?: number; instruments?: number; alert?: string };
-
-function num(v: number | null | undefined, digits = 2, suffix = ""): string {
-  return v === null || v === undefined ? "—" : `${v.toFixed(digits)}${suffix}`;
-}
-
-function tone(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "";
-  return v > 0 ? "text-emerald-600" : v < 0 ? "text-red-600" : "";
-}
-
-function SummaryRow({ name, s }: { name: string; s: Summary }) {
-  return (
-    <tr className="border-t">
-      <td className="px-2 py-1">{name}</td>
-      <td className="px-2 py-1 text-right">
-        {s.n}
-        {s.small_sample ? <span className="text-amber-500"> *</span> : null}
-      </td>
-      <td className="px-2 py-1 text-right">{num(s.win_rate, 1, "%")}</td>
-      <td className="px-2 py-1 text-right">{num(s.hit_1r, 1, "%")}</td>
-      <td className="px-2 py-1 text-right">{num(s.hit_2r, 1, "%")}</td>
-      <td className={`px-2 py-1 text-right ${tone(s.avg_r)}`}>{num(s.avg_r, 3, "R")}</td>
-      <td className="px-2 py-1 text-right">{s.pf ?? "—"}</td>
-      <td className={`px-2 py-1 text-right ${tone(s.avg_ret_10)}`}>{num(s.avg_ret_10, 2, "%")}</td>
-      <td className={`px-2 py-1 text-right ${tone(s.avg_ret_20)}`}>{num(s.avg_ret_20, 2, "%")}</td>
-    </tr>
-  );
-}
-
-function SummaryTable({ rows }: { rows: [string, Summary][] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead className="text-muted-foreground">
-          <tr>
-            {["Group", "Signals", "Ended +", "Reached 1R", "Reached 2R", "Avg", "PF", "10-day move", "20-day move"].map((h) => (
-              <th key={h} className={`px-2 py-1 font-medium ${h === "Group" ? "text-left" : "text-right"}`}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([name, s]) => (
-            <SummaryRow key={name} name={name} s={s} />
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 export default function DivergencePage() {
   const [recent, setRecent] = useState<Recent | null>(null);

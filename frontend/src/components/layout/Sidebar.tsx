@@ -25,6 +25,8 @@ import {
   ClipboardCheck,
   Layers,
   GitCompareArrows,
+  Spline,
+  Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 
@@ -53,6 +55,8 @@ const navGroups: NavGroup[] = [
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
       { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
+      { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },
+      { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
       { href: "/recommendations", label: "Top Picks", icon: Sparkles, hint: "AI-free recommendations" },
       { href: "/scanner", label: "Market Scan", icon: Radar, hint: "Gap / Volume / Breakout" },
       { href: "/strategies", label: "Strategies", icon: Target, hint: "S/R, Cyclical patterns" },

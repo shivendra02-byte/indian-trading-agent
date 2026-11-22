@@ -243,13 +243,21 @@ class MarketDataScheduler:
         return ran
 
     def _divergence(self, group: str, now: datetime) -> None:
-        """RSI divergence alerts on the day's completed daily bars (information only)."""
-        try:
-            from backend.signals.divergence import run_scan as run_divergence
-            result = run_divergence(group, now=now)
-        except Exception as exc:  # never let it stop the scheduler
-            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
-        self.last_results[f"divergence:{group}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+        """Information-only daily alerts on the day's completed bars: RSI divergence and
+        chart patterns; after the NSE close also the ideas tracker."""
+        from backend.signals.chart_patterns import run_scan as run_patterns
+        from backend.signals.divergence import run_scan as run_divergence
+        jobs_ = [(f"divergence:{group}", lambda: run_divergence(group, now=now)),
+                 (f"patterns:{group}", lambda: run_patterns(group, now=now))]
+        if group == "nse":
+            from backend.ideas import refresh_ideas
+            jobs_.append(("ideas:refresh", refresh_ideas))
+        for name, job in jobs_:
+            try:
+                result = job()
+            except Exception as exc:  # never let it stop the scheduler
+                result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+            self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _weekly_backup(self, now: datetime) -> list[str]:
         """Weekly backups of the app's data (runs while paused and without Kite)."""
@@ -319,7 +327,7 @@ class MarketDataScheduler:
 
 def _brief(result: dict) -> dict:
     keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
-            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert")
+            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert", "checked", "by_pattern")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

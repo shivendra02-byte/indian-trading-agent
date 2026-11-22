@@ -98,13 +98,15 @@ def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None 
 
 def outcome(bars: Sequence[dict], sig: dict, track_bars: int) -> dict:
     """Bar by bar after the signal close: -1R at the stop (stop first when a bar
-    touches both), +2R at the target, else the close at the end of the window."""
+    touches both), the target (``sig["target_r"]``, default 2R), else the close at
+    the end of the window. Used by the chart patterns too."""
     s, entry, stop = sig["s"], sig["close"], sig["stop"]
     long = sig["kind"] == "bullish"
     risk = (entry - stop) if long else (stop - entry)
     if risk <= 0:
         return {"status": "closed", "exit_reason": "invalid", "result_r": None}
-    target = entry + TARGET_R * risk if long else entry - TARGET_R * risk
+    target_r = sig.get("target_r") or TARGET_R
+    target = entry + target_r * risk if long else entry - target_r * risk
     one_r = entry + risk if long else entry - risk
     mfe = mae = 0.0
     hit_1r = False
@@ -127,7 +129,7 @@ def outcome(bars: Sequence[dict], sig: dict, track_bars: int) -> dict:
         if (b["high"] >= one_r) if long else (b["low"] <= one_r):
             hit_1r = True
         if (b["high"] >= target) if long else (b["low"] <= target):
-            return {"status": "closed", "exit_reason": "target", "exit_date": _day(b), "result_r": TARGET_R,
+            return {"status": "closed", "exit_reason": "target", "exit_date": _day(b), "result_r": round(target_r, 2),
                     "hit_1r": True, "hit_2r": True, "mfe_r": round(mfe, 2), "mae_r": round(mae, 2), **rets}
     if last - s < track_bars:
         return {"status": "open", "hit_1r": hit_1r, "mfe_r": round(mfe, 2), "mae_r": round(mae, 2), **rets}
