@@ -266,14 +266,17 @@ def _set_stages(rec: dict, panel_stage: dict, final_stage: dict) -> list[dict]:
     return [*stages, panel_stage, final_stage]
 
 
-def pending_records(now: datetime) -> list[dict]:
-    """Shortlisted, not yet reviewed, entry window still open; best score first."""
-    rows = list_records("decision = 'shortlisted' AND panel_decision IS NULL AND track_status = 'pending' "
+def pending_records(now: datetime, retry_errors: bool = False) -> list[dict]:
+    """Shortlisted, not yet reviewed (or, with ``retry_errors``, whose AI call failed),
+    entry window still open; best score first."""
+    reviewed = "(panel_decision IS NULL OR panel_decision = 'error')" if retry_errors else "panel_decision IS NULL"
+    rows = list_records(f"decision = 'shortlisted' AND {reviewed} AND track_status = 'pending' "
                         "AND fill_until > ?", (now.isoformat(timespec="seconds"),), limit=200)
     return sorted(rows, key=lambda r: (r["signal_ts"], -(r.get("score") or 0)))
 
 
-def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
+def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None,
+                   retry_errors: bool = False) -> dict:
     """Review every pending shortlisted trade. Safe to call after every scan."""
     from backend.signals.setups import stage
     from backend.system_state import is_paused
@@ -285,7 +288,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
         return {"status": "skipped", "reason": "paused"}
     now = now or datetime.now()
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
-    for rec in pending_records(now):
+    for rec in pending_records(now, retry_errors):
         evaluated_at = now.isoformat(timespec="seconds")
         blocked = limit_block(now.date(), rec["segment"])
         if blocked:
