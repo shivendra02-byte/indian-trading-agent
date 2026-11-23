@@ -236,11 +236,22 @@ class MarketDataScheduler:
                     self.done[job] = bar
                     if exchange == MCX and interval == "day":
                         self._divergence("mcx", now)   # MCX daily bars are complete after the evening close
+                    if interval in ("10minute", "60minute"):
+                        self._my_trades(exchange, interval, now)
             self.last_results[job] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
             ran.append(job)
             if result.get("status") == "busy":
                 break  # try the rest on the next tick
         return ran
+
+    def _my_trades(self, exchange: str, interval: str, now: datetime) -> None:
+        """Trailing stops of your own futures trades after each synced bar."""
+        try:
+            from backend.my_trades import update_trades
+            result = update_trades(exchange=exchange, interval=interval)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"my_trades:{exchange}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _divergence(self, group: str, now: datetime) -> None:
         """Information-only daily alerts on the day's completed bars: RSI divergence and
@@ -327,7 +338,7 @@ class MarketDataScheduler:
 
 def _brief(result: dict) -> dict:
     keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
-            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert", "checked", "by_pattern")
+            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert", "checked", "by_pattern", "moved", "hit")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

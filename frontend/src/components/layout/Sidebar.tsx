@@ -27,6 +27,7 @@ import {
   GitCompareArrows,
   Spline,
   Lightbulb,
+  Crosshair,
   type LucideIcon,
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ const navGroups: NavGroup[] = [
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
       { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },
       { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
+      { href: "/my-trades", label: "My Futures Trades", icon: Crosshair, hint: "Your trades with a trailing stop" },
       { href: "/recommendations", label: "Top Picks", icon: Sparkles, hint: "AI-free recommendations" },
       { href: "/scanner", label: "Market Scan", icon: Radar, hint: "Gap / Volume / Breakout" },
       { href: "/strategies", label: "Strategies", icon: Target, hint: "S/R, Cyclical patterns" },

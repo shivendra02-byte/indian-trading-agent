@@ -86,6 +86,14 @@ global:
     notify_telegram: true          # Telegram alert for every approved trade
     notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
     timeout_seconds: 90
+  my_trades:                       # your own futures trades: trailing stop worked out by the system (asked 23 Nov 2026)
+    interval: 60minute             # bars the stop is trailed on (60minute | 10minute)
+    atr_period: 14
+    breakeven_at_r: 1.0            # stop to entry once a bar closes 1R in favour...
+    breakeven_lock_r: 0.0          # ...locking this many R
+    trail_start_r: 1.0             # then trail 2 ATR behind the best close
+    trail_atr: 2.0
+    notify_telegram: true          # Telegram when the stop moves or is hit
   divergence:                      # RSI divergence alerts on daily bars, information only (asked 22 Nov 2026)
     enabled: true
     rsi_period: 14

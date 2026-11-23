@@ -140,6 +140,20 @@ class ExitCfg(_Strict):
         return self
 
 
+class MyTradesCfg(_Strict):
+    """Your own futures trades: the system follows each one on the contract's bars
+    and works out the trailing stop with the engine's managed-exit rule (breakeven
+    once ``breakeven_at_r`` in favour, then ``trail_atr`` ATR behind the best close
+    from ``trail_start_r``). Defaults for new trades; each trade keeps its own copy."""
+    interval: Literal["10minute", "60minute"] = "60minute"
+    atr_period: int = Field(default=14, ge=2, le=50)
+    breakeven_at_r: float = Field(default=1.0, ge=0.25, le=5)
+    breakeven_lock_r: float = Field(default=0.0, ge=0, le=2)
+    trail_start_r: float = Field(default=1.0, ge=0.25, le=10)
+    trail_atr: float = Field(default=2.0, ge=0.5, le=10)
+    notify_telegram: bool = True
+
+
 class AiPanelCfg(_Strict):
     """AI review of shortlisted trades (one Claude call per trade, at most
     ``limits.max_ai_evaluations_day`` a day). Only reviews: it approves or rejects,
@@ -263,6 +277,7 @@ class GlobalCfg(_Strict):
     exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
+    my_trades: MyTradesCfg = MyTradesCfg()
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()

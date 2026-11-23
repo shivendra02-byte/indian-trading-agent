@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from backend.db import ensure_db
 from backend.marketdata import ensure_marketdata_tables
 from backend.auth import AuthMiddleware, allowed_origins
-from backend.routers import market_data, analysis, watchlist, backtest, strategies, scanner, performance, recommender, settings as settings_router, news as news_router, simulation as simulation_router, insights as insights_router, fii_dii as fii_dii_router, calendar as calendar_router, concentration as concentration_router, daily_verdict as daily_verdict_router, signal_performance as signal_performance_router, verdict_calibration as verdict_calibration_router, regime as regime_router, confidence_calibration as confidence_calibration_router, shadow_trades as shadow_trades_router, memory as memory_router, auth as auth_router, kite as kite_router, equity_portfolio as equity_portfolio_router, positions as positions_router, telegram as telegram_router, marketdata as marketdata_router, journal as journal_router, rule_backtests as rule_backtests_router, options as options_router, backups as backups_router, divergence as divergence_router, chart_patterns as chart_patterns_router, ideas as ideas_router
+from backend.routers import market_data, analysis, watchlist, backtest, strategies, scanner, performance, recommender, settings as settings_router, news as news_router, simulation as simulation_router, insights as insights_router, fii_dii as fii_dii_router, calendar as calendar_router, concentration as concentration_router, daily_verdict as daily_verdict_router, signal_performance as signal_performance_router, verdict_calibration as verdict_calibration_router, regime as regime_router, confidence_calibration as confidence_calibration_router, shadow_trades as shadow_trades_router, memory as memory_router, auth as auth_router, kite as kite_router, equity_portfolio as equity_portfolio_router, positions as positions_router, telegram as telegram_router, marketdata as marketdata_router, journal as journal_router, rule_backtests as rule_backtests_router, options as options_router, backups as backups_router, divergence as divergence_router, chart_patterns as chart_patterns_router, ideas as ideas_router, my_trades as my_trades_router
 from backend.settings_manager import load_api_keys_into_env, apply_llm_config_to_default
 from tradingagents.utils.ticker import InvalidTickerError
 
@@ -115,6 +115,7 @@ app.include_router(backups_router.router)
 app.include_router(divergence_router.router)
 app.include_router(chart_patterns_router.router)
 app.include_router(ideas_router.router)
+app.include_router(my_trades_router.router)
 
 
 @app.get("/api/health")

@@ -275,6 +275,31 @@ export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "PO
 export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
 export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
 
+// Your own futures trades (system-calculated trailing stop)
+export type MyTradeInput = {
+  symbol: string;
+  exchange: "NFO" | "MCX";
+  contract?: string;
+  direction: "long" | "short";
+  lots: number;
+  entry_price: number;
+  entry_time?: string;
+  initial_stop: number;
+  target?: number | null;
+  interval?: "10minute" | "60minute";
+  trail_atr?: number;
+  breakeven_at_r?: number;
+  note?: string;
+};
+export const listMyTrades = () => fetchAPI(`/api/my-trades`);
+export const getMyTradeContracts = (symbol: string, exchange: "NFO" | "MCX") =>
+  fetchAPI(`/api/my-trades/contracts?symbol=${encodeURIComponent(symbol)}&exchange=${exchange}`);
+export const addMyTrade = (data: MyTradeInput) => fetchAPI(`/api/my-trades`, { method: "POST", body: JSON.stringify(data) });
+export const refreshMyTrades = () => fetchAPI(`/api/my-trades/refresh`, { method: "POST" });
+export const closeMyTrade = (id: number, exit_price: number) =>
+  fetchAPI(`/api/my-trades/${id}/close`, { method: "POST", body: JSON.stringify({ exit_price }) });
+export const deleteMyTrade = (id: number) => fetchAPI(`/api/my-trades/${id}`, { method: "DELETE" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
