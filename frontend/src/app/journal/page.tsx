@@ -193,7 +193,11 @@ type Usage = {
   fno_open: number;
   fno_max_open: number;
   limit_block: string | null;
+  ai_books?: Record<string, { used: number; limit: number | null; reserved: { after: string; reviews: number } | null }>;
+  shadow_strategies?: string[];
 };
+
+const BOOK_LABEL: Record<string, string> = { futures: "futures", mcx: "MCX", cash: "cash", option_spreads: "spreads" };
 
 const DECISIONS = ["", "shortlisted", "approved", "rejected_panel", "not_selected", "below_score", "soft_rejected"];
 
@@ -267,9 +271,25 @@ export default function JournalPage() {
               <span className={usage.ai_reviews >= usage.ai_limit ? "font-medium text-amber-600" : "font-medium"}>
                 {usage.ai_reviews}/{usage.ai_limit}
               </span>
+              {usage.ai_books && (
+                <span className="text-muted-foreground">
+                  {" ("}
+                  {Object.entries(usage.ai_books)
+                    .filter(([, b]) => b.limit !== null)
+                    .map(([k, b]) => `${BOOK_LABEL[k] ?? k} ${b.used}/${b.limit}`
+                      + (b.reserved ? `, ${b.reserved.reviews} kept for ${b.reserved.after}+` : ""))
+                    .join(" · ")}
+                  {")"}
+                </span>
+              )}
               {" · "}approved trades {usage.approved_today}/{usage.max_new_trades_day}
               {" · "}this week {usage.approved_week}/{usage.max_new_trades_week}
               {" · "}F&amp;O open {usage.fno_open}/{usage.fno_max_open}
+              {usage.shadow_strategies && usage.shadow_strategies.length > 0 && (
+                <span className="text-muted-foreground">
+                  {" · "}shadow (tracked, not reviewed): {usage.shadow_strategies.join(", ").replace(/_/g, " ")}
+                </span>
+              )}
               {usage.limit_block && (
                 <span className="ml-1 text-red-600">· new trades blocked: {usage.limit_block}</span>
               )}

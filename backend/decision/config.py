@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEFAULT_PATH = Path(__file__).resolve().parents[2] / "config" / "decision_engine.yaml"
 TIMEFRAMES = ("10minute", "30m", "60minute", "1h", "2h", "4h", "day", "week")
@@ -154,6 +154,11 @@ class MyTradesCfg(_Strict):
     notify_telegram: bool = True
 
 
+class ReserveCfg(_Strict):
+    after: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")   # HH:MM, India time
+    reviews: int = Field(ge=0)
+
+
 class AiPanelCfg(_Strict):
     """AI review of shortlisted trades (one Claude call per trade, at most
     ``limits.max_ai_evaluations_day`` a day). Only reviews: it approves or rejects,
@@ -164,6 +169,33 @@ class AiPanelCfg(_Strict):
     notify_unreviewed: bool = True                           # also alert shortlisted trades the AI limit skipped
     notify_limit_blocks: bool = True                         # one note a day per portfolio limit that blocks a trade
     timeout_seconds: int = Field(default=90, ge=10, le=600)
+    # Per-book share of the daily AI reviews (agreed 23 Nov 2026). A book missing here is capped
+    # only by ``limits.max_ai_evaluations_day``. In each scan only the book's top-scoring
+    # shortlisted trade is reviewed; the rest are journaled as not_sent and shadow-tracked.
+    reviews_per_day: dict[Literal["futures", "mcx", "cash", "option_spreads"], int] = {}
+    top_per_scan: int = Field(default=1, ge=1, le=20)
+    # Part of a book's share kept for later in the day: e.g. futures {after: "13:15", reviews: 1}
+    # → before 13:15 only (share − 1) reviews can be used, so the afternoon scans still get one.
+    reserved_after: dict[Literal["futures", "mcx", "cash", "option_spreads"], "ReserveCfg"] = {}
+
+    @field_validator("reviews_per_day")
+    @classmethod
+    def _non_negative(cls, v: dict) -> dict:
+        if any(n < 0 for n in v.values()):
+            raise ValueError("reviews_per_day values must be >= 0")
+        return v
+
+    @model_validator(mode="after")
+    def _reserve_within_share(self):
+        for book, r in self.reserved_after.items():
+            share = self.reviews_per_day.get(book)
+            if share is None or r.reviews > share:
+                raise ValueError(f"reserved_after.{book}.reviews must not exceed reviews_per_day.{book}")
+        return self
+
+
+SHADOW_NAMES = ("cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
+                "index_futures", "mcx", "option_spreads")
 
 
 class StopAlertsCfg(_Strict):
@@ -292,6 +324,14 @@ class GlobalCfg(_Strict):
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()
+    # Strategies still scanned and journal-tracked but never sent to the AI and never alerted
+    # (agreed 23 Nov 2026). Names: a journal segment, "orb" (setup), "momentum" or "option_spreads".
+    shadow_strategies: list[Literal["cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
+                                    "index_futures", "mcx", "option_spreads"]] = []
+
+    def is_shadow(self, segment: str, setup: str | None = None) -> bool:
+        names = set(self.shadow_strategies)
+        return segment in names or (setup is not None and setup in names)
 
 
 class InstrumentCfg(BaseModel):

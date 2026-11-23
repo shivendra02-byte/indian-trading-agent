@@ -36,7 +36,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((g.risk.risk_per_trade_pct, g.risk.max_open_positions, g.risk.max_open_risk_pct),
                          (1.0, 10, 10.0))   # raised from 3 / 3% on 22 Nov 2026
         self.assertEqual((g.limits.max_new_trades_day, g.limits.max_new_trades_week, g.limits.max_ai_evaluations_day),
-                         (5, 15, 5))
+                         (5, 15, 7))   # 7 AI reviews total since 23 Nov 2026 (per-book shares)
         self.assertEqual((g.scoring.min_shortlist_score, g.scoring.min_rr), (60, 2.0))
         self.assertFalse(g.system.live_order_execution)
         self.assertFalse(cfg.instrument("stock_options").enabled)
