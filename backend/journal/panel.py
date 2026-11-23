@@ -158,14 +158,28 @@ def build_prompt(rec: dict) -> str:
     )
 
 
+def _saved_api_key(provider: str) -> str | None:
+    import os
+    from backend.db import get_setting
+    from backend.settings_manager import PROVIDER_ENV_KEYS
+    env_var = PROVIDER_ENV_KEYS.get(provider)
+    if not env_var:
+        return None
+    return get_setting(f"api_key_{provider}") or os.environ.get(env_var) or None
+
+
 def _default_llm_call(prompt: str) -> tuple[str, str]:
     from backend.settings_manager import get_llm_config
     from tradingagents.llm_clients import create_llm_client
 
     cfg = get_llm_config()
     model = cfg["deep_think_llm"]
+    extra = {}
+    key = _saved_api_key(cfg["llm_provider"])
+    if key:                       # the key saved in Settings, not only what the process env had at startup
+        extra["api_key"] = key
     llm = create_llm_client(provider=cfg["llm_provider"], model=model,
-                            timeout=get_config().global_.ai_panel.timeout_seconds).get_llm()
+                            timeout=get_config().global_.ai_panel.timeout_seconds, **extra).get_llm()
     reply = llm.invoke(prompt)
     content = reply.content if hasattr(reply, "content") else str(reply)
     if isinstance(content, list):
