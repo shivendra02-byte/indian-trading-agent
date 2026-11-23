@@ -24,7 +24,7 @@ from typing import Sequence
 
 from backend.db import get_db
 from backend.decision.config import get_config
-from backend.signals.indicators import atr, ema, rsi, swing_points
+from backend.signals.indicators import atr, ema, rsi, sma, swing_points
 
 log = logging.getLogger(__name__)
 TIMEFRAME = "day"
@@ -42,18 +42,24 @@ def _day(bar: dict) -> str:
 
 # --- detection -----------------------------------------------------------------------------
 
-def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None = None) -> list[dict]:
+def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None = None,
+                     apply_context: bool = True) -> list[dict]:
     """Every divergence in ``bars`` with its signal bar index ``s`` (the bar that
     confirms the second swing). ``trend_ok`` says whether the prior-trend
-    condition held; with ``require_trend`` the others are dropped."""
+    condition held; with ``require_trend`` the others are dropped. ``uptrend``
+    says whether the close was above the ``uptrend_sma`` SMA; with
+    ``apply_context`` and ``bullish_context: pullback_in_uptrend`` bullish
+    divergences outside an uptrend are dropped (the study keeps them all)."""
     cfg = cfg or settings()
     require_trend = cfg.require_trend if require_trend is None else require_trend
+    only_uptrend = apply_context and cfg.bullish_context == "pullback_in_uptrend"
     k = cfg.swing_bars
     if len(bars) < max(cfg.rsi_period, cfg.trend_ema) + 2 * k + 5:
         return []
     closes = [b["close"] for b in bars]
     r = rsi(closes, cfg.rsi_period)
     trend = ema(closes, cfg.trend_ema)
+    long_trend = sma(closes, cfg.uptrend_sma)
     a = atr(bars, 14)
     highs, lows = swing_points(bars, k)
     found = []
@@ -85,12 +91,15 @@ def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None 
                     continue
                 if require_trend and not trend_ok:
                     break
+                uptrend = long_trend[s] is not None and closes[s] > long_trend[s]
+                if only_uptrend and kind == "bullish" and not uptrend:
+                    break
                 found.append({
                     "kind": kind, "i1": i1, "i2": i2, "s": s,
                     "pivot1_date": _day(bars[i1]), "pivot1_price": p1, "pivot1_rsi": round(r[i1], 1),
                     "pivot2_date": _day(bars[i2]), "pivot2_price": p2, "pivot2_rsi": round(r[i2], 1),
                     "signal_date": _day(bars[s]), "close": closes[s], "atr": a[s], "stop": stop,
-                    "trend_ok": trend_ok,
+                    "trend_ok": trend_ok, "uptrend": uptrend,
                 })
                 break   # nearest qualifying first swing only
     return sorted(found, key=lambda d: d["s"])
@@ -288,15 +297,45 @@ def run_scan(group: str = "nse", now: datetime | None = None, notify=None) -> di
             row_id = _insert(inst, sig)
             if row_id:
                 new.append({**sig, **inst, "id": row_id})
+    # Bearish divergence lost money as a short (study, 22 Nov 2026): alert it only as an
+    # exit warning for symbols held long, unless configured otherwise. Every one is still tracked.
+    held = open_long_symbols() if cfg.bearish_alert == "open_longs" else set()
+    to_alert, quiet = [], []
+    for d in new:
+        if d["kind"] == "bearish" and (cfg.bearish_alert == "off"
+                                       or (cfg.bearish_alert == "open_longs" and d["symbol"] not in held)):
+            quiet.append(d)
+        else:
+            to_alert.append(d)
     alert = "none"
-    if new and cfg.notify_telegram:
-        alert = (notify or send_alert)(new, group)
-        with get_db() as conn:
-            conn.executemany("UPDATE divergence_signals SET alert_status = ? WHERE id = ?",
-                             [(alert, d["id"]) for d in new])
+    if to_alert and cfg.notify_telegram:
+        alert = (notify or send_alert)(to_alert, group)
+    with get_db() as conn:
+        conn.executemany("UPDATE divergence_signals SET alert_status = ? WHERE id = ?",
+                         [(alert, d["id"]) for d in to_alert] +
+                         [(f"not sent: bearish_alert={cfg.bearish_alert}", d["id"]) for d in quiet])
     return {"status": "ok", "group": group, "instruments": checked, "new": len(new),
             "bullish": sum(d["kind"] == "bullish" for d in new), "bearish": sum(d["kind"] == "bearish" for d in new),
-            "outcomes_closed": updated, "alert": alert}
+            "alerted": len(to_alert), "outcomes_closed": updated, "alert": alert}
+
+
+def open_long_symbols() -> set[str]:
+    """Symbols you are long in: shortlisted/approved journal trades not yet closed,
+    open or waiting long ideas, and local positions with a positive quantity."""
+    held: set[str] = set()
+    queries = (
+        "SELECT symbol FROM trade_journal WHERE direction = 'long' AND decision IN ('shortlisted', 'approved') "
+        "AND track_status IN ('pending', 'open')",
+        "SELECT symbol FROM ideas WHERE direction = 'long' AND status IN ('waiting', 'open')",
+        "SELECT tradingsymbol FROM positions WHERE quantity > 0",
+    )
+    with get_db() as conn:
+        for sql in queries:
+            try:
+                held |= {str(r[0]).upper() for r in conn.execute(sql).fetchall()}
+            except Exception:      # a table that doesn't exist yet
+                continue
+    return held
 
 
 def _fmt(x: float) -> str:
@@ -313,8 +352,10 @@ def build_alert(new: list[dict], group: str, history: dict | None = None) -> str
         word = "low" if bull else "high"
         cmp_price, cmp_rsi = ("&lt;", "&gt;") if bull else ("&gt;", "&lt;")
         name = html.escape(d.get("contract") or d["symbol"])
+        label = "🟢 Bullish" if bull else ("⚠️ Exit warning (bearish, you hold it long)"
+                                           if settings().bearish_alert == "open_longs" else "🔴 Bearish")
         lines.append(
-            f"{'🟢 Bullish' if bull else '🔴 Bearish'} <b>{name}</b> close {_fmt(d['close'])}: "
+            f"{label} <b>{name}</b> close {_fmt(d['close'])}: "
             f"price {word} {_fmt(d['pivot2_price'])} {cmp_price} {_fmt(d['pivot1_price'])} ({d['pivot1_date'][5:]}), "
             f"RSI {d['pivot2_rsi']:.0f} {cmp_rsi} {d['pivot1_rsi']:.0f}; "
             f"invalid {'below' if bull else 'above'} {_fmt(d['stop'])}")
@@ -369,17 +410,21 @@ def study(series: list[tuple[dict, list[dict]]], cfg=None) -> dict:
     cfg = cfg or settings()
     rows: list[dict] = []
     base_up: list[float] = []
+    split = cfg.study_split_date
     for inst, bars in series:
-        for sig in find_divergences(bars, cfg, require_trend=False):
+        for sig in find_divergences(bars, cfg, require_trend=False, apply_context=False):
             res = outcome(bars, sig, cfg.track_bars)
             rows.append({**res, "kind": sig["kind"], "trend_ok": sig["trend_ok"], "segment": inst["segment"],
-                         "year": sig["signal_date"][:4]})
+                         "year": sig["signal_date"][:4], "uptrend": sig["uptrend"],
+                         "period": "train" if sig["signal_date"] < split else "test"})
         closes = [b["close"] for b in bars]
         base_up += [(closes[i + 10] - closes[i]) / closes[i] * 100 for i in range(len(closes) - 10)]
     groups: dict[str, list[dict]] = {}
     for r in rows:
         trend = "with trend filter" if r["trend_ok"] else "against the filter"
-        for key in (r["kind"], f"{r['kind']} | {trend}", f"{r['kind']} | {r['segment']}", f"{r['kind']} | {r['year']}"):
+        ctx = f"{'above' if r['uptrend'] else 'below'} {cfg.uptrend_sma} SMA"
+        for key in (r["kind"], f"{r['kind']} | {trend}", f"{r['kind']} | {r['segment']}", f"{r['kind']} | {r['year']}",
+                    f"{r['kind']} | {ctx}", f"{r['kind']} | {r['period']}", f"{r['kind']} | {ctx} | {r['period']}"):
             groups.setdefault(key, []).append(r)
     base = sum(base_up) / len(base_up) if base_up else None
     return {
@@ -388,6 +433,7 @@ def study(series: list[tuple[dict, list[dict]]], cfg=None) -> dict:
         "groups": {k: _summary(v) for k, v in sorted(groups.items())},
         "baseline_10d": {"bullish": round(base, 2) if base is not None else None,
                          "bearish": round(-base, 2) if base is not None else None},
+        "split_date": split, "uptrend_sma": cfg.uptrend_sma,
         "rule": {"rsi_period": cfg.rsi_period, "bullish_rsi_max": cfg.bullish_rsi_max,
                  "bearish_rsi_min": cfg.bearish_rsi_min, "min_rsi_gap": cfg.min_rsi_gap,
                  "bars_apart": [cfg.min_bars_apart, cfg.max_bars_apart], "trend_ema": cfg.trend_ema,
