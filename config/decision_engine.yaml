@@ -32,7 +32,7 @@ global:
   limits:
     max_new_trades_day: 5
     max_new_trades_week: 15
-    max_ai_evaluations_day: 5
+    max_ai_evaluations_day: 7      # total cap; per-book shares in ai_panel.reviews_per_day (23 Nov 2026)
     one_open_trade_per_instrument: true   # agreed 22 Nov 2026: no stacking signals on an open position
   drawdown:
     daily_loss_pct: 2.0            # stop new trades for the day
@@ -87,6 +87,19 @@ global:
     notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
     notify_limit_blocks: true      # one note a day per portfolio limit that blocks a shortlisted trade (23 Nov 2026)
     timeout_seconds: 90
+    reviews_per_day:               # agreed 23 Nov 2026: each book has its own share of the daily reviews
+      futures: 3                   # stock + index futures (hourly scans)
+      mcx: 1
+      cash: 2                      # cash swing (cup & handle / Wolfe are shadow)
+      option_spreads: 1
+    top_per_scan: 1                # only the top-scoring shortlisted trade of each scan goes to the AI
+    reserved_after:
+      futures: {after: "13:15", reviews: 1}   # the 3rd futures review is kept for scans from 13:15
+  shadow_strategies:               # agreed 23 Nov 2026: scanned + journal-tracked, no AI review, no Telegram
+    - cup_handle
+    - wolfe
+    - orb
+    - momentum
   my_trades:                       # your own futures trades: trailing stop worked out by the system (asked 23 Nov 2026)
     interval: 60minute             # bars the stop is trailed on (60minute | 10minute)
     atr_period: 14

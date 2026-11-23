@@ -6,13 +6,17 @@ go to the panel, best score first:
 1. Portfolio limits are checked first (trades today / this week, open positions,
    open risk, daily loss stop). A trade over a limit is not sent; it stays
    shortlisted with the reason.
-2. At most ``global.limits.max_ai_evaluations_day`` AI calls a day. Past that,
-   trades are marked ``not_sent`` (and alerted as "rules only" when
-   ``ai_panel.notify_unreviewed`` is on).
-3. The AI sees the rules' trade plan and recent price context and answers
+2. Shadow strategies (``global.shadow_strategies``) are never sent or alerted.
+   In each scan only the top-scoring trade of each review book goes on
+   (``ai_panel.top_per_scan``); the rest are ``not_sent`` without an alert.
+3. At most ``global.limits.max_ai_evaluations_day`` AI calls a day in total and
+   ``ai_panel.reviews_per_day[book]`` per book (futures / mcx / cash /
+   option_spreads). Past that, trades are marked ``not_sent`` (and alerted as
+   "rules only" when ``ai_panel.notify_unreviewed`` is on).
+4. The AI sees the rules' trade plan and recent price context and answers
    approve/reject with a confidence. It can't change entry, stop, target or size.
    Approve needs ``ai_panel.min_confidence``.
-4. Approved → journal ``decision = approved``, ``is_paper = 1``, Telegram alert.
+5. Approved → journal ``decision = approved``, ``is_paper = 1``, Telegram alert.
    Rejected → ``rejected_panel`` (still shadow-tracked). An AI error leaves the
    trade shortlisted and says so in the alert.
 
@@ -62,6 +66,56 @@ def evaluations_today(today: date) -> int:
 
 
 FNO_BOOK = ("stock_futures", "index_futures", "mcx", "index_options", "stock_options")
+
+# Review books: each has its own share of the daily AI reviews (ai_panel.reviews_per_day).
+REVIEW_BOOKS = {"futures": ("stock_futures", "index_futures"), "mcx": ("mcx",), "cash": CASH_SEGMENTS,
+                "option_spreads": ()}
+
+
+def review_book(segment: str) -> str:
+    for book, segments in REVIEW_BOOKS.items():
+        if segment in segments:
+            return book
+    return "option_spreads" if segment == "option_spreads" else segment
+
+
+def book_evaluations_today(today: date, book: str) -> int:
+    """Answered AI reviews today in one review book."""
+    if book == "option_spreads":
+        from backend.options.spreads import evaluations_today as spread_evaluations
+        return spread_evaluations(today)
+    segments = REVIEW_BOOKS.get(book, (book,))
+    marks = ", ".join("?" * len(segments))
+    return _count(f"panel_decision IN ('approve', 'reject') AND segment IN ({marks}) "
+                  "AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?", (*segments, today.isoformat()))
+
+
+def book_share_now(book: str, now: datetime) -> int | None:
+    """The book's usable share of reviews at ``now``: the reserved part only from its time on."""
+    ap = get_config().global_.ai_panel
+    share = ap.reviews_per_day.get(book)
+    reserve = ap.reserved_after.get(book)
+    if share is None or reserve is None:
+        return share
+    return share if now.strftime("%H:%M") >= reserve.after else share - reserve.reviews
+
+
+def review_budget_block(now: datetime | date, book: str) -> str | None:
+    """Why no AI review is left for ``book`` at ``now`` (total cap first, then the book's share), or None."""
+    g = get_config().global_
+    if not isinstance(now, datetime):
+        now = datetime.combine(now, datetime.max.time())
+    today = now.date()
+    if evaluations_today(today) >= g.limits.max_ai_evaluations_day:
+        return f"daily AI limit reached ({g.limits.max_ai_evaluations_day})"
+    share = g.ai_panel.reviews_per_day.get(book)
+    usable = book_share_now(book, now)
+    if usable is not None and book_evaluations_today(today, book) >= usable:
+        reserve = g.ai_panel.reserved_after.get(book)
+        if usable < (share or 0) and reserve:
+            return f"{book} AI reviews used before {reserve.after} ({usable} of {share}; {reserve.reviews} kept for later)"
+        return f"{book} AI reviews used ({share}/day)"
+    return None
 
 
 def _book_segments(segment: str) -> tuple[str, ...]:
@@ -392,6 +446,11 @@ def usage_today(today: date) -> dict:
     return {
         "date": today.isoformat(),
         "ai_reviews": evaluations_today(today), "ai_limit": g.limits.max_ai_evaluations_day,
+        "ai_books": {book: {"used": book_evaluations_today(today, book), "limit": g.ai_panel.reviews_per_day.get(book),
+                            "reserved": (g.ai_panel.reserved_after[book].model_dump()
+                                         if book in g.ai_panel.reserved_after else None)}
+                     for book in REVIEW_BOOKS},
+        "shadow_strategies": list(g.shadow_strategies),
         "approved_today": _count("decision = ? AND signal_date = ?", (APPROVED, today.isoformat())),
         "max_new_trades_day": g.limits.max_new_trades_day,
         "approved_week": _count("decision = ? AND signal_date >= ?", (APPROVED, week_start.isoformat())),
@@ -401,6 +460,35 @@ def usage_today(today: date) -> dict:
         "fno_max_open": g.risk.max_open_positions,
         "limit_block": limit_block(today, "stock_futures"),
     }
+
+
+def _skip(rec: dict, reason: str, out: dict) -> None:
+    """Not sent to the AI and not alerted; the record stays shortlisted and shadow-tracked."""
+    from backend.signals.setups import stage
+    update_record(rec["id"], {"panel": {"evaluated_at": None, "skipped": reason}, "panel_decision": "not_sent",
+                              "stages": _set_stages(rec, stage("ai_panel", "not_sent", reason),
+                                                    stage("final_approval", "pending", "rules only"))})
+    out["not_sent"].append({"symbol": rec["symbol"], "reason": reason})
+
+
+def _select_for_review(records: list[dict], cfg, out: dict) -> list[dict]:
+    """Drop shadow strategies, then keep the ``top_per_scan`` best-scoring trades of each
+    (review book, scan) — a scan is one ``signal_ts``. The others are skipped quietly."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for rec in records:
+        if cfg.is_shadow(rec["segment"], rec.get("setup")):
+            _skip(rec, "shadow strategy: tracked, not reviewed", out)
+            continue
+        groups.setdefault((review_book(rec["segment"]), str(rec["signal_ts"])), []).append(rec)
+    chosen = []
+    for _key, recs in sorted(groups.items(), key=lambda kv: kv[0][1]):
+        recs.sort(key=lambda r: -(r.get("score") or 0))
+        top = recs[:cfg.ai_panel.top_per_scan]
+        chosen.extend(top)
+        best = top[0]
+        for rec in recs[cfg.ai_panel.top_per_scan:]:
+            _skip(rec, f"lower score than {best['symbol']} ({best.get('score')}) in the same scan", out)
+    return chosen
 
 
 def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None,
@@ -416,7 +504,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
         return {"status": "skipped", "reason": "paused"}
     now = now or datetime.now()
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
-    for rec in pending_records(now, retry_errors):
+    for rec in _select_for_review(pending_records(now, retry_errors), cfg, out):
         evaluated_at = now.isoformat(timespec="seconds")
         blocked = limit_block(now.date(), rec["segment"])
         if blocked:
@@ -429,8 +517,8 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
                 if status:
                     out["alerts"].append({"symbol": rec["symbol"], "kind": "limit_block", "status": status})
             continue
-        if evaluations_today(now.date()) >= cfg.limits.max_ai_evaluations_day:
-            reason = f"daily AI limit reached ({cfg.limits.max_ai_evaluations_day})"
+        reason = review_budget_block(now, review_book(rec["segment"]))
+        if reason:
             panel = {"evaluated_at": None, "skipped": reason}
             update_record(rec["id"], {"panel": panel, "panel_decision": "not_sent", "stages": _set_stages(
                 rec, stage("ai_panel", "not_sent", reason), stage("final_approval", "pending", "rules only"))})

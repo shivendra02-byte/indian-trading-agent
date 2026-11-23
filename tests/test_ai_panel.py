@@ -59,7 +59,7 @@ class PanelTests(IsolatedStateTestCase, unittest.TestCase):
     def test_reject_and_low_confidence(self):
         from backend.journal.panel import review_pending
         self.add("AAA", score=80)
-        self.add("BBB", score=70)
+        self.add("BBB", score=70, signal_ts="2026-11-23T10:15:00")   # a later scan
         replies = iter([
             json.dumps({"decision": "reject", "confidence": 70, "reasons": ["extended"], "risks": []}),
             json.dumps({"decision": "approve", "confidence": 40, "reasons": ["ok"], "risks": []}),
@@ -72,20 +72,22 @@ class PanelTests(IsolatedStateTestCase, unittest.TestCase):
 
     def test_daily_ai_limit_then_rules_only_alert(self):
         from backend.journal.panel import review_pending
-        for i in range(6):
-            self.add(f"S{i}", score=90 - i)
-        with mock.patch("backend.journal.panel.limit_block", return_value=None):
+        for i in range(8):   # separate scans, book shares lifted: the total cap (7) is what stops
+            self.add(f"S{i}", score=90 - i, signal_ts=f"2026-11-23T09:{15 + i:02d}:00")
+        with mock.patch("backend.journal.panel.limit_block", return_value=None), \
+                mock.patch("backend.journal.panel.book_share_now", return_value=None):
             out = review_pending(NOW, llm_call=approve())
-        self.assertEqual(len(out["approved"]), 5)
-        self.assertEqual(out["not_sent"], [{"symbol": "S5", "reason": "daily AI limit reached (5)"}])
-        self.assertEqual(self.rec("S5")["decision"], "shortlisted")
+        self.assertEqual(len(out["approved"]), 7)
+        self.assertEqual(out["not_sent"], [{"symbol": "S7", "reason": "daily AI limit reached (7)"}])
+        self.assertEqual(self.rec("S7")["decision"], "shortlisted")
         self.assertIn("rules only, AI limit reached", self.sent[-1])
 
     def test_portfolio_limits_stop_new_approvals(self):
         from backend.journal.panel import review_pending
         for i in range(7):
-            self.add(f"S{i}", score=90 - i)
-        out = review_pending(NOW, llm_call=approve())
+            self.add(f"S{i}", score=90 - i, signal_ts=f"2026-11-23T09:{15 + i:02d}:00")
+        with mock.patch("backend.journal.panel.book_share_now", return_value=None):
+            out = review_pending(NOW, llm_call=approve())
         # 5 new trades a day is the first limit hit (10 positions / 10% open risk allowed).
         self.assertEqual(len(out["approved"]), 5)
         self.assertIn("daily trade limit", out["not_sent"][0]["reason"])

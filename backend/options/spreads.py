@@ -450,8 +450,14 @@ def run_eod(day: date | None = None, llm_call: Callable[[str], tuple[str, str]] 
         results[symbol] = f"{c['strategy']} shortlisted"
     if llm_call is None and os.environ.get("TRADINGAGENTS_AI_PANEL", "").lower() == "off":
         reviews = [{"symbol": c["symbol"], "decision": "shortlisted", "reason": "AI panel off (env)"} for c in new]
+    elif get_config().global_.is_shadow("option_spreads"):
+        reviews = [_skip(c, "shadow strategy: tracked, not reviewed") for c in new]
     else:
-        reviews = [_review(c, day, llm_call or journal_panel._default_llm_call) for c in new]
+        # Best candidate first (credit as a share of the width); with top_per_scan 1 only it is reviewed.
+        new.sort(key=lambda c: -(c["credit"] / c["width"] if c.get("width") else 0))
+        top = get_config().global_.ai_panel.top_per_scan
+        reviews = [_review(c, day, llm_call or journal_panel._default_llm_call) for c in new[:top]]
+        reviews += [_skip(c, f"lower credit/width than {new[0]['symbol']} in the same run") for c in new[top:]]
     return {"status": "ok", "date": iso, "closed": closed, "results": results, "new": [c["symbol"] for c in new],
             "reviews": reviews}
 
@@ -460,9 +466,9 @@ def _review(sp: dict, day: date, llm_call) -> dict:
     from backend.journal import panel as journal_panel
 
     g = get_config().global_
-    used = journal_panel.evaluations_today(day)          # journal + spreads share one daily budget
-    if not g.ai_panel.enabled or used >= g.limits.max_ai_evaluations_day:
-        why = "AI panel off" if not g.ai_panel.enabled else f"daily AI limit reached ({g.limits.max_ai_evaluations_day})"
+    budget = journal_panel.review_budget_block(day, "option_spreads")   # total cap + spreads' own share
+    if not g.ai_panel.enabled or budget:
+        why = "AI panel off" if not g.ai_panel.enabled else budget
         alert = _send(build_alert(sp, None, "not reviewed")) if g.ai_panel.notify_unreviewed else "off"
         _update(sp["id"], "not_sent", {"evaluated_at": None, "skipped": why}, None, alert)
         return {"symbol": sp["symbol"], "decision": "not_sent", "reason": why}
@@ -480,6 +486,12 @@ def _review(sp: dict, day: date, llm_call) -> dict:
     _update(sp["id"], verdict["decision"], panel, "approved" if approved else "rejected_panel", alert)
     return {"symbol": sp["symbol"], "decision": "approved" if approved else "rejected_panel",
             "confidence": verdict["confidence"]}
+
+
+def _skip(sp: dict, why: str) -> dict:
+    """Not reviewed and not alerted; still tracked."""
+    _update(sp["id"], "not_sent", {"evaluated_at": None, "skipped": why}, None, "off")
+    return {"symbol": sp["symbol"], "decision": "not_sent", "reason": why}
 
 
 def _update(sid: int, panel_decision: str, panel: dict, decision: str | None, alert: str | None) -> None:

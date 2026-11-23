@@ -158,6 +158,8 @@ def _close(pos: dict, ts: str, price: float, reason: str) -> dict:
 
 
 def _alert(text: str) -> str:
+    if get_config().global_.is_shadow("momentum"):     # shadow book: tracked, no Telegram (23 Nov 2026)
+        return "off: shadow strategy"
     try:
         from backend.notifications.telegram import send_message
         send_message(text)
