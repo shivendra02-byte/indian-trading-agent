@@ -148,6 +148,7 @@ class AiPanelCfg(_Strict):
     min_confidence: int = Field(default=60, ge=0, le=100)   # approve needs at least this
     notify_telegram: bool = True                             # alert every approved trade
     notify_unreviewed: bool = True                           # also alert shortlisted trades the AI limit skipped
+    notify_limit_blocks: bool = True                         # one note a day per portfolio limit that blocks a trade
     timeout_seconds: int = Field(default=90, ge=10, le=600)
 
 

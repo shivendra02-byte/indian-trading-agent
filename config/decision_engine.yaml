@@ -85,6 +85,7 @@ global:
     min_confidence: 60             # approve only at 60+ confidence
     notify_telegram: true          # Telegram alert for every approved trade
     notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
+    notify_limit_blocks: true      # one note a day per portfolio limit that blocks a shortlisted trade (23 Nov 2026)
     timeout_seconds: 90
   divergence:                      # RSI divergence alerts on daily bars, information only (asked 22 Nov 2026)
     enabled: true

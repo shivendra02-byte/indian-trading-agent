@@ -329,6 +329,58 @@ def pending_records(now: datetime) -> list[dict]:
     return sorted(rows, key=lambda r: (r["signal_ts"], -(r.get("score") or 0)))
 
 
+def _notice_key(reason: str) -> str:
+    """'daily trade limit reached (5/5)' -> 'daily trade limit reached': one notice per reason a day."""
+    return re.sub(r"\s+", " ", re.sub(r"[\d.,₹%/()+-]+", " ", reason)).strip()
+
+
+def limit_notice(day: date, reason: str, rec: dict) -> str | None:
+    """Telegram note the first time today a shortlisted trade is blocked for ``reason`` by a
+    portfolio limit (asked 23 Nov 2026: such trades used to be dropped silently). None when
+    already sent today for this reason."""
+    key = _notice_key(reason)
+    with get_db() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS panel_notices (day TEXT NOT NULL, key TEXT NOT NULL, "
+                     "status TEXT, at TEXT, PRIMARY KEY (day, key))")
+        row = conn.execute("SELECT status FROM panel_notices WHERE day = ? AND key = ?",
+                           (day.isoformat(), key)).fetchone()
+    if row and row[0] == "sent":
+        return None
+    e = html.escape
+    name = (rec.get("extra") or {}).get("tradingsymbol") or rec["symbol"]
+    text = "\n".join([
+        "<b>Trade not reviewed: portfolio limit</b>",
+        f"{e(reason[:1].upper() + reason[1:])}.",
+        f"{e(name)} ({e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])} "
+        f"{'↑' if rec['direction'] == 'long' else '↓'}) was shortlisted but blocked.",
+        "Other trades blocked for the same reason today are not messaged; see the Trade Journal (not_sent).",
+    ])
+    status = _send(text)
+    with get_db() as conn:
+        conn.execute("INSERT OR REPLACE INTO panel_notices (day, key, status, at) VALUES (?, ?, ?, ?)",
+                     (day.isoformat(), key, status, datetime.now().isoformat(timespec="seconds")))
+    return status
+
+
+def usage_today(today: date) -> dict:
+    """What is left today: AI reviews and trade limits (Trade Journal header)."""
+    g = get_config().global_
+    week_start = today - timedelta(days=today.weekday())
+    marks = ", ".join("?" * len(FNO_BOOK))
+    return {
+        "date": today.isoformat(),
+        "ai_reviews": evaluations_today(today), "ai_limit": g.limits.max_ai_evaluations_day,
+        "approved_today": _count("decision = ? AND signal_date = ?", (APPROVED, today.isoformat())),
+        "max_new_trades_day": g.limits.max_new_trades_day,
+        "approved_week": _count("decision = ? AND signal_date >= ?", (APPROVED, week_start.isoformat())),
+        "max_new_trades_week": g.limits.max_new_trades_week,
+        "fno_open": _count(f"decision = ? AND track_status IN ('pending', 'open') AND segment IN ({marks})",
+                           (APPROVED, *FNO_BOOK)),
+        "fno_max_open": g.risk.max_open_positions,
+        "limit_block": limit_block(today, "stock_futures"),
+    }
+
+
 def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
     """Review every pending shortlisted trade. Safe to call after every scan."""
     from backend.signals.setups import stage
@@ -349,6 +401,10 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             update_record(rec["id"], {"panel": panel, "panel_decision": "not_sent", "stages": _set_stages(
                 rec, stage("ai_panel", "not_sent", blocked), stage("final_approval", "fail", blocked))})
             out["not_sent"].append({"symbol": rec["symbol"], "reason": blocked})
+            if cfg.ai_panel.notify_telegram and cfg.ai_panel.notify_limit_blocks:
+                status = limit_notice(now.date(), blocked, rec)
+                if status:
+                    out["alerts"].append({"symbol": rec["symbol"], "kind": "limit_block", "status": status})
             continue
         if evaluations_today(now.date()) >= cfg.limits.max_ai_evaluations_day:
             reason = f"daily AI limit reached ({cfg.limits.max_ai_evaluations_day})"

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getJournal, getLearningReport, markJournalAction, runAiPanel, trackJournal } from "@/lib/api";
+import { getJournal, getJournalUsage, getLearningReport, markJournalAction, runAiPanel, trackJournal } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -181,6 +181,20 @@ function Question({ title, children }: { title: string; children: React.ReactNod
   );
 }
 
+// GET /api/journal/usage (backend/journal/panel.py usage_today)
+type Usage = {
+  date: string;
+  ai_reviews: number;
+  ai_limit: number;
+  approved_today: number;
+  max_new_trades_day: number;
+  approved_week: number;
+  max_new_trades_week: number;
+  fno_open: number;
+  fno_max_open: number;
+  limit_block: string | null;
+};
+
 const DECISIONS = ["", "shortlisted", "approved", "rejected_panel", "not_selected", "below_score", "soft_rejected"];
 
 export default function JournalPage() {
@@ -189,12 +203,16 @@ export default function JournalPage() {
   const [decision, setDecision] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const [usage, setUsage] = useState<Usage | null>(null);
+
   const fetchData = useCallback((dec: string) => {
-    Promise.all([getLearningReport(), getJournal({ decision: dec || undefined, limit: 300 })])
+    Promise.all([getLearningReport(), getJournal({ decision: dec || undefined, limit: 300 }),
+      getJournalUsage().catch(() => null)])
       .then((res) => {
-        const [rep, jr] = res as [Report, { records: JournalRecord[] }];
+        const [rep, jr, us] = res as [Report, { records: JournalRecord[] }, Usage | null];
         setReport(rep);
         setRecords(jr.records);
+        setUsage(us);
       })
       .catch((e) => toast.error(errorMessage(e, "Could not load the journal")))
       .finally(() => setLoading(false));
@@ -243,6 +261,20 @@ export default function JournalPage() {
           <p className="text-sm text-muted-foreground">
             Every signal — taken or rejected — followed to its outcome. The learning engine only recommends; it never changes rules.
           </p>
+          {usage && (
+            <p className="text-xs mt-1">
+              Today: AI reviews{" "}
+              <span className={usage.ai_reviews >= usage.ai_limit ? "font-medium text-amber-600" : "font-medium"}>
+                {usage.ai_reviews}/{usage.ai_limit}
+              </span>
+              {" · "}approved trades {usage.approved_today}/{usage.max_new_trades_day}
+              {" · "}this week {usage.approved_week}/{usage.max_new_trades_week}
+              {" · "}F&amp;O open {usage.fno_open}/{usage.fno_max_open}
+              {usage.limit_block && (
+                <span className="ml-1 text-red-600">· new trades blocked: {usage.limit_block}</span>
+              )}
+            </p>
+          )}
         </div>
         <Button className="ml-auto" variant="outline" size="sm" onClick={runPanel} disabled={loading}
           title="Review shortlisted trades whose entry window is still open (the scans do this automatically)">

@@ -484,6 +484,9 @@ export const applyRegimeWeights = (windowDays = 180, onlyRegimes?: string[]) =>
 export const resetRegimeWeights = () =>
   fetchAPI(`/api/signal-performance/regime-reset`, { method: "POST" });
 
+// Trade Journal header: AI reviews used today + trade limits (backend/journal/panel.py usage_today)
+export const getJournalUsage = () => fetchAPI(`/api/journal/usage`);
+
 // Market Regime (Bull/Bear/Sideways/High-Vol classifier)
 export const getCurrentRegime = () => fetchAPI(`/api/regime/current`);
 // Regime the trading engine uses (Kite NIFTY daily, EMA/ADX), backend/signals/regime.py

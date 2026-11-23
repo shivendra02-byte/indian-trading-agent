@@ -136,6 +136,10 @@ class MarketDataScheduler:
         self.waiting_for: str | None = None
         self.scans_done: dict[str, date | datetime] = {}
         self.options_attempt: datetime | None = None
+        self.started_at: datetime | None = None
+        self.scan_ok_at: dict[str, datetime] = {}      # exchange -> last hourly scan that completed
+        self.stall_alerted: dict[str, datetime] = {}   # exchange -> stall already warned about
+        self.stall: dict[str, str] = {}                # exchange -> current stall message
 
     # --- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -180,6 +184,8 @@ class MarketDataScheduler:
 
         now = now or datetime.now(IST).replace(tzinfo=None)
         self.last_tick = now
+        if self.started_at is None:
+            self.started_at = now
         if self.scans_done.get("cash_swing") != now.date():
             from backend.signals.cash_swing import latest_run
             run = latest_run(now.date().isoformat())
@@ -210,6 +216,8 @@ class MarketDataScheduler:
                 exchange = NSE if key == "nse_1h" else MCX
                 result = run_hourly_scan("nse" if key == "nse_1h" else "mcx", now=now)
                 self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
+                if result.get("status") not in ("error", "busy") and result.get("reason") != "paused":
+                    self.scan_ok_at[exchange] = now
             elif job == "scan:orb":
                 from backend.signals.orb import run_orb_scan
                 result = run_orb_scan(now=now)
@@ -240,7 +248,27 @@ class MarketDataScheduler:
             ran.append(job)
             if result.get("status") == "busy":
                 break  # try the rest on the next tick
+        self._watchdog(now, state)
         return ran
+
+    def _watchdog(self, now: datetime, state: dict) -> None:
+        """Telegram warning when the hourly scans go quiet during market hours (one per stall)."""
+        from backend.watchdog import check_and_warn, stall_reason
+        for exchange in (NSE, MCX):
+            try:
+                found = stall_reason(now, exchange, self.scan_ok_at.get(exchange), self.started_at,
+                                     state["paused"], state["kite_connected"])
+                if found is None:
+                    self.stall.pop(exchange, None)
+                    continue
+                self.stall[exchange] = found[0]
+                status = check_and_warn(now, exchange, self.scan_ok_at.get(exchange), self.started_at,
+                                        state["paused"], state["kite_connected"], self.stall_alerted)
+                if status:
+                    self.last_results[f"watchdog:{exchange}"] = {"at": now.isoformat(timespec="seconds"),
+                                                                 "status": status, "reason": found[0][:200]}
+            except Exception:   # never let it stop the scheduler
+                log.exception("scan watchdog failed")
 
     def _divergence(self, group: str, now: datetime) -> None:
         """Information-only daily alerts on the day's completed bars: RSI divergence and
@@ -321,6 +349,8 @@ class MarketDataScheduler:
             "last_tick": self.last_tick.isoformat(timespec="seconds") if self.last_tick else None,
             "waiting_for": self.waiting_for,
             "last_bar_synced": {k: v.isoformat(timespec="minutes") for k, v in self.done.items() if v},
+            "last_scan_ok": {k: v.isoformat(timespec="minutes") for k, v in self.scan_ok_at.items()},
+            "stalled": dict(self.stall),
             "last_results": self.last_results,
         }
 
