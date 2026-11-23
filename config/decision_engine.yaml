@@ -303,6 +303,7 @@ instruments:
       trail_start_r: 1.0
       trail_atr: 2.0
   momentum:                        # momentum book on NSE stock futures (asked 23 Nov 2026) — paper, rules only, own book
+    enabled: true
     long_enabled: true             # the long and short sides switch on separately
     short_enabled: false           # conservative default: off until the backtest supports it
     lookbacks_days: [63, 126]      # 3- and 6-month relative strength vs NIFTY ...
