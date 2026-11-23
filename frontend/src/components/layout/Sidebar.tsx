@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { SystemControl } from "@/components/layout/SystemControl";
 import { logout } from "@/lib/api";
@@ -27,6 +28,8 @@ import {
   Rocket,
   Scale,
   type LucideIcon,
+  Menu,
+  X,
   Zap,
 } from "lucide-react";
 
@@ -105,6 +108,11 @@ const navGroups: NavGroup[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  // Phones and portrait tablets: the sidebar is a drawer opened from the top bar.
+  const [open, setOpen] = useState(false);
+  const current = navGroups.flatMap((g) => g.items).find(
+    (i) => pathname === i.href || (i.href !== "/" && pathname.startsWith(i.href)),
+  );
 
   const signOut = async () => {
     try {
@@ -117,7 +125,35 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-64 bg-card border-r border-border flex flex-col z-50">
+    <>
+    <header className="lg:hidden fixed inset-x-0 top-0 z-40 flex h-12 items-center gap-3 border-b border-border bg-card/95 px-3 backdrop-blur">
+      <button
+        type="button"
+        aria-label="Open menu"
+        onClick={() => setOpen(true)}
+        className="-ml-1 rounded-md p-2 text-foreground hover:bg-accent"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+      <TrendingUp className="h-5 w-5 text-green-500" />
+      <span className="truncate font-semibold">{current?.label ?? "Trading Agent"}</span>
+    </header>
+    {open && (
+      <div className="lg:hidden fixed inset-0 z-40 bg-black/40" aria-hidden="true" onClick={() => setOpen(false)} />
+    )}
+    <aside
+      className={`fixed left-0 top-0 h-full w-72 max-w-[85vw] lg:w-64 bg-card border-r border-border flex flex-col z-50 overflow-y-auto lg:overflow-visible transition-transform duration-200 ${
+        open ? "translate-x-0" : "-translate-x-full"
+      } lg:translate-x-0`}
+    >
+      <button
+        type="button"
+        aria-label="Close menu"
+        onClick={() => setOpen(false)}
+        className="lg:hidden absolute right-2 top-2 rounded-md p-2 text-muted-foreground hover:bg-accent"
+      >
+        <X className="h-5 w-5" />
+      </button>
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-2">
           <TrendingUp className="h-6 w-6 text-green-500" />
@@ -131,7 +167,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+      <nav className="flex-1 p-3 space-y-4 lg:overflow-y-auto">
         {navGroups.map((group, gi) => (
           <div key={gi}>
             {group.title && (
@@ -146,7 +182,8 @@ export function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm group ${
+                    onClick={() => setOpen(false)}
+                    className={`flex items-center gap-3 px-3 py-2.5 lg:py-2 rounded-lg text-sm group ${
                       isActive
                         ? "bg-accent text-accent-foreground font-medium"
                         : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -187,5 +224,6 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

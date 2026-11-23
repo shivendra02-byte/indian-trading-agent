@@ -421,7 +421,7 @@ export function PositionsPanel({ kiteConnected, onPositionCountChange }: {
                 />
               </div>
             )}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Input
                 placeholder="Quantity"
                 type="number"

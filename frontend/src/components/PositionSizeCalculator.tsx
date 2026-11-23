@@ -143,7 +143,7 @@ export function PositionSizeCalculator({ open, onClose, defaultEntry, defaultSL,
           </div>
 
           {/* Entry / SL / Target */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="text-xs font-medium mb-1 block">Entry (Rs.)</label>
               <Input

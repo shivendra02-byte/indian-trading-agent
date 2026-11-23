@@ -200,14 +200,14 @@ function AnalysisPageInner() {
 
       {/* Main Content */}
       {(analysis.status === "running" || analysis.status === "completed") && (
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {/* Left: Agent Progress */}
-          <div className="col-span-1">
+          <div className="lg:col-span-1">
             <AgentProgress reports={analysis.reports} signal={analysis.signal} status={analysis.status} />
           </div>
 
           {/* Right: Reports */}
-          <div className="col-span-3 space-y-4">
+          <div className="lg:col-span-3 space-y-4">
             <ReportPanel reports={analysis.reports} />
 
             <DebateView
