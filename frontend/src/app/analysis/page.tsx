@@ -52,9 +52,7 @@ function AnalysisPageInner() {
   );
 
   // Analysis options
-  const [selectedAnalysts, setSelectedAnalysts] = useState<string[]>([
-    "market", "social", "news", "fundamentals",
-  ]);
+  const [selectedAnalysts, setSelectedAnalysts] = useState<string[]>(["market"]);
   const [depth, setDepth] = useState(1);
   const [language, setLanguage] = useState("English");
   const [calcOpen, setCalcOpen] = useState(false);

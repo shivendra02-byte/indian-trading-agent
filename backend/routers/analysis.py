@@ -26,7 +26,8 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
     from backend.stats_callback import StatsCallback
 
     if selected_analysts is None:
-        selected_analysts = ["market", "social", "news", "fundamentals"]
+        from backend.models import ALLOWED_ANALYSTS
+        selected_analysts = list(ALLOWED_ANALYSTS)
 
     loop = asyncio.new_event_loop()
 

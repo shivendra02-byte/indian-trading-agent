@@ -259,14 +259,14 @@ export function PositionsPanel({ kiteConnected, onPositionCountChange }: {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Briefcase className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Positions</h2>
+          <h2 className="text-lg font-semibold">Holdings</h2>
           <span className="text-xs text-muted-foreground">
             Local store · last synced {formatSyncTime(view?.last_sync || null)}
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={openAdd}>
-            <Plus className="h-3 w-3 mr-1" /> Add Position
+            <Plus className="h-3 w-3 mr-1" /> Add Holding
           </Button>
           <Button size="sm" onClick={handleSync} disabled={!kiteConnected || syncing}>
             {syncing ? (
@@ -274,14 +274,14 @@ export function PositionsPanel({ kiteConnected, onPositionCountChange }: {
             ) : (
               <RefreshCw className="h-3 w-3 mr-1" />
             )}
-            Sync from Kite
+            Sync holdings from Kite
           </Button>
         </div>
       </div>
 
       {!kiteConnected && (
         <p className="text-xs text-muted-foreground">
-          Kite is not connected for today — sync is disabled, but your stored positions remain available below.
+          Kite is not connected for today — sync is disabled, but your stored holdings remain available below.
         </p>
       )}
 

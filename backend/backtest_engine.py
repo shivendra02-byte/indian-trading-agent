@@ -140,7 +140,8 @@ def run_backtest(
         on_status(f"Initializing AI pipeline for {ticker}...")
 
     # Single instance — memory accumulates across trades
-    ta = TradingAgentsGraph(debug=False, config=config)
+    from backend.models import ALLOWED_ANALYSTS
+    ta = TradingAgentsGraph(selected_analysts=list(ALLOWED_ANALYSTS), debug=False, config=config)
 
     symbol = normalize_ticker(ticker)
     capital = initial_capital

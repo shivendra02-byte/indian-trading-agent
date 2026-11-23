@@ -9,12 +9,13 @@ the futures-specific hard filters:
 * Liquidity — live bid-ask spread ≤ 0.1% from a Kite quote; unverifiable → no trade
 * Daily trend must not be against the trade (4H is the scored higher timeframe)
 * Sizing — if 1 lot risks more than 1% (₹10,000) → no trade
-* Events — RBI/Budget/results inside the 3-day hold (NSE); US CPI / FOMC
+* Events — RBI/Budget/results within 3 trading days of entry (NSE); US CPI / FOMC
   (gold, silver) and US inventory windows (crude, gas) at entry (MCX)
 * Timing — no signal whose entry window would start in the last 30 minutes
 
 Entries: limit at the signal close, valid for the next 2 hourly bars.
-Time stop: close of the 3rd trading day, and never past the day before expiry.
+Exits: target, stop, or the managed stop from the instrument config (breakeven at 1R, then a
+2 ATR trailing stop); no time stop (agreed 23 Nov 2026). Never held past the session before expiry.
 """
 
 from __future__ import annotations
@@ -70,6 +71,14 @@ def exchange_days_after(exchange: str, start: date, n: int) -> list[date]:
         if session_windows(exchange, d):
             out.append(d)
     return out
+
+
+def last_session_before(exchange: str, expiry: date, today: date) -> date:
+    """Last trading session before ``expiry`` (futures are never held on/after expiry)."""
+    d = expiry - timedelta(days=1)
+    while d > today and not session_windows(exchange, d):
+        d -= timedelta(days=1)
+    return max(d, today)
 
 
 def latest_hourly_bar_start(exchange: str, now: datetime) -> datetime | None:
@@ -344,8 +353,12 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         if not r.get("trackable"):
             continue
         expiry = date.fromisoformat(r["expiry"])
-        days = [d for d in hold if d < expiry] or [hold[0]]
-        journal_rows.append(_journal_row(r, now.date(), bar_start, fill_until, days[-1], exchange))
+        if _inst(r["segment"]).time_stop:
+            days = [d for d in hold if d < expiry] or [hold[0]]
+            exit_by = days[-1]
+        else:   # no time stop: target / stop / trailing stop, at the latest the session before expiry
+            exit_by = last_session_before(exchange, expiry, now.date())
+        journal_rows.append(_journal_row(r, now.date(), bar_start, fill_until, exit_by, exchange))
     journal_add(journal_rows)
     from backend.journal.panel import review_after_scan
     panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist

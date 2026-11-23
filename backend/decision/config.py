@@ -278,8 +278,15 @@ class InstrumentCfg(BaseModel):
     htf_score_tf: str | None = None
     directions: list[Literal["long", "short", "long_options"]] = []
     shortlist_per_scan: int = 0
-    hold_trading_days: int = 0
+    hold_trading_days: int = 0     # time stop (when time_stop) and the window checked for events
     min_primary_bars: int = 60
+    # time_stop: false = no time exit (agreed 23 Nov 2026): the trade ends at the target, the stop
+    # or the managed (breakeven -> trailing) stop. Safety exit: futures on the last session before
+    # expiry; cash (no expiry) after max_hold_trading_days. Backtests on spot data (futures proxies)
+    # also follow a trade for at most max_hold_trading_days.
+    time_stop: bool = True
+    max_hold_trading_days: int = Field(default=20, ge=1, le=250)
+    exit_management: ExitCfg | None = None     # overrides global.exit_management for this instrument
 
     @model_validator(mode="after")
     def _tfs(self):
@@ -322,6 +329,12 @@ class DecisionConfig(_Strict):
         if name not in self.instruments:
             raise KeyError(f"instrument {name!r} not configured")
         return self.instruments[name]
+
+    def exit_rule(self, name: str | None) -> dict:
+        """The real exit for an instrument / journal segment: its own ``exit_management``
+        or ``global.exit_management``."""
+        inst = self.instruments.get(name) if name else None
+        return (inst.exit_management if inst and inst.exit_management else self.global_.exit_management).model_dump()
 
     def strategy(self, name: str) -> StrategyCfg:
         return self.strategies[name]

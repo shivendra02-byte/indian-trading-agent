@@ -79,7 +79,7 @@ const navGroups: NavGroup[] = [
       { href: "/postmortem", label: "Weekly Post-mortem", icon: ClipboardCheck, hint: "Saturday review of the week's trades" },
       { href: "/rule-backtests", label: "Rule Backtest", icon: FlaskConical, hint: "Compare rule versions on history" },
       { href: "/performance", label: "Performance", icon: Award, hint: "Strategy win rates" },
-      { href: "/simulation", label: "Simulation", icon: FlaskConical, hint: "Paper trade + backtest" },
+      { href: "/simulation", label: "Top Picks Tracker", icon: FlaskConical, hint: "Top Picks you tapped Track on (not the trading engine)" },
       { href: "/insights", label: "Learning Insights", icon: Brain, hint: "What works for YOU" },
       { href: "/signals", label: "Signal Performance", icon: TrendingUp, hint: "Auto-tune recommender weights" },
       { href: "/verdict-calibration", label: "Verdict Calibration", icon: Target, hint: "Is the daily verdict accurate?" },

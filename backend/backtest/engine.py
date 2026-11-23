@@ -322,12 +322,13 @@ class Funnel:
                 "rejections": {k: dict(v.most_common(12)) for k, v in sorted(self.rejects.items())}}
 
 
-def _simulate(c: dict, path: list[dict], fill_until: str, time_stop: date) -> dict:
-    g = get_config().global_
+def _simulate(c: dict, path: list[dict], fill_until: str, time_stop: date, instrument: str | None = None) -> dict:
+    cfg = get_config()
+    g = cfg.global_
     return simulate(direction=c["direction"], entry=c["entry"], stop=c["stop"], target=c["target"],
                     atr=c.get("atr"), bars=path, fill_until=fill_until, time_stop_date=time_stop.isoformat(),
                     trail_start_r=g.trailing_shadow.start_r, trail_atr=g.trailing_shadow.trail_atr,
-                    exit_rule=g.exit_management.model_dump())
+                    exit_rule=cfg.exit_rule(instrument))
 
 
 # --- segment runners ---------------------------------------------------------------------
@@ -414,11 +415,12 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
                 if not c.get("trackable"):
                     continue
                 entry_day = window[0].isoformat()
+                exit_by = window[-1] if inst.time_stop else _next_days(d, inst.max_hold_trading_days)[-1]
                 lo = bisect.bisect_left(h_index, entry_day)
                 hi = bisect.bisect_left(h_index, window[1].isoformat()) if len(window) > 1 else len(hourly)
                 fwd_hourly = hourly[lo:hi] if has_hourly else []
                 fwd_daily = [{**b, "eod": True} for b in daily[i:]
-                             if entry_day < b["ts"][:10] <= window[-1].isoformat()]
+                             if entry_day < b["ts"][:10] <= exit_by.isoformat()]
                 if fwd_hourly and fwd_hourly[0]["ts"][:10] == entry_day:
                     path, data, fill_until = mark_eod(fwd_hourly) + fwd_daily, "hourly", f"{entry_day}T{entry_end}"
                 else:
@@ -427,7 +429,7 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
                         continue
                     # Daily-only: the fill can happen at any time on the entry day.
                     path, data, fill_until = entry_bar + fwd_daily, "daily_only", f"{entry_day}T23:59:59"
-                outcome = _simulate(c, path, fill_until, window[-1])
+                outcome = _simulate(c, path, fill_until, exit_by, "cash_swing")
                 rec = _record(c, stock["symbol"], iso, _decision(c, min_score), outcome)
                 rec.update(data=data, untested=untested or None)
                 trades.append(rec)
@@ -519,7 +521,9 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
                 if not c.get("trackable"):
                     continue
                 fill_until = min(bar_end + timedelta(hours=entry_bars), datetime.combine(bar_start.date(), cutoff))
-                last = window[-1].isoformat()
+                # No time stop: follow the trade up to backtest_max_hold_days (spot has no expiry).
+                exit_by = window[-1] if inst.time_stop else _next_days(date.fromisoformat(day), inst.max_hold_trading_days)[-1]
+                last = exit_by.isoformat()
                 path = []
                 for b in hourly[j + 1:]:
                     if b["ts"][:10] > last:
@@ -528,7 +532,7 @@ def run_hourly_proxy(start: date, end: date, symbols: list[dict], nifty: list[di
                 if not path:
                     funnel.add("candidates_without_forward_bars")
                     continue
-                outcome = _simulate(c, mark_eod(path), fill_until.isoformat(timespec="seconds"), window[-1])
+                outcome = _simulate(c, mark_eod(path), fill_until.isoformat(timespec="seconds"), exit_by, instrument)
                 rec = _record(c, stock["symbol"], bar["ts"], _decision(c, min_score), outcome)
                 rec.update(data="hourly", untested=None if volume_available else ["volume", "oi"])
                 trades.append(rec)
@@ -597,10 +601,11 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
             if not c.get("trackable"):
                 continue
             entry_day = window[0].isoformat()
+            exit_by = window[-1] if ch["inst"].time_stop else _next_days(d, ch["inst"].max_hold_trading_days)[-1]
             lo = bisect.bisect_left(h_index, entry_day)
             hi = bisect.bisect_left(h_index, window[1].isoformat()) if len(window) > 1 else len(hourly)
             fwd_hourly = hourly[lo:hi]
-            fwd_daily = [{**b, "eod": True} for b in daily[i:] if entry_day < b["ts"][:10] <= window[-1].isoformat()]
+            fwd_daily = [{**b, "eod": True} for b in daily[i:] if entry_day < b["ts"][:10] <= exit_by.isoformat()]
             if fwd_hourly and fwd_hourly[0]["ts"][:10] == entry_day:
                 path, data, fill_until = mark_eod(fwd_hourly) + fwd_daily, "hourly", f"{entry_day}T{entry_end}"
             else:
@@ -608,7 +613,7 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
                 if not entry_bar:
                     continue
                 path, data, fill_until = entry_bar + fwd_daily, "daily_only", f"{entry_day}T23:59:59"
-            outcome = _simulate(c, path, fill_until, window[-1])
+            outcome = _simulate(c, path, fill_until, exit_by, "cup_handle")
             rec = _record(c, stock["symbol"], iso, _decision(c, min_score), outcome)
             rec.update(data=data, untested=None, pattern=c.get("pattern"))
             trades.append(rec)
@@ -682,7 +687,7 @@ def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
                     if path:
                         fill_until = min(signal_end + timedelta(minutes=oc["entry_valid_bars"] * oc["bar_minutes"]),
                                          datetime.combine(d, cutoff))
-                        outcome = _simulate(c, path, fill_until.isoformat(timespec="seconds"), d)
+                        outcome = _simulate(c, path, fill_until.isoformat(timespec="seconds"), d, "stock_futures")
                         c["regime"] = None
                         rec = _record(c, stock["symbol"], sig["ts"], _decision(c, min_score), outcome)
                         rec.update(data="10minute", untested=None, stop_type=c["stop_type"])

@@ -3,7 +3,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.brokers.kite import KiteAuthExpired, KiteConfigError
+from datetime import datetime
+
+from backend.brokers.kite import KiteAuthExpired, KiteConfigError, fetch_open_positions
 from backend.positions import PositionsError, get_positions_view, remove_position, save_manual_position, sync_positions_from_kite, update_position_fields
 
 router = APIRouter(prefix="/api/positions", tags=["positions"])
@@ -46,6 +48,21 @@ def sync():
         return sync_positions_from_kite()
     except Exception as exc:
         raise _kite_error(exc)
+
+
+@router.get("/kite-open")
+def kite_open_positions():
+    """Live open positions (F&O / intraday / MCX) straight from Kite; read-only, not stored."""
+    try:
+        rows = fetch_open_positions()
+    except Exception as exc:
+        raise _kite_error(exc)
+    return {
+        "positions": rows, "count": len(rows),
+        "total_pnl": round(sum(r["pnl"] for r in rows), 2),
+        "total_unrealised": round(sum(r["unrealised"] for r in rows), 2),
+        "fetched_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 @router.post("")

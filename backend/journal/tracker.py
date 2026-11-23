@@ -52,7 +52,7 @@ def cash_swing_bars(token: int, entry_date: str, time_stop_date: str) -> tuple[l
         b["eod"] = False
     hourly[-1]["eod"] = hourly[-1]["ts"][11:16] >= "15:15"
     end = min(date.fromisoformat(time_stop_date), date.today())
-    daily = [b for b in get_candles(token, "day", limit=120)
+    daily = [b for b in get_candles(token, "day", limit=400)   # trades may now run for months (no time stop)
              if entry_date < b["ts"][:10] <= time_stop_date]
     expected = _trading_days(date.fromisoformat(entry_date) + timedelta(days=1), end)
     have = [b["ts"][:10] for b in daily]
@@ -124,7 +124,7 @@ def track_record(rec: dict) -> dict:
                       time_stop_date=rec["time_stop_date"],
                       trail_start_r=get_config().global_.trailing_shadow.start_r,
                       trail_atr=get_config().global_.trailing_shadow.trail_atr,
-                      exit_rule=get_config().global_.exit_management.model_dump())
+                      exit_rule=get_config().exit_rule(rec["segment"]))
     status = result["status"]
     if status == "pending":
         return {}

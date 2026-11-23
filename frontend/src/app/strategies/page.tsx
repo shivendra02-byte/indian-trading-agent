@@ -45,7 +45,7 @@ const strategies = [
   {
     id: "ai-analysis",
     title: "AI Multi-Agent Analysis",
-    description: "Full 10-agent AI pipeline: technicals, fundamentals, news, sentiment, bull/bear debate, risk assessment. Gets you entry/SL/target.",
+    description: "AI pipeline on price data: technical analyst, bull/bear debate, trader, risk debate, portfolio manager. Gets you entry/SL/target.",
     icon: TrendingUp,
     color: "text-green-600",
     bgColor: "bg-green-50 dark:bg-green-950/40",

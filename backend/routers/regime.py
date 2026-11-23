@@ -16,6 +16,22 @@ def current():
     return get_current_regime()
 
 
+@router.get("/engine")
+def engine():
+    """Regime the trading engine uses (backend/signals/regime.py) on the stored Kite NIFTY daily bars:
+    STRONG_UP / STRONG_DOWN / SIDEWAYS / HIGH_VOL / UNSTABLE, with the numbers behind it."""
+    from backend.marketdata.candles import get_candles
+    from backend.marketdata.instruments import spot_instrument
+    from backend.signals.regime import explain_current
+    nifty = spot_instrument("NIFTY")
+    if not nifty:
+        return {"regime": None, "reason": "NIFTY instrument missing (log in to Kite for the instrument master)"}
+    bars = get_candles(nifty["instrument_token"], "day", limit=300)
+    if not bars:
+        return {"regime": None, "reason": "no NIFTY daily candles stored yet"}
+    return explain_current(bars)
+
+
 @router.get("/on")
 def on_date(d: str):
     """Regime on a specific date (YYYY-MM-DD)."""

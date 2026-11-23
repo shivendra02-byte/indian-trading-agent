@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from backend.db import get_setting, set_setting
 import json
 import io
+import re
 import ipaddress
 import socket
 from urllib.parse import urljoin, urlsplit
@@ -22,7 +23,7 @@ import requests
 # Default RSS feeds for Indian financial news
 DEFAULT_RSS_FEEDS = {
     "moneycontrol_markets": {
-        "name": "MoneyControl - Markets",
+        "name": "MoneyControl - Top News",   # general top news: the market filter below keeps the market items
         "url": "https://www.moneycontrol.com/rss/MCtopnews.xml",
         "enabled": True,
     },
@@ -67,6 +68,53 @@ DEFAULT_YF_QUERIES = [
     "India GDP inflation economic",
     "India rupee forex dollar",
 ]
+
+
+# --- market relevance filter -----------------------------------------------------------------
+# Several feeds (MoneyControl top news, NDTV Profit latest) are general news, so cricket,
+# flights and politics got in (asked 23 Nov 2026). An article is kept only when its title
+# or summary mentions the market, the economy or companies' business; an off-topic word
+# (sport, travel, entertainment, politics) needs at least two market words to stay.
+MARKET_TERMS = (
+    "sensex", "nifty", "bank nifty", "banknifty", "stock", "stocks", "share", "shares", "equity", "equities",
+    "market", "markets", "ipo", "listing", "sebi", "nse", "bse", "mcx", "f&o", "futures", "options",
+    "derivatives", "expiry", "earnings", "results", "q1", "q2", "q3", "q4", "quarter", "quarterly",
+    "profit", "revenue", "margin", "ebitda", "guidance", "dividend", "buyback", "bonus issue", "stake",
+    "acquisition", "acquire", "merger", "demerger", "order win", "block deal", "bulk deal", "promoter",
+    "rbi", "repo", "monetary policy", "inflation", "cpi", "wpi", "gdp", "iip", "pmi", "fiscal", "budget",
+    "gst", "tax", "fed", "fomc", "interest rate", "rate cut", "rate hike", "bond", "bonds", "yield", "yields",
+    "rupee", "forex", "dollar", "fii", "fiis", "dii", "diis", "fpi", "fpis", "mutual fund", "sip", "investor",
+    "investors", "brokerage", "target price", "upgrade", "downgrade", "rating", "valuation", "crude",
+    "oil price", "gold", "silver", "commodity", "commodities", "metal", "metals", "economy", "economic",
+    "trade deficit", "exports", "imports", "tariff", "tariffs", "capex", "rally", "sell-off", "selloff",
+    "crash", "bull", "bear", "52-week", "all-time high", "smallcap", "midcap", "largecap", "psu", "nbfc",
+)
+OFF_TOPIC_TERMS = (
+    "cricket", "ipl", "t20", "odi", "test match", "wicket", "wickets", "batter", "bowler", "world cup",
+    "football", "tennis", "olympics", "hockey", "kabaddi", "match", "tournament",
+    "flight", "flights", "airport", "passenger", "passengers", "pilot", "dgca", "visa", "tourism", "tourist",
+    "bollywood", "box office", "movie", "film", "actor", "actress", "celebrity", "web series", "ott release",
+    "election", "elections", "poll", "polls", "assembly", "lok sabha", "rajya sabha", "bjp", "congress",
+    "aap", "chief minister", "campaign", "rally in", "protest", "murder", "arrested", "police", "court",
+    "weather", "rain", "cyclone", "earthquake", "horoscope", "recipe",
+)
+
+
+def _term_regex(terms) -> "re.Pattern":
+    return re.compile(r"(?<![a-z0-9])(" + "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True)) + r")(?![a-z0-9])")
+
+
+_MARKET_RE = _term_regex(MARKET_TERMS)
+_OFF_TOPIC_RE = _term_regex(OFF_TOPIC_TERMS)
+
+
+def is_market_relevant(title: str, summary: str = "") -> bool:
+    """True when an article is about markets, the economy or a company's business."""
+    text = f"{title or ''} {re.sub(r'<[^>]+>', ' ', summary or '')}".lower()
+    market_hits = len(set(_MARKET_RE.findall(text)))
+    if not market_hits:
+        return False
+    return not _OFF_TOPIC_RE.search(text) or market_hits >= 2
 
 
 # Feed URLs are user-configurable, so the server must never be steered into
@@ -277,8 +325,11 @@ def _fetch_yf_news_for_query(query: str, max_items: int = 5) -> list[dict]:
         return []
 
 
-def fetch_all_news(max_per_source: int = 10) -> list[dict]:
-    """Fetch news from all enabled sources in parallel."""
+def fetch_all_news(max_per_source: int = 10, market_only: bool = True, stats: dict | None = None) -> list[dict]:
+    """Fetch news from all enabled sources in parallel.
+
+    ``market_only`` drops articles that aren't about markets/economy (``is_market_relevant``);
+    ``stats`` (if given) receives ``filtered_out``."""
     config = get_news_sources_config()
     rss_feeds = config["rss_feeds"]
     yf_queries = config["yf_queries"]
@@ -304,6 +355,12 @@ def fetch_all_news(max_per_source: int = 10) -> list[dict]:
                 if art["title"] and art["title"] not in seen_titles:
                     seen_titles.add(art["title"])
                     all_articles.append(art)
+
+    if market_only:
+        kept = [a for a in all_articles if is_market_relevant(a["title"], a.get("summary", ""))]
+        if stats is not None:
+            stats["filtered_out"] = len(all_articles) - len(kept)
+        all_articles = kept
 
     # Sort by published date (newest first), unknown dates go last
     def sort_key(a):

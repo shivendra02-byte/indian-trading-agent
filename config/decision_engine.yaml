@@ -165,7 +165,10 @@ instruments:
     directions: [long, short]
     shortlist_per_scan: 2          # agreed 22 Nov 2026 (was 5): keeps AI reviews within the daily limit
     entry_valid_bars: 2
-    hold_trading_days: 3
+    hold_trading_days: 3           # RBI/Budget/results checked for these days after entry (no time exit, see time_stop)
+    time_stop: false               # agreed 23 Nov 2026: no 3-day time stop; exit = target, stop or trailing stop
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+                                   # stop to breakeven after 1R, then 2 ATR behind the best close; futures exit by the session before expiry
     no_entry_first_minutes: 15
     no_entry_last_minutes: 30
     max_spread_pct: 0.1
@@ -179,7 +182,10 @@ instruments:
     directions: [long, short]
     shortlist_per_scan: 5
     entry_valid_bars: 2
-    hold_trading_days: 3
+    hold_trading_days: 3           # RBI/Budget/results checked for these days after entry (no time exit, see time_stop)
+    time_stop: false               # agreed 23 Nov 2026: no 3-day time stop; exit = target, stop or trailing stop
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+                                   # stop to breakeven after 1R, then 2 ATR behind the best close; futures exit by the session before expiry
     no_entry_first_minutes: 15
     no_entry_last_minutes: 30
     max_spread_pct: 0.1
@@ -193,7 +199,10 @@ instruments:
     directions: [long, short]
     shortlist_per_scan: 5
     entry_valid_bars: 2
-    hold_trading_days: 3
+    hold_trading_days: 3           # RBI/Budget/results checked for these days after entry (no time exit, see time_stop)
+    time_stop: false               # agreed 23 Nov 2026: no 3-day time stop; exit = target, stop or trailing stop
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+                                   # stop to breakeven after 1R, then 2 ATR behind the best close; futures exit by the session before expiry
     no_entry_first_minutes: 15
     no_entry_last_minutes: 30
     max_spread_pct: 0.1
@@ -224,7 +233,10 @@ instruments:
     context_must_not_oppose: []
     directions: [long]
     shortlist_per_scan: 2          # recommendations per day
-    hold_trading_days: 7
+    hold_trading_days: 7           # RBI/Budget/results checked for these days (no time exit, see time_stop)
+    time_stop: false               # agreed 23 Nov 2026: exit = target, stop or trailing stop
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+    max_hold_trading_days: 60      # safety exit only (shares have no expiry), ~3 months
     entry_window: ["09:30", "11:00"]
     scan_after: "15:45"
     min_turnover_cr: 50
@@ -241,7 +253,10 @@ instruments:
     primary_tf: day
     directions: [long]
     shortlist_per_scan: 2
-    hold_trading_days: 40          # time stop ~8 weeks
+    hold_trading_days: 40          # was the ~8-week time stop; now unused for exits (see time_stop)
+    time_stop: false               # agreed 23 Nov 2026: exit = target, stop or trailing stop
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+    max_hold_trading_days: 120     # safety exit only, ~6 months
     min_primary_bars: 300
     entry_window: ["09:15", "15:15"]   # buy limit at pivot + 5% (buy zone), next session
     stop_pct: 8.0                  # O'Neil: cut losses at 7–8%

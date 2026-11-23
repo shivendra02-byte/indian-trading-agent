@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getRecommendations, openPaperTrade } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { NextStep } from "@/components/NextStep";
 import { statusColors, splitStatusColor, confidenceBadge, directionBg } from "@/lib/status-colors";
 import { errorMessage } from "@/lib/utils";
+import { getCachedRecommendations, setCachedRecommendations } from "@/lib/recommendations-cache";
 
 // One signal behind a pick (backend/recommender.py _analyze_stock, plus the
 // FII/DII, event and sector-concentration signals the _apply_* filters add).
@@ -86,7 +87,7 @@ const recommendationsHelp = [
   },
   {
     question: "What does \"AI Analyze\" button do?",
-    answer: "Clicking \"AI Analyze\" takes you to the full AI analysis pipeline:\n\n  \u2022 10 AI agents analyze the stock (market, social, news, fundamentals, bull/bear debate, trader, risk debate, portfolio manager)\n  \u2022 Reads actual news articles, checks P&L/balance sheet\n  \u2022 Returns specific entry price, stop-loss, target, position size, time horizon\n  \u2022 Takes 1-3 minutes per stock\n  \u2022 Costs ~Rs.15-25 per analysis (Anthropic Claude API)\n\nThis is MUCH deeper than the recommendation engine. Use it for your TOP 2-3 picks, not every recommendation.\n\nThink of it as:\n  \u2022 Recommendations = Quick filter (FREE, 30 sec for 100 stocks)\n  \u2022 AI Analyze = Expert opinion (PAID, deep analysis of ONE stock)",
+    answer: "Clicking \"AI Analyze\" takes you to the full AI analysis pipeline:\n\n  \u2022 AI agents analyze the stock on price data (technical analyst, bull/bear debate, trader, risk debate, portfolio manager)\n  \u2022 No news, sentiment or fundamentals: those agents are switched off\n  \u2022 Returns specific entry price, stop-loss, target, position size, time horizon\n  \u2022 Takes 1-3 minutes per stock\n  \u2022 Costs ~Rs.15-25 per analysis (Anthropic Claude API)\n\nThis is MUCH deeper than the recommendation engine. Use it for your TOP 2-3 picks, not every recommendation.\n\nThink of it as:\n  \u2022 Recommendations = Quick filter (FREE, 30 sec for 100 stocks)\n  \u2022 AI Analyze = Expert opinion (PAID, deep analysis of ONE stock)",
   },
   {
     question: "How often should I run this?",
@@ -169,10 +170,10 @@ function RecommendationCard({ rec }: { rec: Recommendation }) {
                     triggered_signals: rec.signals,
                   });
                   toast.success(`${rec.ticker} tracked at Rs.${rec.price}`, {
-                    description: "Paper trade opened. Check P&L at 1/3/5/10 days on the Simulation page.",
+                    description: "Paper trade opened. Check P&L at 1/3/5/10 days on the Top Picks Tracker page.",
                     duration: 6000,
                     action: {
-                      label: "View Simulation",
+                      label: "View Tracker",
                       onClick: () => { window.location.href = "/simulation"; },
                     },
                   });
@@ -222,23 +223,47 @@ function RecommendationCard({ rec }: { rec: Recommendation }) {
   );
 }
 
-export default function RecommendationsPage() {
-  const [universe, setUniverse] = useState("nifty100");
-  const [minSignals, setMinSignals] = useState(2);
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<RecommendationsResponse | null>(null);
+const DEFAULT_UNIVERSE = "nifty100";
+const DEFAULT_MIN_SIGNALS = 2;
 
-  const handleRun = async () => {
+// First tab that has picks, so a day with only BUYs doesn't open on an empty "Strong Buy" tab.
+function firstNonEmptyTab(data: RecommendationsResponse) {
+  return (["strong_buys", "buys", "sells", "strong_sells"] as const).find((k) => data[k].length > 0) ?? "strong_buys";
+}
+
+export default function RecommendationsPage() {
+  // Start from the Today tab's result (same universe + min signals) when there is one.
+  const [initial] = useState(() =>
+    getCachedRecommendations<RecommendationsResponse>(DEFAULT_UNIVERSE, DEFAULT_MIN_SIGNALS),
+  );
+  const [universe, setUniverse] = useState(DEFAULT_UNIVERSE);
+  const [minSignals, setMinSignals] = useState(DEFAULT_MIN_SIGNALS);
+  const [loading, setLoading] = useState(!initial);
+  const [data, setData] = useState<RecommendationsResponse | null>(initial?.data ?? null);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(initial?.at ?? null);
+
+  const fetchData = useCallback(
+    (u: string, n: number) =>
+      (getRecommendations(u, n) as Promise<RecommendationsResponse>)
+        .then((result) => {
+          setData(result);
+          setUpdatedAt(new Date());
+          setCachedRecommendations(u, n, result);
+        })
+        .catch((e) => toast.error(errorMessage(e, "Failed to get recommendations")))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  // Opened directly (or the cached result is stale): run the default scan automatically.
+  useEffect(() => {
+    if (!initial) fetchData(DEFAULT_UNIVERSE, DEFAULT_MIN_SIGNALS);
+  }, [initial, fetchData]);
+
+  const handleRun = () => {
     setLoading(true);
     setData(null);
-    try {
-      const result = (await getRecommendations(universe, minSignals)) as RecommendationsResponse;
-      setData(result);
-    } catch (e) {
-      toast.error(errorMessage(e, "Failed to get recommendations"));
-    } finally {
-      setLoading(false);
-    }
+    return fetchData(universe, minSignals);
   };
 
   const totalRecs = data
@@ -344,6 +369,7 @@ export default function RecommendationsPage() {
               <p className="text-xs text-muted-foreground">Analyzed</p>
               <p className="text-2xl font-bold">{data.total_analyzed}</p>
               <p className="text-xs text-muted-foreground">{data.total_with_signals} with signals</p>
+              {updatedAt && <p className="text-xs text-muted-foreground">Updated {updatedAt.toLocaleTimeString()}</p>}
             </CardContent>
           </Card>
         </div>
@@ -351,7 +377,7 @@ export default function RecommendationsPage() {
 
       {/* Tabs */}
       {data && totalRecs > 0 && (
-        <Tabs defaultValue="strong_buys">
+        <Tabs key={updatedAt?.getTime()} defaultValue={firstNonEmptyTab(data)}>
           <TabsList>
             <TabsTrigger value="strong_buys">Strong Buy ({data.strong_buys.length})</TabsTrigger>
             <TabsTrigger value="buys">Buy ({data.buys.length})</TabsTrigger>

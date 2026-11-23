@@ -205,6 +205,26 @@ def _size_text(rec: dict) -> str:
     return "size per your risk"
 
 
+def _exit_line(rec: dict) -> str:
+    from backend.decision.config import get_config
+    cfg = get_config()
+    inst = cfg.instruments.get(rec["segment"])
+    last = html.escape(str(rec.get("time_stop_date")))
+    if inst is None or inst.time_stop:
+        return f"Time stop: close of {last}"
+    rule = cfg.exit_rule(rec["segment"])
+    if rule["mode"] == "breakeven_trail":
+        how = (f"stop to breakeven at {rule['breakeven_at_r']:g}R, then trail {rule['trail_atr']:g} ATR "
+               f"behind the best close")
+    elif rule["mode"] == "breakeven":
+        how = f"stop to breakeven at {rule['breakeven_at_r']:g}R"
+    else:
+        how = "fixed stop"
+    safety = "before expiry" if rec["segment"] in ("stock_futures", "index_futures", "mcx") \
+        else f"safety exit after {inst.max_hold_trading_days} trading days"
+    return f"Exit: target, stop or trailing stop ({how}); no time stop · latest exit {last} ({safety})"
+
+
 def build_alert(rec: dict, panel: dict, kind: str) -> str:
     """``kind``: approved / unreviewed / ai_error."""
     e = html.escape
@@ -220,7 +240,7 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
         f"Entry (limit): {rec['entry']} · valid until {e(until)}",
         f"Stop: {rec['stop']} · Target: {rec['target']} · R:R {rec.get('rr')}",
         f"Size: {e(_size_text(rec))} · Score {round(rec.get('score') or 0)} · Regime {e(str(rec.get('regime') or '-'))}",
-        f"Time stop: close of {e(str(rec.get('time_stop_date')))}",
+        _exit_line(rec),
     ]
     if kind == "approved":
         lines.append(f"AI confidence: {panel.get('confidence')}")

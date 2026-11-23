@@ -19,10 +19,14 @@ class NewsSourcesUpdate(BaseModel):
 
 
 @router.get("/")
-def get_news(max_per_source: int = Query(10)):
-    """Get aggregated news from all enabled sources."""
+def get_news(max_per_source: int = Query(10), market_only: bool = Query(True)):
+    """Get aggregated news from all enabled sources (off-topic articles dropped unless market_only=false)."""
+    stats: dict = {}
+    articles = fetch_all_news(max_per_source, market_only=market_only, stats=stats)
     return {
-        "articles": fetch_all_news(max_per_source),
+        "articles": articles,
+        "market_only": market_only,
+        "filtered_out": stats.get("filtered_out", 0),
     }
 
 
