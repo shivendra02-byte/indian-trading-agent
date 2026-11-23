@@ -30,6 +30,7 @@ import {
   Crosshair,
   type LucideIcon,
   Waves,
+  Rocket,
 } from "lucide-react";
 
 type NavItem = {
@@ -57,6 +58,7 @@ const navGroups: NavGroup[] = [
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
       { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, cash, AI-reviewed" },
       { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
+      { href: "/momentum", label: "Momentum Book", icon: Rocket, hint: "Weekly strongest/weakest F&O stocks, trend pullback entries" },
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
       { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },
       { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },

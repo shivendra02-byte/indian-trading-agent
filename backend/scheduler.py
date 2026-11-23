@@ -210,6 +210,8 @@ class MarketDataScheduler:
                 exchange = NSE if key == "nse_1h" else MCX
                 result = run_hourly_scan("nse" if key == "nse_1h" else "mcx", now=now)
                 self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
+                if key == "nse_1h":
+                    self._momentum("hourly", now)
             elif job == "scan:orb":
                 from backend.signals.orb import run_orb_scan
                 result = run_orb_scan(now=now)
@@ -234,6 +236,7 @@ class MarketDataScheduler:
                         wolfe = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
                     self.last_results["scan:wolfe"] = {"at": now.isoformat(timespec="seconds"), **_brief(wolfe)}
                     self._divergence("nse", now)
+                    self._momentum("daily", now)
             else:
                 _, exchange, interval = job.split(":")
                 bar = latest_closed_bar(exchange, interval, now)
@@ -275,6 +278,16 @@ class MarketDataScheduler:
             except Exception as exc:  # never let it stop the scheduler
                 result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
             self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+
+    def _momentum(self, kind: str, now: datetime) -> None:
+        """Momentum book: entries/stops after each NSE hourly bar; ranking and
+        end-of-day exits after the close."""
+        from backend.momentum.book import daily_run, hourly_run
+        try:
+            result = (hourly_run if kind == "hourly" else daily_run)(now=now)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"momentum:{kind}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _weekly_backup(self, now: datetime) -> list[str]:
         """Weekly backups of the app's data (runs while paused and without Kite)."""

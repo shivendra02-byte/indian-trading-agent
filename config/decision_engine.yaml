@@ -302,6 +302,27 @@ instruments:
       breakeven_lock_r: 0.0
       trail_start_r: 1.0
       trail_atr: 2.0
+  momentum:                        # momentum book on NSE stock futures (asked 23 Nov 2026) — paper, rules only, own book
+    long_enabled: true             # the long and short sides switch on separately
+    short_enabled: false           # conservative default: off until the backtest supports it
+    lookbacks_days: [63, 126]      # 3- and 6-month relative strength vs NIFTY ...
+    skip_days: 21                  # ... ending one month ago
+    min_turnover_cr: 100           # 20-day average traded value
+    min_oi_value_cr: 0             # open interest × price of the future (0 = not checked)
+    top_n: 10                      # long group = 10 strongest, short group = 10 weakest
+    buffer_n: 20                   # a held stock stays while ranked within 20 of its end
+    max_positions_per_side: 3
+    ema_fast: 20                   # daily trend: fast EMA beyond slow EMA, close beyond slow EMA
+    ema_slow: 50
+    return_days: [20, 60]          # ... and 20- and 60-day returns in the trade direction
+    pullback_bars: 8               # hourly: a touch of the 20 EMA within the last 8 bars
+    pullback_touch_atr: 0.25
+    structure_bars: 5              # ... then the first close beyond the last 5 bars' extreme
+    stop_atr: 2.0                  # initial stop, daily ATR
+    trail_atr: 3.0                 # trail behind the best close, daily ATR
+    max_hold_days: 60
+    results_block_days: 3          # no entry with company results in the next 3 trading days
+    rerank_weekday: 0              # re-rank after the first close of each week
 
 strategies:
   pullback:
