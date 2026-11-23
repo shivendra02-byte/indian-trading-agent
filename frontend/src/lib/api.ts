@@ -299,6 +299,11 @@ export const refreshMyTrades = () => fetchAPI(`/api/my-trades/refresh`, { method
 export const closeMyTrade = (id: number, exit_price: number) =>
   fetchAPI(`/api/my-trades/${id}/close`, { method: "POST", body: JSON.stringify({ exit_price }) });
 export const deleteMyTrade = (id: number) => fetchAPI(`/api/my-trades/${id}`, { method: "DELETE" });
+// Wolfe Wave scan (cash, long only) + stored candles for pattern charts
+export const getWolfeScan = () => fetchAPI(`/api/scans/wolfe`);
+export const runWolfeScan = () => fetchAPI(`/api/scans/wolfe/run`, { method: "POST" });
+export const getStoredCandles = (token: number, interval: string, limit: number) =>
+  fetchAPI(`/api/marketdata/candles?token=${token}&interval=${interval}&limit=${limit}`);
 
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);

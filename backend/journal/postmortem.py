@@ -32,7 +32,7 @@ from backend.journal.store import list_records
 log = logging.getLogger(__name__)
 
 RUN_AT = time(8, 0)                      # Saturday, after Friday's MCX close
-CASH_SEGMENTS = ("cash_swing", "cup_handle")
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")
 PAPER_DECISIONS = ("shortlisted", "approved")
 STOP_EXITS = ("stop", "gap_stop")
 AFTER_EXIT_BARS = 5
@@ -52,7 +52,7 @@ TAGS = {
 USER_DEVIATION_R = 0.25                 # your result vs the rules' result: smaller gaps are noise
 
 # Journal segment (+ ORB setup) -> backtest segment used for the expectation.
-BACKTEST_SEGMENT = {"cash_swing": "cash_swing", "cup_handle": "cup_handle",
+BACKTEST_SEGMENT = {"cash_swing": "cash_swing", "cup_handle": "cup_handle", "wolfe": "wolfe",
                     "stock_futures": "stock_futures_proxy", "index_futures": "index_futures_proxy"}
 
 

@@ -385,6 +385,18 @@ def _load(path: str, mtime: float) -> DecisionConfig:
     return cfg
 
 
+def exit_rule_for(segment: str | None) -> dict:
+    """The real exit for a journal segment: ``global.exit_management``, overridden by
+    the segment's own ``instruments.<segment>.exit_management`` block when it has one."""
+    cfg = get_config()
+    base = cfg.global_.exit_management.model_dump()
+    if segment and segment in cfg.instruments:
+        override = (cfg.instrument(segment).model_extra or {}).get("exit_management")
+        if override:
+            return ExitCfg(**{**base, **override}).model_dump()
+    return base
+
+
 def get_config() -> DecisionConfig:
     """The current configuration (re-read automatically when the file changes)."""
     path = _override.get() or config_path()

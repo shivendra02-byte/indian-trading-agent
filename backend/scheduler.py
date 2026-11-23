@@ -227,6 +227,12 @@ class MarketDataScheduler:
                     except Exception as exc:  # never let it stop the scheduler
                         cup = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
                     self.last_results["scan:cup_handle"] = {"at": now.isoformat(timespec="seconds"), **_brief(cup)}
+                    try:
+                        from backend.signals.wolfe import run_scan as run_wolfe_scan
+                        wolfe = run_wolfe_scan(now=now)
+                    except Exception as exc:  # never let it stop the scheduler
+                        wolfe = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                    self.last_results["scan:wolfe"] = {"at": now.isoformat(timespec="seconds"), **_brief(wolfe)}
                     self._divergence("nse", now)
             else:
                 _, exchange, interval = job.split(":")

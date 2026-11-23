@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { errorMessage } from "@/lib/utils";
+import { WolfeChart, type WolfePattern } from "@/components/scans/WolfeChart";
 
 type Factors = Record<string, number | null>;
 type Pattern = {
@@ -39,7 +40,8 @@ type Candidate = {
     tradingsymbol?: string;
     lots?: number;
     oi_change_pct?: number | null;
-    pattern?: Pattern | null;
+    pattern?: Pattern | WolfePattern | null;
+    token?: number | null;
     or_high?: number | null;
     or_low?: number | null;
     stop_type?: string | null;
@@ -90,7 +92,17 @@ const FACTOR_LABEL: [string, string, number][] = [
   ["nifty_alignment", "NIFTY same direction", 25],
   ["range_quality", "Range quality", 15],
   ["close_strength", "Close strength", 15],
+  // Wolfe Wave
+  ["symmetry", "Wave symmetry", 25],
+  ["reward_risk", "Reward:risk", 25],
+  ["sweet_zone", "Point 5 in sweet zone", 15],
+  ["convergence", "Lines converge", 15],
+  ["rsi_divergence", "RSI divergence at 5", 20],
 ];
+
+function isWolfe(p: Pattern | WolfePattern | null | undefined): p is WolfePattern {
+  return !!p && "points" in p;
+}
 
 function pct(a: number, b: number) {
   return `${(((a - b) / b) * 100).toFixed(1)}%`;
@@ -134,15 +146,20 @@ function SetupCard({ c }: { c: Candidate }) {
           {c.extra.or_high !== undefined && c.extra.or_high !== null
             ? `Opening range ${c.extra.or_low}–${c.extra.or_high} · stop at ${c.extra.stop_type === "midpoint" ? "range midpoint" : "other side"} · `
             : ""}
-          {c.extra.pattern
+          {isWolfe(c.extra.pattern)
+            ? `Points ${c.extra.pattern.points.map((q) => q.price).join(" → ")} · span ${c.extra.pattern.span_bars} bars · symmetry ${c.extra.pattern.time_ratio} · point 5 ${c.extra.pattern.overshoot_atr} ATR below 1–3 line${c.extra.pattern.rsi_divergence ? " · RSI divergence" : ""}`
+            : c.extra.pattern
             ? `Pivot ${c.extra.pattern.pivot} · cup ${c.extra.pattern.cup_weeks} wk, ${c.extra.pattern.cup_depth_pct}% deep · handle ${c.extra.pattern.handle_days} d, ${c.extra.pattern.handle_depth_pct}% deep · `
             : c.extra.stop_atr !== undefined && c.extra.stop_atr !== null ? `Stop ${c.extra.stop_atr} ATR · ` : ""}
-          volume {c.extra.vol_ratio}×
+          {c.extra.vol_ratio !== undefined && c.extra.vol_ratio !== null ? `volume ${c.extra.vol_ratio}×` : ""}
           {c.extra.penalties ? ` · penalties −${Object.values(c.extra.penalties).reduce((a, b) => a + b, 0)}` : ""}
           {c.extra.oi_change_pct !== undefined && c.extra.oi_change_pct !== null ? ` · OI ${c.extra.oi_change_pct}%` : ""}
           {c.extra.rs_vs_nifty_pct !== undefined && c.extra.rs_vs_nifty_pct !== null ? ` · vs NIFTY ${c.extra.rs_vs_nifty_pct}%` : ""}
           {c.extra.turnover_cr ? ` · turnover ₹${c.extra.turnover_cr} cr` : ""}
         </p>
+        {isWolfe(c.extra.pattern) && c.extra.token ? (
+          <WolfeChart token={c.extra.token} pattern={c.extra.pattern} entry={c.entry} stop={c.stop} target={c.target} />
+        ) : null}
       </CardContent>
     </Card>
   );
