@@ -319,7 +319,7 @@ def evaluations_today(today: date) -> int:
     ensure_table()
     with get_db() as conn:
         return conn.execute(
-            "SELECT COUNT(*) FROM option_spreads WHERE panel_decision IN ('approve', 'reject', 'error') "
+            "SELECT COUNT(*) FROM option_spreads WHERE panel_decision IN ('approve', 'reject') "  # errors don't use the budget
             "AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?", (today.isoformat(),)).fetchone()[0]
 
 

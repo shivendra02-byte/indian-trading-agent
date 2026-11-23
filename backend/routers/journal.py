@@ -90,6 +90,8 @@ def postmortem_run(data: PostmortemRun):
 
 @router.post("/panel/run")
 def panel_run():
-    """Review pending shortlisted trades now (the scans also do this after every run)."""
+    """Review pending shortlisted trades now (the scans also do this after every run).
+    Trades whose AI call failed are retried here (the scans don't retry them, so a
+    broken model or key can't use up the daily AI budget)."""
     from backend.journal.panel import review_pending
-    return review_pending()
+    return review_pending(retry_errors=True)

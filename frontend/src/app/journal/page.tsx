@@ -303,6 +303,11 @@ export default function JournalPage() {
                         {r.panel?.confidence !== undefined && (
                           <span className="ml-1 text-muted-foreground">AI {r.panel.confidence}</span>
                         )}
+                        {r.panel && (r.panel.error || r.panel.skipped || r.panel.reasons?.length) ? (
+                          <p className={`mt-0.5 max-w-64 text-[11px] leading-tight ${r.panel.error ? "text-red-600" : "text-muted-foreground"}`}>
+                            {r.panel.error ?? (r.panel.skipped ? `AI not run: ${r.panel.skipped}` : panelText(r))}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-2 py-1">{r.entry} / {r.stop} / {r.target}</td>
                       <td className="px-2 py-1">{r.track_status}</td>

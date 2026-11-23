@@ -52,10 +52,11 @@ def _count(where: str, params: tuple) -> int:
 
 
 def evaluations_today(today: date) -> int:
-    """AI calls made today (approve, reject or error; not limit skips), trade journal
-    plus option spreads: one shared daily budget."""
+    """AI calls answered today (approve or reject), trade journal plus option spreads: one
+    shared daily budget. Failed calls (panel_decision 'error') don't count: they never got an
+    answer, and a broken model or key must not use up the day's budget (23 Nov 2026: 5 failures did)."""
     from backend.options.spreads import evaluations_today as spread_evaluations
-    journal = _count("panel_decision IN ('approve', 'reject', 'error') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
+    journal = _count("panel_decision IN ('approve', 'reject') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
                      (today.isoformat(),))
     return journal + spread_evaluations(today)
 
@@ -161,14 +162,28 @@ def build_prompt(rec: dict) -> str:
     )
 
 
+def _saved_api_key(provider: str) -> str | None:
+    import os
+    from backend.db import get_setting
+    from backend.settings_manager import PROVIDER_ENV_KEYS
+    env_var = PROVIDER_ENV_KEYS.get(provider)
+    if not env_var:
+        return None
+    return get_setting(f"api_key_{provider}") or os.environ.get(env_var) or None
+
+
 def _default_llm_call(prompt: str) -> tuple[str, str]:
     from backend.settings_manager import get_llm_config
     from tradingagents.llm_clients import create_llm_client
 
     cfg = get_llm_config()
     model = cfg["deep_think_llm"]
+    extra = {}
+    key = _saved_api_key(cfg["llm_provider"])
+    if key:                       # the key saved in Settings, not only what the process env had at startup
+        extra["api_key"] = key
     llm = create_llm_client(provider=cfg["llm_provider"], model=model,
-                            timeout=get_config().global_.ai_panel.timeout_seconds).get_llm()
+                            timeout=get_config().global_.ai_panel.timeout_seconds, **extra).get_llm()
     reply = llm.invoke(prompt)
     content = reply.content if hasattr(reply, "content") else str(reply)
     if isinstance(content, list):
@@ -225,6 +240,8 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
         f"Size: {e(_size_text(rec))} · Score {round(rec.get('score') or 0)} · Regime {e(str(rec.get('regime') or '-'))}",
         f"Time stop: close of {e(str(rec.get('time_stop_date')))}",
     ]
+    if kind == "ai_error" and panel.get("error"):
+        lines.append(e(panel["error"]))
     if kind == "approved":
         lines.append(f"AI confidence: {panel.get('confidence')}")
         lines += [f"• {e(r)}" for r in panel.get("reasons", [])]
@@ -253,14 +270,17 @@ def _set_stages(rec: dict, panel_stage: dict, final_stage: dict) -> list[dict]:
     return [*stages, panel_stage, final_stage]
 
 
-def pending_records(now: datetime) -> list[dict]:
-    """Shortlisted, not yet reviewed, entry window still open; best score first."""
-    rows = list_records("decision = 'shortlisted' AND panel_decision IS NULL AND track_status = 'pending' "
+def pending_records(now: datetime, retry_errors: bool = False) -> list[dict]:
+    """Shortlisted, not yet reviewed (or, with ``retry_errors``, whose AI call failed),
+    entry window still open; best score first."""
+    reviewed = "(panel_decision IS NULL OR panel_decision = 'error')" if retry_errors else "panel_decision IS NULL"
+    rows = list_records(f"decision = 'shortlisted' AND {reviewed} AND track_status = 'pending' "
                         "AND fill_until > ?", (now.isoformat(timespec="seconds"),), limit=200)
     return sorted(rows, key=lambda r: (r["signal_ts"], -(r.get("score") or 0)))
 
 
-def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
+def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None,
+                   retry_errors: bool = False) -> dict:
     """Review every pending shortlisted trade. Safe to call after every scan."""
     from backend.signals.setups import stage
     from backend.system_state import is_paused
@@ -272,7 +292,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
         return {"status": "skipped", "reason": "paused"}
     now = now or datetime.now()
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
-    for rec in pending_records(now):
+    for rec in pending_records(now, retry_errors):
         evaluated_at = now.isoformat(timespec="seconds")
         blocked = limit_block(now.date(), rec["segment"])
         if blocked:
@@ -295,7 +315,9 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             text, model = (llm_call or _default_llm_call)(build_prompt(rec))
             verdict = parse_reply(text)
         except Exception as exc:
-            reason = f"AI review failed: {type(exc).__name__}"
+            log.warning("AI panel call failed for %s", rec["symbol"], exc_info=True)
+            detail = " ".join(str(exc).split())[:160]
+            reason = f"AI review failed: {type(exc).__name__}" + (f": {detail}" if detail else "")
             panel = {"evaluated_at": evaluated_at, "error": reason}
             update_record(rec["id"], {"panel": panel, "panel_decision": "error", "stages": _set_stages(
                 rec, stage("ai_panel", "fail", reason), stage("final_approval", "pending", "rules only"))})
