@@ -251,7 +251,7 @@ def run_scan(now: datetime | None = None, force: bool = False,
         last = events.trading_days_after(signal_date, cfg["inst"].max_hold_trading_days)[-1]
     nifty = spot_instrument("NIFTY")
     nifty_bars = get_candles(nifty["instrument_token"], "day", limit=800) if nifty else []
-    problem = data_quality(nifty_bars, signal_date) if nifty else "NIFTY instrument missing"
+    problem = data_quality(nifty_bars, signal_date, need_volume=False) if nifty else "NIFTY instrument missing"
     if problem:
         return _finish_run(run_id, "blocked", {"reason": f"NIFTY data: {problem}"})
     market = events.market_events_between(first, block_last, kinds=("RBI", "BUDGET"))

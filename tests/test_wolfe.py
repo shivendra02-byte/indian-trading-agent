@@ -87,3 +87,11 @@ class WolfeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WolfeScanNiftyVolumeTests(unittest.TestCase):
+    def test_nifty_index_bars_without_volume_do_not_block(self):
+        """Kite returns volume 0 for indices; the Wolfe scan must not need it (23 Nov 2026: it blocked)."""
+        import inspect
+        src = inspect.getsource(wolfe.run_scan)
+        self.assertIn("data_quality(nifty_bars, signal_date, need_volume=False)", src)
