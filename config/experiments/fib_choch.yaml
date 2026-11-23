@@ -1,0 +1,360 @@
+# Experiment: fib_pullback plus the change-of-character flip (asked 23 Nov 2026):
+# when a break of structure pulls back into its zone and then closes beyond its
+# origin, trade the other way (stop beyond the bounce, target 2R). Tested separately
+# from fib_pullback so the flip's own effect is visible. Backtest only.
+# Decision engine configuration — the single source of trading parameters.
+#
+# Principle: Python makes the trading decisions with these deterministic rules.
+# The AI panel analyses, challenges and validates them; the Risk Manager has veto.
+#
+# Layers (later layers refine earlier ones):
+#   1. global       — risk, limits, AI limits, scoring, system controls
+#   2. instruments  — per instrument type (timeframes, direction, holding, liquidity)
+#   3. strategies   — per setup (pullback, breakout, range_reversal)
+#
+# Every journal record stores the rule_version (hash of this file) it was made
+# under, so results can be compared across versions and any change rolled back.
+# Values are initial paper-trading parameters, not proven optimal thresholds.
+# Changes go through: learning recommendation → backtest → out-of-sample paper
+# validation → your approval → edit here → `sudo ita-update`.
+
+version: 1
+
+global:
+  capital: 1000000                 # ₹10,00,000 starting capital (paper)
+  system:
+    paper_trading_only: true       # must stay true
+    live_order_execution: false    # must stay false — the app never places orders
+    averaging_down: false          # never add to a losing position
+    forced_trades: false           # no trade is a valid outcome; never fill a quota
+  risk:
+    risk_per_trade_pct: 1.0
+    max_open_positions: 10         # F&O book (stock/index futures, options, MCX); raised from 3 on 22 Nov 2026
+    max_open_risk_pct: 10.0        # 10 positions x 1% risk (raised from 3% with the position limit)
+    max_margin_blocked_pct: 60
+    max_total_deployed_pct: 85     # F&O margin + cash swing holdings
+  limits:
+    max_new_trades_day: 5
+    max_new_trades_week: 15
+    max_ai_evaluations_day: 5
+    one_open_trade_per_instrument: true   # agreed 22 Nov 2026: no stacking signals on an open position
+  drawdown:
+    daily_loss_pct: 2.0            # stop new trades for the day
+    weekly_loss_pct: 4.0           # half size next week
+    peak_drawdown_pct: 10.0        # pause everything; manual review
+  scoring:
+    min_shortlist_score: 60
+    min_rr: 2.0
+    weights:                       # must add up to 100
+      htf_trend: 25
+      setup_quality: 25
+      volume_oi: 15
+      rr_stop: 15
+      regime_fit: 10
+      relative_strength: 10        # stocks only; others are scored out of 90 and scaled to 100
+  geometry:
+    stop_buffer_atr: 0.25          # beyond the latest confirmed swing
+    min_stop_atr: 1.0
+    max_stop_atr: 3.0
+    max_rr: 4.0                    # target cap
+    no_level_rr: 3.0               # target when there is no level ahead
+    swing_fractal_bars: 2          # 5-bar fractal
+  regime:
+    high_vol_ratio: 1.5            # 20d realised vol vs its 120d average
+    adx_period: 14
+    adx_trend_min: 25
+    adx_sideways_max: 20
+    ema_slope_bars: 10
+    instability_changes: 3         # label changes within the window → UNSTABLE
+    instability_window: 10
+    min_daily_bars: 200
+  permissions:                     # setup × regime → allowed directions (+ options)
+    STRONG_UP:
+      pullback: {directions: [long], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [long], risk_mult: 1.0, preferred: true}
+      fib_pullback: {directions: [long], risk_mult: 1.0, preferred: true}
+      choch_flip: {directions: [short], risk_mult: 0.5, preferred: false}
+    STRONG_DOWN:
+      pullback: {directions: [short], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [short], risk_mult: 1.0, preferred: true}
+      fib_pullback: {directions: [short], risk_mult: 1.0, preferred: true}
+      choch_flip: {directions: [long], risk_mult: 0.5, preferred: false}
+    SIDEWAYS:
+      range_reversal: {directions: [long, short], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [long, short], risk_mult: 1.0, preferred: false, min_volume_ratio: 2.0}
+      choch_flip: {directions: [long, short], risk_mult: 1.0, preferred: false}
+    HIGH_VOL:
+      pullback: {directions: [long, short], risk_mult: 0.5, preferred: false, with_trend_only: true}
+      fib_pullback: {directions: [long, short], risk_mult: 0.5, preferred: false, with_trend_only: true}
+    UNSTABLE: {}
+  exit_management:                 # EXPERIMENT: the real exit (live: fixed)
+    mode: breakeven_trail
+    breakeven_at_r: 1.0
+    breakeven_lock_r: 0.0
+    trail_start_r: 1.0
+    trail_atr: 2.0
+  trailing_shadow:                 # recorded next to the fixed exit; not used for exits
+    start_r: 1.5
+    trail_atr: 2.0
+  ai_panel:                        # agreed 22 Nov 2026: AI reviews every shortlisted trade
+    enabled: true
+    min_confidence: 60             # approve only at 60+ confidence
+    notify_telegram: true          # Telegram alert for every approved trade
+    notify_unreviewed: true        # ...and for shortlisted trades past the daily AI limit (marked "rules only")
+    timeout_seconds: 90
+  divergence:                      # RSI divergence alerts on daily bars, information only (asked 22 Nov 2026)
+    enabled: true
+    rsi_period: 14
+    swing_bars: 2                  # 5-bar fractal swings
+    min_bars_apart: 5              # the two swing points are 5-60 daily bars apart
+    max_bars_apart: 60
+    bullish_rsi_max: 40            # bullish: price lower low, RSI higher low, first RSI low <= 40
+    bearish_rsi_min: 60            # bearish: price higher high, RSI lower high, first RSI high >= 60
+    min_rsi_gap: 2.0
+    trend_ema: 50                  # needs a trend to reverse: bullish below the 50 EMA, bearish above
+    require_trend: true
+    uptrend_sma: 200               # "pullback in an uptrend" = close above the 200-day SMA (studied, see bullish_context)
+    bullish_context: any           # any | pullback_in_uptrend: change only after the history study's test half agrees
+    bearish_alert: open_longs      # agreed 22 Nov 2026: bearish = exit warning, only for symbols with an open long (all | open_longs | off)
+    study_split_date: "2025-06-01" # history study reports train (before) and test (from) separately
+    stop_atr: 0.25                 # outcome tracking: risk = beyond the second swing + 0.25 ATR
+    track_bars: 20
+    min_turnover_cr: 50
+    include_stocks: true
+    include_indices: true
+    include_mcx: true
+    notify_telegram: true
+    max_alerts_per_message: 25
+  chart_patterns:                  # trendline / channel / triangle alerts on daily bars, information only (asked 22 Nov 2026)
+    enabled: true
+    patterns: [trendline_bounce, trendline_break, triangle_breakout]
+    swing_bars: 2
+    max_swings: 6                  # the last 6 confirmed swings are tried as line anchors
+    min_touches: 3                 # a line needs 3 swings on it (within 0.3 ATR) before the signal bar
+    touch_atr: 0.3
+    break_atr: 0.25                # a close 0.25 ATR through the line breaks it
+    min_span: 20                   # first to last anchor 20-250 daily bars
+    max_span: 250
+    flat_tol_pct: 1.5              # triangles: flat side = swing highs/lows within 1.5%
+    triangle_lookback: 60
+    volume_mult: 1.5               # breakouts need 1.5x the 50-day average volume
+    volume_lookback: 50
+    stop_atr: 0.25
+    max_stop_atr: 3.0
+    target_r: 2.0
+    min_channel_rr: 1.5            # channel bounces aim at the other channel line when it is >= 1.5R away
+    near_sma: 200                  # recorded per signal: within 3% of the 200-day SMA
+    near_sma_pct: 3.0
+    cooldown_bars: 10
+    track_bars: 30
+    min_turnover_cr: 50
+    include_stocks: true
+    include_indices: true
+    include_mcx: true
+    notify_telegram: true
+    max_alerts_per_message: 25
+  option_data:                     # end-of-day NSE/BSE option files for the spread strategy (data only, asked 22 Nov 2026)
+    enabled: true
+    symbols: {NSE: [NIFTY, BANKNIFTY], BSE: [SENSEX]}
+    risk_free_rate: 0.065          # annual, used for Black-76 implied volatility and Greeks
+    update_after: "19:00"          # daily download on trading days from this time (IST)...
+    update_until: "23:30"          # ...retrying every retry_minutes until this time
+    retry_minutes: 30
+    recent_days: 7                 # each daily update also fills gaps in the last 7 trading days
+    max_history_days: 800
+    request_pause_seconds: 1.0
+  selection:                       # strict: technical checks reject; scored: two-stage (see config/experiments/two_stage.yaml)
+    mode: strict
+    htf_against_penalty: 20
+    confirmation_against_penalty: 10
+    required_regime_penalty: 15
+
+instruments:
+  stock_futures:
+    enabled: true
+    orb_enabled: true              # opening range breakout on the most liquid stocks (shares the F&O book limits)
+    orb_universe_size: 25          # top F&O stocks by 20-day turnover
+    primary_tf: 60minute
+    confirmation_tfs: [2h, 4h]     # must not be against the trade; the highest is scored
+    context_tfs: [day]             # passed to the AI panel
+    context_must_not_oppose: [day]
+    directions: [long, short]
+    shortlist_per_scan: 2          # agreed 22 Nov 2026 (was 5): keeps AI reviews within the daily limit
+    entry_valid_bars: 2
+    hold_trading_days: 3
+    no_entry_first_minutes: 15
+    no_entry_last_minutes: 30
+    max_spread_pct: 0.1
+    min_primary_bars: 60
+  index_futures:
+    enabled: true
+    primary_tf: 60minute
+    confirmation_tfs: [2h, 4h]
+    context_tfs: [day]
+    context_must_not_oppose: [day]
+    directions: [long, short]
+    shortlist_per_scan: 5
+    entry_valid_bars: 2
+    hold_trading_days: 3
+    no_entry_first_minutes: 15
+    no_entry_last_minutes: 30
+    max_spread_pct: 0.1
+    min_primary_bars: 60
+  mcx:
+    enabled: true
+    primary_tf: 60minute
+    confirmation_tfs: [2h, 4h]
+    context_tfs: [day]
+    context_must_not_oppose: [day]
+    directions: [long, short]
+    shortlist_per_scan: 5
+    entry_valid_bars: 2
+    hold_trading_days: 3
+    no_entry_first_minutes: 15
+    no_entry_last_minutes: 30
+    max_spread_pct: 0.1
+    min_primary_bars: 60
+    value_per_point: {GOLDM: 10, SILVERM: 5, CRUDEOILM: 10, NATGASMINI: 250}
+  index_options:                   # NIFTY / BANKNIFTY — built in a later step
+    enabled: false
+    primary_tf: 10minute
+    confirmation_tfs: [30m, 1h]
+    context_tfs: [4h, day]
+    context_must_not_oppose: []
+    directions: [long_options]
+    shortlist_per_scan: 2
+    entry_valid_bars: 2
+    hold_trading_days: 1
+    no_entry_first_minutes: 15
+    no_entry_last_minutes: 30
+    max_spread_pct: 2.0            # % of premium
+    min_primary_bars: 60
+  stock_options:
+    enabled: false                 # excluded from the initial version
+  cash_swing:
+    enabled: true
+    primary_tf: day
+    confirmation_tfs: [4h]         # must not be against the trade
+    context_tfs: [week, day]
+    htf_score_tf: week             # higher timeframe scored for pullback/breakout
+    context_must_not_oppose: []
+    directions: [long]
+    shortlist_per_scan: 2          # recommendations per day
+    hold_trading_days: 7
+    entry_window: ["09:30", "11:00"]
+    scan_after: "15:45"
+    min_turnover_cr: 50
+    max_stop_pct: 8.0
+    max_position_value: 250000
+    max_invested: 400000           # own book
+    max_open_positions: 2
+    max_new_trades_day: 2
+    max_open_risk_pct: 2.0
+    min_primary_bars: 250
+
+  cup_handle:                      # William O'Neil cup and handle — cash, long only, own book
+    enabled: true
+    primary_tf: day
+    directions: [long]
+    shortlist_per_scan: 2
+    hold_trading_days: 40          # time stop ~8 weeks
+    min_primary_bars: 300
+    entry_window: ["09:15", "15:15"]   # buy limit at pivot + 5% (buy zone), next session
+    stop_pct: 8.0                  # O'Neil: cut losses at 7–8%
+    target_pct: 20.0               # O'Neil: take profits around 20–25%
+    event_block_days: 5            # results/RBI/Budget checked for the first days of the hold only
+    min_turnover_cr: 50
+    prior_uptrend_pct: 30
+    prior_lookback_days: 130
+    cup_min_weeks: 7
+    cup_max_weeks: 65
+    cup_min_depth_pct: 12
+    cup_max_depth_pct: 33
+    rounded_bottom_min_fraction: 0.30  # share of cup bars closing in its lowest quarter; a straight V spends 25% there
+    rim_tolerance_pct: 10          # right rim within 10% below (5% above) the left rim
+    handle_min_days: 5
+    handle_max_days: 25
+    handle_max_depth_pct: 12
+    breakout_volume_ratio: 1.5     # vs the 50-day average
+    volume_avg_days: 50
+    max_extended_pct: 5            # no entry more than 5% above the pivot
+    rs_lookback_days: 126          # must outperform NIFTY over ~6 months
+    max_position_value: 200000     # proposed: own book, to be confirmed
+    max_open_positions: 3          # proposed: own book, to be confirmed
+
+strategies:
+  pullback:
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    rsi_band_long: [40, 50]
+    rsi_band_short: [50, 60]
+    volume_multiplier: 1.0         # soft check
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 20                   # bars searched for the stop swing and trend structure
+    touch_tolerance_atr: 0.25
+  breakout:
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 1.5         # soft check; vs the average of the previous completed bars
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 20                   # breakout level = highest high / lowest low of these bars
+    strong_close_atr: 0.25
+  range_reversal:
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 1.2         # soft check
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 20                   # bars that define the range
+    min_reactions: 2
+    level_tolerance_atr: 0.5
+    edge_fraction: 0.25            # entries only in the outer 25% of the range
+    min_range_atr: 2.0
+    requires_regime: SIDEWAYS      # hard: candidates only when the classifier says sideways
+  orb:                             # opening range breakout — intraday, stock futures (agreed 21 Nov 2026)
+    ema_fast: 20                   # (unused by ORB; required fields)
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 1.5         # breakout bar vs the same 10-minute slot on previous days (scored)
+    atr_period: 14                 # daily ATR
+    min_rr: 2.0                    # target = 2R
+    lookback: 20                   # days of same-slot volume
+    range_minutes: 30              # opening range 09:15–09:45
+    bar_minutes: 10
+    wide_range_atr: 0.6            # range wider than this × daily ATR → stop at the range midpoint (proposed)
+    min_range_atr: 0.15            # skip a range narrower than this × daily ATR (proposed)
+    max_range_atr: 1.2             # skip a range wider than this × daily ATR (proposed)
+    max_gap_pct: 3.0               # skip after an opening gap bigger than this (proposed)
+    entry_valid_bars: 2            # limit at the breakout close, valid for 2 bars
+    exit_time: "15:15"             # exit with the bar ending at/after 15:15 the same day
+    score_weights: {volume: 30, nifty_alignment: 25, relative_strength: 15, range_quality: 15, close_strength: 15}
+  fib_pullback:                    # EXPERIMENT: break of structure, then a 60-70% retracement (asked 23 Nov 2026)
+    ema_fast: 20                   # (trend EMAs used only for the higher-timeframe/score checks)
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 0.0         # no volume requirement
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 40                   # bars searched for the impulse extreme
+    min_impulse_atr: 2.0           # impulse leg at least this many ATR
+    zone: [0.6, 0.7]               # entry zone as a fraction of the impulse retraced
+    stop: retrace                  # retrace = beyond the pullback extreme; origin = beyond the impulse origin
+    target: fixed_r
+    target_r: 2.5                  # 2-3R with the breakeven/trail exit (not 15R)
+  choch_flip:                      # EXPERIMENT: change of character — a structure that pulled back into its zone and then failed
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 0.0
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 40
+    min_impulse_atr: 2.0
+    zone: [0.6, 0.7]               # the failed structure must have reached its zone first
+    target: fixed_r
+    target_r: 2.0

@@ -10,6 +10,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { statusColors, splitStatusColor } from "@/lib/status-colors";
 import { errorMessage } from "@/lib/utils";
+import { setCachedRecommendations } from "@/lib/recommendations-cache";
 import type { WatchlistItem } from "@/lib/types";
 
 // One signal behind a pick (backend/recommender.py _analyze_stock, plus the
@@ -85,6 +86,7 @@ export function TodayPicks({ universe = "nifty100" }: { universe?: string }) {
         .then(([result, watchlist]) => {
           setData(result);
           setLastRun(new Date());
+          setCachedRecommendations(universe, 2, result);
 
           const wlTickers: string[] = (watchlist || []).map((w) => w.ticker);
           setWatchlistTickers(wlTickers);
@@ -226,10 +228,10 @@ export function TodayPicks({ universe = "nifty100" }: { universe?: string }) {
                           triggered_signals: pick.signals,
                         });
                         toast.success(`${pick.ticker} tracked at Rs.${pick.price}`, {
-                          description: "Paper trade opened. Check P&L at 1/3/5/10 days on the Simulation page.",
+                          description: "Paper trade opened. Check P&L at 1/3/5/10 days on the Top Picks Tracker page.",
                           duration: 6000,
                           action: {
-                            label: "View Simulation",
+                            label: "View Tracker",
                             onClick: () => { window.location.href = "/simulation"; },
                           },
                         });

@@ -52,6 +52,31 @@ def label_series(bars: Sequence[dict]) -> list[str | None]:
     return labels
 
 
+def explain_current(bars: Sequence[dict]) -> dict:
+    """``current_regime`` plus the numbers behind it (dashboard badge)."""
+    out = current_regime(bars)
+    cfg = _cfg()
+    if len(bars) < cfg.min_daily_bars:
+        return out
+    st = get_config().strategy("pullback")
+    closes = [b["close"] for b in bars]
+    e20, e50 = ema(closes, st.ema_fast), ema(closes, st.ema_slow)
+    a = adx(bars, cfg.adx_period)
+    rv = realized_vol(closes, 20)
+    k = cfg.ema_slope_bars
+    window = [v for v in rv[-120:] if v is not None]
+    base = sum(window) / len(window) if window else None
+    r = lambda v, n=2: round(v, n) if v is not None else None  # noqa: E731
+    out.update({
+        "date": bars[-1]["ts"][:10], "close": r(closes[-1]), "ema_fast": r(e20[-1]), "ema_slow": r(e50[-1]),
+        "ema_fast_period": st.ema_fast, "ema_slow_period": st.ema_slow,
+        "ema_slow_rising": bool(e50[-1] is not None and e50[-1 - k] is not None and e50[-1] > e50[-1 - k]),
+        "adx": r(a[-1], 1), "adx_trend_min": cfg.adx_trend_min, "adx_sideways_max": cfg.adx_sideways_max,
+        "vol_ratio": r(rv[-1] / base) if rv[-1] and base else None, "high_vol_ratio": cfg.high_vol_ratio,
+    })
+    return out
+
+
 def regime_at(labels: Sequence[str | None], i: int) -> str:
     """Regime on bar ``i`` from precomputed ``label_series`` labels, with the same
     instability check as ``current_regime`` (backtests: one label pass per stock)."""

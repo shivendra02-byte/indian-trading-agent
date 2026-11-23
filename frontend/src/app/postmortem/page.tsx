@@ -20,6 +20,8 @@ type Stats = {
   avg_mfe_r?: number;
   avg_mae_r?: number;
   pnl_rupees?: number;
+  sharpe_annual?: number | null;
+  sortino_annual?: number | null;
 };
 type WeekRow = { week_start: string; week_end: string; created_at: string; ai_status: string | null; headline: Stats | null };
 type Expectation = {
@@ -109,7 +111,7 @@ function StatsRows({ rows }: { rows: [string, Stats | null | undefined][] }) {
       <table className="w-full text-xs">
         <thead className="text-muted-foreground">
           <tr>
-            {["Group", "Trades", "Win", "Avg R", "PF", "₹"].map((h) => (
+            {["Group", "Trades", "Win", "Avg R", "PF", "₹", "Sharpe", "Sortino"].map((h) => (
               <th key={h} className={`px-2 py-1 font-medium ${h === "Group" ? "text-left" : "text-right"}`}>{h}</th>
             ))}
           </tr>
@@ -119,7 +121,7 @@ function StatsRows({ rows }: { rows: [string, Stats | null | undefined][] }) {
             <tr key={label} className="border-t">
               <td className="px-2 py-1">{label}</td>
               {!s || s.n === 0 ? (
-                <td colSpan={5} className="px-2 py-1 text-right text-muted-foreground">no closed trades</td>
+                <td colSpan={7} className="px-2 py-1 text-right text-muted-foreground">no closed trades</td>
               ) : (
                 <>
                   <td className="px-2 py-1 text-right">
@@ -130,6 +132,8 @@ function StatsRows({ rows }: { rows: [string, Stats | null | undefined][] }) {
                   <td className={`px-2 py-1 text-right ${(s.avg_r ?? 0) < 0 ? "text-red-600" : "text-emerald-600"}`}>{s.avg_r}R</td>
                   <td className="px-2 py-1 text-right">{s.profit_factor ?? "—"}</td>
                   <td className="px-2 py-1 text-right">{s.pnl_rupees?.toLocaleString("en-IN") ?? "—"}</td>
+                  <td className="px-2 py-1 text-right">{s.sharpe_annual ?? "—"}</td>
+                  <td className="px-2 py-1 text-right">{s.sortino_annual ?? "—"}</td>
                 </>
               )}
             </tr>

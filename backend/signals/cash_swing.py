@@ -92,8 +92,12 @@ def expected_last_daily_bar(now: datetime) -> date:
     return previous_trading_day(today)
 
 
-def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250) -> str | None:
-    """None if OK, else the reason. Checks freshness, gaps in the last 20 days, volume and depth."""
+def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250,
+                 need_volume: bool = True) -> str | None:
+    """None if OK, else the reason. Checks freshness, gaps in the last 20 days, volume and depth.
+
+    ``need_volume=False`` for index spot (NIFTY, BANKNIFTY ...): Kite returns volume 0 for
+    indices, so a volume check there would block every scan."""
     if len(bars) < min_bars:
         return f"only {len(bars)} daily bars (need {min_bars})"
     last = date.fromisoformat(bars[-1]["ts"][:10])
@@ -108,7 +112,7 @@ def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250) -> 
     missing = [x for x in days if x not in have]
     if missing:
         return f"missing daily bars ({len(missing)} of the last 20 trading days)"
-    if not bars[-1].get("volume"):
+    if need_volume and not bars[-1].get("volume"):
         return "no volume on the last bar"
     return None
 
@@ -132,7 +136,7 @@ def _save(run_id: int, signal_date: str, rows: list[dict], segment: str = SEGMEN
                  json.dumps({k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend",
                                                      "rs_vs_nifty_pct", "risk_mult", "turnover_cr", "pattern",
                                                      "penalties", "tradingsymbol", "lots", "oi_change_pct",
-                                                     "or_high", "or_low", "stop_type", "range_atr")}))
+                                                     "or_high", "or_low", "stop_type", "range_atr", "token")}))
                 for r in rows
             ],
         )
@@ -197,12 +201,16 @@ def run_scan(now: datetime | None = None, force: bool = False,
     signal_date = expected_last_daily_bar(now)
     run_id = _start_run(signal_date.isoformat(), now)
     window = events.trading_days_after(signal_date, cfg["hold_days"])
-    first, last = window[0], window[-1]
+    first, last = window[0], window[-1]          # events/results are checked over this window
+    inst = cfg["inst"]
+    # No time stop (agreed 23 Nov 2026): exit at target / stop / trailing stop; safety exit after
+    # max_hold_trading_days (shares have no expiry).
+    exit_by = last if inst.time_stop else events.trading_days_after(signal_date, inst.max_hold_trading_days)[-1]
 
     # Market-level checks — fail closed for the whole scan.
     nifty = spot_instrument("NIFTY")
     nifty_bars = get_candles(nifty["instrument_token"], "day", limit=DAILY_BARS) if nifty else []
-    problem = data_quality(nifty_bars, signal_date) if nifty else "NIFTY instrument missing"
+    problem = data_quality(nifty_bars, signal_date, need_volume=False) if nifty else "NIFTY instrument missing"
     if problem:
         return _finish_run(run_id, "blocked", {"reason": f"NIFTY data: {problem}"})
     market = events.market_events_between(first, last, kinds=("RBI", "BUDGET"))
@@ -271,13 +279,13 @@ def run_scan(now: datetime | None = None, force: bool = False,
             r["stages"] = [*r["stages"], stage("ai_panel", "pending" if selected else "not_sent"),
                            stage("final_approval", "pending" if selected else "not_applicable")]
     _save(run_id, signal_date.isoformat(), rows)
-    journal_add([_journal_row(r, signal_date, first, last, cfg["entry_window"][1])
+    journal_add([_journal_row(r, signal_date, first, exit_by, cfg["entry_window"][1])
                  for r in rows if r.get("trackable")])
     from backend.journal.panel import review_after_scan
     panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
         "ai_panel": panel,
-        "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
+        "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": exit_by.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],
         "skipped_open_trade": [r["symbol"] for r in ranked if r.get("selection_skip")],

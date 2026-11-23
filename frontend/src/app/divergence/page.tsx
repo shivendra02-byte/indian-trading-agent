@@ -33,7 +33,21 @@ type Signal = {
   ret_10: number | null;
   ret_20: number | null;
   alert_status: string | null;
+  created_at: string;
 };
+
+// Telegram outcome per signal (backend/signals/divergence.py run_scan sets alert_status).
+function telegramLabel(status: string | null): { text: string; title: string; tone: string } {
+  if (!status) return { text: "—", title: "Not alerted", tone: "text-muted-foreground" };
+  if (status === "sent") return { text: "sent", title: "Sent to Telegram", tone: "text-emerald-600" };
+  if (status.startsWith("not sent: bearish_alert"))
+    return {
+      text: "not sent",
+      title: "Bearish divergences go to Telegram only as an exit warning for a symbol you hold long (bearish_alert: open_longs)",
+      tone: "text-muted-foreground",
+    };
+  return { text: status.startsWith("failed") ? "failed" : "not sent", title: status, tone: "text-red-600" };
+}
 type Recent = { signals: Signal[]; live_record: Record<string, Summary> };
 type Study = {
   created_at?: string;
@@ -185,7 +199,8 @@ export default function DivergencePage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   A variant is only worth switching to if it is better in both halves. &quot;Above {sma} SMA&quot; is the
-                  pullback-in-an-uptrend version (config <code>bullish_context: pullback_in_uptrend</code>).
+                  pullback-in-an-uptrend version. Live bullish alerts use <code>bullish_context: below_uptrend_sma</code> (only below
+                  the {sma} SMA) since 23 Nov 2026, after it held in both halves.
                 </p>
                 <SummaryTable
                   rows={pick(["train", "test"].flatMap((p) => [`bullish | ${p}`, `bullish | above ${sma} SMA | ${p}`,
@@ -216,7 +231,11 @@ export default function DivergencePage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Alerts</CardTitle>
+          <CardTitle className="text-base">Signals found</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Every divergence is tracked here. Only bullish ones, and bearish ones on a symbol you hold long (as an exit
+            warning), go to Telegram: see the Telegram column.
+          </p>
         </CardHeader>
         <CardContent>
           {!recent || recent.signals.length === 0 ? (
@@ -226,7 +245,7 @@ export default function DivergencePage() {
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr>
-                    {["Date", "Symbol", "Type", "Price swings", "RSI", "Close", "Invalid", "Trend", "Status", "Result", "10-day"].map((h) => (
+                    {["Date", "Found", "Symbol", "Type", "Telegram", "Price swings", "RSI", "Close", "Invalid", "Trend", "Status", "Result", "10-day"].map((h) => (
                       <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>
                     ))}
                   </tr>
@@ -235,10 +254,14 @@ export default function DivergencePage() {
                   {recent.signals.map((s) => (
                     <tr key={s.id} className="border-t">
                       <td className="px-2 py-1">{s.signal_date}</td>
+                      <td className="px-2 py-1 text-muted-foreground">{s.created_at.slice(5, 16)}</td>
                       <td className="px-2 py-1 font-medium">
                         {s.contract ?? s.symbol} <span className="text-muted-foreground">{s.segment}</span>
                       </td>
                       <td className={`px-2 py-1 ${s.kind === "bullish" ? "text-emerald-600" : "text-red-600"}`}>{s.kind}</td>
+                      <td className={`px-2 py-1 ${telegramLabel(s.alert_status).tone}`} title={telegramLabel(s.alert_status).title}>
+                        {telegramLabel(s.alert_status).text}
+                      </td>
                       <td className="px-2 py-1">
                         {num(s.pivot1_price)} ({s.pivot1_date.slice(5)}) → {num(s.pivot2_price)} ({s.pivot2_date.slice(5)})
                       </td>

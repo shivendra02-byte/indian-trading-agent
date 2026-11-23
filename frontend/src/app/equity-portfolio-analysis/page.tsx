@@ -17,6 +17,7 @@ import {
   saveKiteCredentials,
 } from "@/lib/api";
 import { PositionsPanel } from "@/components/portfolio/PositionsPanel";
+import { KiteOpenPositions } from "@/components/portfolio/KiteOpenPositions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +44,7 @@ import { HelpSection } from "@/components/HelpSection";
 const equityHelp = [
   {
     question: "How do I get holdings into the review?",
-    answer: "Connect Kite and use Sync from Kite, or add a position manually. Sync is explicit and read-only; manual rows are preserved when Kite is synchronized.",
+    answer: "Connect Kite and use Sync holdings from Kite, or add a holding manually. Open F&O / intraday / MCX positions are shown separately under Open positions (Fetch positions from Kite). Sync is explicit and read-only; manual rows are preserved when Kite is synchronized.",
   },
   {
     question: "What does Run Review do?",
@@ -547,6 +548,8 @@ function EquityPortfolioAnalysisContent() {
         kiteConnected={!!status?.connected_today}
         onPositionCountChange={setPositionCount}
       />
+
+      <KiteOpenPositions kiteConnected={!!status?.connected_today} />
 
       <Card>
         <CardHeader>

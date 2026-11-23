@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Iterable
 
 from backend.journal.store import list_records
+from backend.metrics import risk_metrics
 
 MIN_SAMPLE = 30
 TRENDING = ("STRONG_UP", "STRONG_DOWN")
@@ -33,6 +34,7 @@ def stats(rows: Iterable[dict]) -> dict:
         "avg_mfe_r": round(sum(r.get("mfe_r") or 0 for r in rows) / n, 2),
         "avg_mae_r": round(sum(r.get("mae_r") or 0 for r in rows) / n, 2),
         "pnl_rupees": round(sum(r.get("pnl_rupees") or 0 for r in rows), 0),
+        **risk_metrics((r.get("exit_ts"), r["pnl_r"]) for r in rows),
     }
 
 

@@ -185,19 +185,21 @@ class ExitWarningAndUptrendTests(IsolatedStateTestCase, unittest.TestCase):
         text = divergence.build_alert(sent[0], "nse", history="")
         self.assertIn("Exit warning", text)
 
-    def test_pullback_in_uptrend_context(self):
+    def test_bullish_context_filters(self):
         from backend.signals import divergence
         prefix = [40 + i * 0.4 for i in range(250)]               # long uptrend 40 -> 140
         shape = [c + 40 for c in bullish_closes()[80:]]           # then the pullback with a divergence
-        bars = bars_from(prefix + [140 + (i % 2) * 0.3 for i in range(20)] + shape)
-        found = divergence.find_divergences(bars)
-        self.assertTrue(found)
-        self.assertTrue(found[-1]["uptrend"])
-        below = bars_from(bullish_closes())                       # too short for a 200 SMA: not an uptrend
-        cfg = divergence.settings().model_copy(update={"bullish_context": "pullback_in_uptrend"})
-        self.assertEqual(divergence.find_divergences(below, cfg), [])
-        self.assertTrue(divergence.find_divergences(below, cfg, apply_context=False))
-        self.assertTrue(divergence.find_divergences(bars, cfg))
+        uptrend_bars = bars_from(prefix + [140 + (i % 2) * 0.3 for i in range(20)] + shape)
+        below_bars = bars_from(bullish_closes())                  # too short for a 200 SMA: not above it
+        every = divergence.find_divergences(uptrend_bars, apply_context=False)
+        self.assertTrue(every and every[-1]["uptrend"])
+        cfg = divergence.settings()
+        self.assertEqual(cfg.bullish_context, "below_uptrend_sma")          # live default since 23 Nov 2026
+        self.assertFalse([d for d in divergence.find_divergences(uptrend_bars) if d["s"] == every[-1]["s"]])
+        self.assertTrue(divergence.find_divergences(below_bars))
+        pull = cfg.model_copy(update={"bullish_context": "pullback_in_uptrend"})
+        self.assertEqual(divergence.find_divergences(below_bars, pull), [])
+        self.assertTrue(divergence.find_divergences(uptrend_bars, pull))
 
     def test_study_reports_uptrend_and_train_test(self):
         from backend.signals import divergence

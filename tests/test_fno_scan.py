@@ -67,7 +67,8 @@ class HourlyScanTests(IsolatedStateTestCase, unittest.TestCase):
                 (501, "NSE", "NSE", "STOCK1", "STOCK1", "EQ", None, 0, 1, 0.05, "2026-11-23"),
                 (601, "NFO", "NFO-FUT", "STOCK126DECFUT", "STOCK1", "FUT", "2026-12-29", 0, 250, 0.05, "2026-11-23")])
         save_candles(256265, "day", [{**b, "date": b["ts"]} for b in
-                                     make_bars(uptrend(300, start=20000, step=0.006), end=date(2026, 11, 20))])
+                                     make_bars(uptrend(300, start=20000, step=0.006), end=date(2026, 11, 20),
+                                              volume=0)])  # Kite: index spot has no volume
         save_candles(501, "day", [{**b, "date": b["ts"]} for b in
                                   make_bars(uptrend(300, start=50, step=0.004), end=date(2026, 11, 20))])
         save_candles(601, "60minute", breakout_hourly())
@@ -88,7 +89,11 @@ class HourlyScanTests(IsolatedStateTestCase, unittest.TestCase):
         rec = brk[0]
         self.assertEqual(rec["signal_ts"], "2026-11-23T11:15:00")
         self.assertEqual(rec["fill_until"], "2026-11-23T14:15:00")
-        self.assertEqual(rec["time_stop_date"], "2026-11-26")   # 23, 25, 26 (24th is a holiday)
+        # No 3-day time stop for futures (agreed 23 Nov 2026): the latest exit is the session
+        # before the contract's expiry; the trade otherwise ends at target / stop / trailing stop.
+        expiry = date.fromisoformat(rec["extra"]["expiry"])
+        self.assertLess(rec["time_stop_date"], expiry.isoformat())
+        self.assertEqual(rec["time_stop_date"], "2026-12-28")   # contract expires 29 Dec
         self.assertGreaterEqual(rec["extra"]["lots"], 1)
         self.assertTrue(rec["soft_checks"]["oi_buildup"])
 

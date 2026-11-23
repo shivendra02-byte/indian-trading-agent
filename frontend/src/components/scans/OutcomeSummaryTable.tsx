@@ -9,6 +9,10 @@ export type OutcomeSummary = {
   avg_ret_5?: number | null;
   avg_ret_10?: number | null;
   avg_ret_20?: number | null;
+  sharpe_trade?: number | null;
+  sharpe_annual?: number | null;
+  sortino_annual?: number | null;
+  calmar?: number | null;
 };
 
 export function num(v: number | null | undefined, digits = 2, suffix = ""): string {
@@ -22,7 +26,7 @@ export function tone(v: number | null | undefined): string {
 
 /** Record of tracked alerts or ideas: one row per group, * = fewer than 30. */
 export function OutcomeSummaryTable({ rows, showMoves = true }: { rows: [string, OutcomeSummary][]; showMoves?: boolean }) {
-  const heads = ["Group", "Count", "Ended +", "Reached 1R", "Reached 2R", "Avg", "PF", ...(showMoves ? ["10-day move", "20-day move"] : [])];
+  const heads = ["Group", "Count", "Ended +", "Reached 1R", "Reached 2R", "Avg", "PF", "Sharpe", "Sortino", "Calmar", ...(showMoves ? ["10-day move", "20-day move"] : [])];
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -46,6 +50,9 @@ export function OutcomeSummaryTable({ rows, showMoves = true }: { rows: [string,
               <td className="px-2 py-1 text-right">{num(s.hit_2r, 1, "%")}</td>
               <td className={`px-2 py-1 text-right ${tone(s.avg_r)}`}>{num(s.avg_r, 3, "R")}</td>
               <td className="px-2 py-1 text-right">{s.pf ?? "—"}</td>
+              <td className="px-2 py-1 text-right" title={`per trade ${s.sharpe_trade ?? "—"}`}>{s.sharpe_annual ?? "—"}</td>
+              <td className="px-2 py-1 text-right">{s.sortino_annual ?? "—"}</td>
+              <td className="px-2 py-1 text-right">{s.calmar ?? "—"}</td>
               {showMoves && <td className={`px-2 py-1 text-right ${tone(s.avg_ret_10)}`}>{num(s.avg_ret_10, 2, "%")}</td>}
               {showMoves && <td className={`px-2 py-1 text-right ${tone(s.avg_ret_20)}`}>{num(s.avg_ret_20, 2, "%")}</td>}
             </tr>

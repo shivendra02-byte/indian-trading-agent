@@ -191,6 +191,19 @@ class CashSwingScanTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual(blocked["status"], "blocked")
         self.assertIn("RBI policy", blocked["reason"])
 
+    def test_index_spot_without_volume_does_not_block(self):
+        # Kite returns volume 0 for NIFTY 50 spot: that must not block the scan.
+        from backend.signals.cash_swing import data_quality, run_scan
+        nifty = make_bars(uptrend(300, start=20000, step=0.006), volume=0)
+        self.assertEqual(data_quality(nifty, date(2026, 11, 20)), "no volume on the last bar")
+        self.assertIsNone(data_quality(nifty, date(2026, 11, 20), need_volume=False))
+        self.save(256265, nifty)
+        self.save(501, make_bars(uptrend(300, start=1000, step=0.005), volume=2_000_000))
+        self.save(502, make_bars(uptrend(300, start=10, step=0.005), volume=1000))
+        fetch = {"STOCK1": date(2027, 1, 25), "THIN": date(2027, 1, 25)}.get
+        result = run_scan(now=datetime(2026, 11, 20, 15, 50), results_fetch=fetch)
+        self.assertEqual(result["status"], "ok", result)
+
     def test_stale_nifty_blocks_scan(self):
         from backend.signals.cash_swing import run_scan
         self.save(256265, make_bars(uptrend(300, start=20000), end=date(2026, 11, 18)))

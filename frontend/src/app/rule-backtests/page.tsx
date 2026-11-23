@@ -28,6 +28,10 @@ type Stats = {
   max_drawdown_r?: number;
   trailing_avg_r?: number | null;
   fixed_avg_r?: number | null;
+  sharpe_trade?: number | null;
+  sharpe_annual?: number | null;
+  sortino_annual?: number | null;
+  calmar?: number | null;
 };
 type Funnel = {
   counts: Record<string, number>;
@@ -154,7 +158,7 @@ function isoDaysAgo(days: number): string {
 
 function StatCells({ s }: { s: Stats | undefined | null }) {
   if (!s || s.n === 0) {
-    return <td className="px-2 py-1 text-muted-foreground" colSpan={6}>no closed trades</td>;
+    return <td className="px-2 py-1 text-muted-foreground" colSpan={9}>no closed trades</td>;
   }
   const tone = (s.avg_r ?? 0) > 0 ? "text-emerald-600" : (s.avg_r ?? 0) < 0 ? "text-red-600" : "";
   return (
@@ -168,6 +172,9 @@ function StatCells({ s }: { s: Stats | undefined | null }) {
       <td className="px-2 py-1 text-right">{s.profit_factor ?? "—"}</td>
       <td className="px-2 py-1 text-right">{s.total_r}R</td>
       <td className="px-2 py-1 text-right">{s.max_drawdown_r}R</td>
+      <td className="px-2 py-1 text-right" title={`per trade ${s.sharpe_trade ?? "—"}`}>{s.sharpe_annual ?? "—"}</td>
+      <td className="px-2 py-1 text-right">{s.sortino_annual ?? "—"}</td>
+      <td className="px-2 py-1 text-right">{s.calmar ?? "—"}</td>
     </>
   );
 }
@@ -185,6 +192,9 @@ function StatsTable({ rows }: { rows: [string, Stats | undefined][] }) {
             <th className="px-2 py-1 text-right font-medium">PF</th>
             <th className="px-2 py-1 text-right font-medium">Total</th>
             <th className="px-2 py-1 text-right font-medium">Max DD</th>
+            <th className="px-2 py-1 text-right font-medium" title="Annualised from the daily R curve; hover a value for the per-trade figure">Sharpe</th>
+            <th className="px-2 py-1 text-right font-medium" title="Annualised; only losing days count as risk">Sortino</th>
+            <th className="px-2 py-1 text-right font-medium" title="R per year divided by the max drawdown in R">Calmar</th>
           </tr>
         </thead>
         <tbody>

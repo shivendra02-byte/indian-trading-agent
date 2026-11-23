@@ -158,7 +158,7 @@ class ScanFeedsJournalTests(IsolatedStateTestCase, unittest.TestCase):
             self.assertEqual(names[-2:], ["ai_panel", "final_approval"])
             self.assertTrue(all("at" in st and "decision" in st for st in rec["stages"]))
             self.assertEqual(rec["entry_date"], "2026-11-23")
-            self.assertEqual(rec["time_stop_date"], "2026-12-02")
+            self.assertEqual(rec["time_stop_date"], "2027-02-16")   # no time stop: safety exit after 60 trading days
 
 
 if __name__ == "__main__":

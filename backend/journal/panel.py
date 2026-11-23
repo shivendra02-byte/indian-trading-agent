@@ -38,9 +38,9 @@ log = logging.getLogger(__name__)
 
 APPROVED = "approved"
 REJECTED = "rejected_panel"
-CASH_SEGMENTS = ("cash_swing", "cup_handle")
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")
 SEGMENT_LABEL = {"stock_futures": "Stock futures", "index_futures": "Index futures", "mcx": "MCX",
-                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle"}
+                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe Wave"}
 
 
 # --- limits ------------------------------------------------------------------------------
@@ -52,9 +52,13 @@ def _count(where: str, params: tuple) -> int:
 
 
 def evaluations_today(today: date) -> int:
-    """AI calls made today (approve, reject or error; not limit skips)."""
-    return _count("panel_decision IN ('approve', 'reject', 'error') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
-                  (today.isoformat(),))
+    """AI calls answered today (approve or reject), trade journal plus option spreads: one
+    shared daily budget. Failed calls (panel_decision 'error') don't count: they never got an
+    answer, and a broken model or key must not use up the day's budget (23 Nov 2026: 5 failures did)."""
+    from backend.options.spreads import evaluations_today as spread_evaluations
+    journal = _count("panel_decision IN ('approve', 'reject') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
+                     (today.isoformat(),))
+    return journal + spread_evaluations(today)
 
 
 FNO_BOOK = ("stock_futures", "index_futures", "mcx", "index_options", "stock_options")
@@ -158,14 +162,28 @@ def build_prompt(rec: dict) -> str:
     )
 
 
+def _saved_api_key(provider: str) -> str | None:
+    import os
+    from backend.db import get_setting
+    from backend.settings_manager import PROVIDER_ENV_KEYS
+    env_var = PROVIDER_ENV_KEYS.get(provider)
+    if not env_var:
+        return None
+    return get_setting(f"api_key_{provider}") or os.environ.get(env_var) or None
+
+
 def _default_llm_call(prompt: str) -> tuple[str, str]:
     from backend.settings_manager import get_llm_config
     from tradingagents.llm_clients import create_llm_client
 
     cfg = get_llm_config()
     model = cfg["deep_think_llm"]
+    extra = {}
+    key = _saved_api_key(cfg["llm_provider"])
+    if key:                       # the key saved in Settings, not only what the process env had at startup
+        extra["api_key"] = key
     llm = create_llm_client(provider=cfg["llm_provider"], model=model,
-                            timeout=get_config().global_.ai_panel.timeout_seconds).get_llm()
+                            timeout=get_config().global_.ai_panel.timeout_seconds, **extra).get_llm()
     reply = llm.invoke(prompt)
     content = reply.content if hasattr(reply, "content") else str(reply)
     if isinstance(content, list):
@@ -205,6 +223,26 @@ def _size_text(rec: dict) -> str:
     return "size per your risk"
 
 
+def _exit_line(rec: dict) -> str:
+    from backend.decision.config import get_config
+    cfg = get_config()
+    inst = cfg.instruments.get(rec["segment"])
+    last = html.escape(str(rec.get("time_stop_date")))
+    if inst is None or inst.time_stop:
+        return f"Time stop: close of {last}"
+    rule = cfg.exit_rule(rec["segment"])
+    if rule["mode"] == "breakeven_trail":
+        how = (f"stop to breakeven at {rule['breakeven_at_r']:g}R, then trail {rule['trail_atr']:g} ATR "
+               f"behind the best close")
+    elif rule["mode"] == "breakeven":
+        how = f"stop to breakeven at {rule['breakeven_at_r']:g}R"
+    else:
+        how = "fixed stop"
+    safety = "before expiry" if rec["segment"] in ("stock_futures", "index_futures", "mcx") \
+        else f"safety exit after {inst.max_hold_trading_days} trading days"
+    return f"Exit: target, stop or trailing stop ({how}); no time stop · latest exit {last} ({safety})"
+
+
 def build_alert(rec: dict, panel: dict, kind: str) -> str:
     """``kind``: approved / unreviewed / ai_error."""
     e = html.escape
@@ -220,8 +258,10 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
         f"Entry (limit): {rec['entry']} · valid until {e(until)}",
         f"Stop: {rec['stop']} · Target: {rec['target']} · R:R {rec.get('rr')}",
         f"Size: {e(_size_text(rec))} · Score {round(rec.get('score') or 0)} · Regime {e(str(rec.get('regime') or '-'))}",
-        f"Time stop: close of {e(str(rec.get('time_stop_date')))}",
+        _exit_line(rec),
     ]
+    if kind == "ai_error" and panel.get("error"):
+        lines.append(e(panel["error"]))
     if kind == "approved":
         lines.append(f"AI confidence: {panel.get('confidence')}")
         lines += [f"• {e(r)}" for r in panel.get("reasons", [])]
@@ -231,16 +271,68 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
     return "\n".join(lines)
 
 
-def _notify(rec: dict, panel: dict, kind: str) -> str:
+def _send(text: str) -> str:
     from backend.notifications.telegram import TelegramConfigError, TelegramSendError, send_html_message
     try:
-        send_html_message(build_alert(rec, panel, kind))
+        send_html_message(text)
         return "sent"
     except TelegramConfigError as exc:
         return f"not sent: {exc}"
     except TelegramSendError as exc:
         log.warning("telegram alert failed: %s", exc)
         return f"failed: {exc}"
+
+
+def _notify(rec: dict, panel: dict, kind: str, store: bool = False) -> str:
+    status = _send(build_alert(rec, panel, kind))
+    if store:   # remembered so the stop-move messages follow only trades you were told about
+        update_record(rec["id"], {"panel": {**panel, "alert": status, "alert_kind": kind}})
+    return status
+
+
+def was_alerted(rec: dict) -> bool:
+    return (rec.get("panel") or {}).get("alert") == "sent" or rec.get("decision") == APPROVED
+
+
+def build_stop_move(rec: dict, old_level: float, stop_now: dict) -> str:
+    e = html.escape
+    extra = rec.get("extra") or {}
+    name = extra.get("tradingsymbol") or rec["symbol"]
+    arrow = "↑ long" if rec["direction"] == "long" else "↓ short"
+    state = {"breakeven": "breakeven", "trailing": "trailing stop"}.get(stop_now["state"], stop_now["state"])
+    lines = [
+        "<b>Move your stop-loss</b>",
+        f"<b>{e(name)}</b> {arrow} · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])}",
+        f"SL {old_level:g} → <b>{stop_now['level']:g}</b> ({e(state)}) · locks {stop_now['locked_r']:+.2f}R",
+    ]
+    if stop_now.get("last_close") is not None:
+        lines.append(f"Last close {stop_now['last_close']:g} · best so far {stop_now.get('mfe_r', 0):+.2f}R · "
+                     f"target {rec['target']:g}")
+    lines.append("Paper trading only: update your Kite SL order if you took this trade.")
+    return "\n".join(lines)
+
+
+def stop_move_alert(rec: dict, stop_now: dict, risk: float) -> dict:
+    """Send a "move your stop" message when the managed stop of an alerted trade has moved far
+    enough since the last message (or left the initial stop). Returns ``stop_now`` with the
+    alert bookkeeping (``alerted_level``, ``alert``) added."""
+    cfg = get_config().global_.stop_alerts
+    prev = (rec.get("extra") or {}).get("stop_now") or {}
+    out = {**stop_now, "alerted_level": prev.get("alerted_level"), "alert": prev.get("alert")}
+    if not cfg.enabled or not was_alerted(rec) or stop_now["state"] == "initial" or risk <= 0:
+        return out
+    last = prev.get("alerted_level") if prev.get("alerted_level") is not None else rec["stop"]
+    s = 1 if rec["direction"] == "long" else -1
+    first_move = prev.get("alerted_level") is None
+    if not first_move and s * (stop_now["level"] - last) < cfg.min_move_r * risk:
+        return out
+    if s * (stop_now["level"] - last) <= 0:
+        return out
+    status = _send(build_stop_move(rec, last, stop_now))
+    out.update(alert=status, alert_at=datetime.now().isoformat(timespec="seconds"))
+    if status == "sent":
+        out["alerted_level"] = stop_now["level"]
+    return out
 
 
 # --- the panel ---------------------------------------------------------------------------
@@ -250,14 +342,69 @@ def _set_stages(rec: dict, panel_stage: dict, final_stage: dict) -> list[dict]:
     return [*stages, panel_stage, final_stage]
 
 
-def pending_records(now: datetime) -> list[dict]:
-    """Shortlisted, not yet reviewed, entry window still open; best score first."""
-    rows = list_records("decision = 'shortlisted' AND panel_decision IS NULL AND track_status = 'pending' "
+def pending_records(now: datetime, retry_errors: bool = False) -> list[dict]:
+    """Shortlisted, not yet reviewed (or, with ``retry_errors``, whose AI call failed),
+    entry window still open; best score first."""
+    reviewed = "(panel_decision IS NULL OR panel_decision = 'error')" if retry_errors else "panel_decision IS NULL"
+    rows = list_records(f"decision = 'shortlisted' AND {reviewed} AND track_status = 'pending' "
                         "AND fill_until > ?", (now.isoformat(timespec="seconds"),), limit=200)
     return sorted(rows, key=lambda r: (r["signal_ts"], -(r.get("score") or 0)))
 
 
-def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
+def _notice_key(reason: str) -> str:
+    """'daily trade limit reached (5/5)' -> 'daily trade limit reached': one notice per reason a day."""
+    return re.sub(r"\s+", " ", re.sub(r"[\d.,₹%/()+-]+", " ", reason)).strip()
+
+
+def limit_notice(day: date, reason: str, rec: dict) -> str | None:
+    """Telegram note the first time today a shortlisted trade is blocked for ``reason`` by a
+    portfolio limit (asked 23 Nov 2026: such trades used to be dropped silently). None when
+    already sent today for this reason."""
+    key = _notice_key(reason)
+    with get_db() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS panel_notices (day TEXT NOT NULL, key TEXT NOT NULL, "
+                     "status TEXT, at TEXT, PRIMARY KEY (day, key))")
+        row = conn.execute("SELECT status FROM panel_notices WHERE day = ? AND key = ?",
+                           (day.isoformat(), key)).fetchone()
+    if row and row[0] == "sent":
+        return None
+    e = html.escape
+    name = (rec.get("extra") or {}).get("tradingsymbol") or rec["symbol"]
+    text = "\n".join([
+        "<b>Trade not reviewed: portfolio limit</b>",
+        f"{e(reason[:1].upper() + reason[1:])}.",
+        f"{e(name)} ({e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])} "
+        f"{'↑' if rec['direction'] == 'long' else '↓'}) was shortlisted but blocked.",
+        "Other trades blocked for the same reason today are not messaged; see the Trade Journal (not_sent).",
+    ])
+    status = _send(text)
+    with get_db() as conn:
+        conn.execute("INSERT OR REPLACE INTO panel_notices (day, key, status, at) VALUES (?, ?, ?, ?)",
+                     (day.isoformat(), key, status, datetime.now().isoformat(timespec="seconds")))
+    return status
+
+
+def usage_today(today: date) -> dict:
+    """What is left today: AI reviews and trade limits (Trade Journal header)."""
+    g = get_config().global_
+    week_start = today - timedelta(days=today.weekday())
+    marks = ", ".join("?" * len(FNO_BOOK))
+    return {
+        "date": today.isoformat(),
+        "ai_reviews": evaluations_today(today), "ai_limit": g.limits.max_ai_evaluations_day,
+        "approved_today": _count("decision = ? AND signal_date = ?", (APPROVED, today.isoformat())),
+        "max_new_trades_day": g.limits.max_new_trades_day,
+        "approved_week": _count("decision = ? AND signal_date >= ?", (APPROVED, week_start.isoformat())),
+        "max_new_trades_week": g.limits.max_new_trades_week,
+        "fno_open": _count(f"decision = ? AND track_status IN ('pending', 'open') AND segment IN ({marks})",
+                           (APPROVED, *FNO_BOOK)),
+        "fno_max_open": g.risk.max_open_positions,
+        "limit_block": limit_block(today, "stock_futures"),
+    }
+
+
+def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None,
+                   retry_errors: bool = False) -> dict:
     """Review every pending shortlisted trade. Safe to call after every scan."""
     from backend.signals.setups import stage
     from backend.system_state import is_paused
@@ -269,7 +416,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
         return {"status": "skipped", "reason": "paused"}
     now = now or datetime.now()
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
-    for rec in pending_records(now):
+    for rec in pending_records(now, retry_errors):
         evaluated_at = now.isoformat(timespec="seconds")
         blocked = limit_block(now.date(), rec["segment"])
         if blocked:
@@ -277,6 +424,10 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             update_record(rec["id"], {"panel": panel, "panel_decision": "not_sent", "stages": _set_stages(
                 rec, stage("ai_panel", "not_sent", blocked), stage("final_approval", "fail", blocked))})
             out["not_sent"].append({"symbol": rec["symbol"], "reason": blocked})
+            if cfg.ai_panel.notify_telegram and cfg.ai_panel.notify_limit_blocks:
+                status = limit_notice(now.date(), blocked, rec)
+                if status:
+                    out["alerts"].append({"symbol": rec["symbol"], "kind": "limit_block", "status": status})
             continue
         if evaluations_today(now.date()) >= cfg.limits.max_ai_evaluations_day:
             reason = f"daily AI limit reached ({cfg.limits.max_ai_evaluations_day})"
@@ -286,20 +437,22 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             out["not_sent"].append({"symbol": rec["symbol"], "reason": reason})
             if cfg.ai_panel.notify_telegram and cfg.ai_panel.notify_unreviewed:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "unreviewed",
-                                      "status": _notify(rec, panel, "unreviewed")})
+                                      "status": _notify(rec, panel, "unreviewed", store=True)})
             continue
         try:
             text, model = (llm_call or _default_llm_call)(build_prompt(rec))
             verdict = parse_reply(text)
         except Exception as exc:
-            reason = f"AI review failed: {type(exc).__name__}"
+            log.warning("AI panel call failed for %s", rec["symbol"], exc_info=True)
+            detail = " ".join(str(exc).split())[:160]
+            reason = f"AI review failed: {type(exc).__name__}" + (f": {detail}" if detail else "")
             panel = {"evaluated_at": evaluated_at, "error": reason}
             update_record(rec["id"], {"panel": panel, "panel_decision": "error", "stages": _set_stages(
                 rec, stage("ai_panel", "fail", reason), stage("final_approval", "pending", "rules only"))})
             out["errors"].append({"symbol": rec["symbol"], "reason": reason})
             if cfg.ai_panel.notify_telegram:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "ai_error",
-                                      "status": _notify(rec, panel, "ai_error")})
+                                      "status": _notify(rec, panel, "ai_error", store=True)})
             continue
         approve = verdict["decision"] == "approve" and verdict["confidence"] >= cfg.ai_panel.min_confidence
         panel = {**verdict, "evaluated_at": evaluated_at, "model": model,
@@ -313,7 +466,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             out["approved"].append(rec["symbol"])
             if cfg.ai_panel.notify_telegram:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "approved",
-                                      "status": _notify(rec, panel, "approved")})
+                                      "status": _notify(rec, panel, "approved", store=True)})
         else:
             reason = why if verdict["decision"] == "reject" else \
                 f"confidence {verdict['confidence']} < {cfg.ai_panel.min_confidence}"

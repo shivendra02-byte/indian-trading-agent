@@ -498,10 +498,16 @@ export default function SimulationPage() {
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <FlaskConical className="h-6 w-6" />
-          Simulation
+          Top Picks Tracker
         </h1>
         <p className="text-sm text-muted-foreground">
-          Paper trading + historical backtest. Validate the recommendation engine without risking real money.
+          Tests the Top Picks recommender (the AI-free scoring on the Today tab and Top Picks page): picks you tap
+          Track on, plus a replay of the recommender over past days. These results feed Signal Performance, the
+          calibration pages and Learning Insights.
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          The trading engine&apos;s paper trades (futures, MCX, cash swing, cup &amp; handle scans, AI panel) are in the{" "}
+          <Link href="/journal" className="text-primary hover:underline">Trade Journal</Link>, not here.
         </p>
       </div>
 

@@ -117,6 +117,17 @@ def classify_regime_for_date(target_date: Optional[date] = None) -> dict:
         regime = "SIDEWAYS"
         if dist_from_sma50 < SIDEWAYS_BAND_PCT:
             reasoning = f"Price within {dist_from_sma50:.1f}% of 50 SMA — choppy oscillation"
+        elif nifty_close > sma_50 and nifty_close > sma_200:
+            # e.g. a sharp rally after a long fall: price above both, 50 SMA still under 200 SMA
+            reasoning = (
+                f"Recovery not yet confirmed: Nifty {nifty_close:.0f} is above the 50 SMA {sma_50:.0f} and "
+                f"200 SMA {sma_200:.0f}, but the 50 SMA is still below the 200 SMA"
+            )
+        elif nifty_close < sma_50 and nifty_close < sma_200:
+            reasoning = (
+                f"Pullback in an uptrend not yet resolved: Nifty {nifty_close:.0f} is below the 50 SMA "
+                f"{sma_50:.0f} and 200 SMA {sma_200:.0f}, but the 50 SMA is still above the 200 SMA"
+            )
         else:
             reasoning = (
                 f"Mixed trend: Nifty {nifty_close:.0f}, 50 SMA {sma_50:.0f}, 200 SMA {sma_200:.0f} "

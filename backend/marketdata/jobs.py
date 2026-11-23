@@ -71,6 +71,14 @@ def build_sync_plan(today: date | None = None) -> list[dict]:
         fut = active_future(name, segment="MCX-FUT", today=today)
         add(f"{name} FUT", fut, "60minute", MCX, 90, oi=True)
         add(f"{name} FUT", fut, "day", MCX, 400, continuous=True)
+    try:  # your own trades: keep their contract's bars current (any expiry, any interval they trail on)
+        from backend.my_trades import open_contracts
+        have = {(p["token"], p["interval"]) for p in plan}
+        for t in open_contracts():
+            if (t["instrument_token"], t["interval"]) not in have:
+                add(f"{t['contract']} (my trade)", t, t["interval"], MCX if t["exchange"] == "MCX" else NSE, 30)
+    except Exception:  # never let it break the main sync plan
+        pass
     return plan
 
 

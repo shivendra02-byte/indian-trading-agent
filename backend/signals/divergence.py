@@ -24,6 +24,7 @@ from typing import Sequence
 
 from backend.db import get_db
 from backend.decision.config import get_config
+from backend.metrics import risk_metrics
 from backend.signals.indicators import atr, ema, rsi, sma, swing_points
 
 log = logging.getLogger(__name__)
@@ -48,11 +49,12 @@ def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None 
     confirms the second swing). ``trend_ok`` says whether the prior-trend
     condition held; with ``require_trend`` the others are dropped. ``uptrend``
     says whether the close was above the ``uptrend_sma`` SMA; with
-    ``apply_context`` and ``bullish_context: pullback_in_uptrend`` bullish
-    divergences outside an uptrend are dropped (the study keeps them all)."""
+    ``apply_context``, ``bullish_context`` keeps only bullish divergences above
+    (``pullback_in_uptrend``) or below (``below_uptrend_sma``) that SMA; the
+    study keeps them all."""
     cfg = cfg or settings()
     require_trend = cfg.require_trend if require_trend is None else require_trend
-    only_uptrend = apply_context and cfg.bullish_context == "pullback_in_uptrend"
+    context = cfg.bullish_context if apply_context else "any"
     k = cfg.swing_bars
     if len(bars) < max(cfg.rsi_period, cfg.trend_ema) + 2 * k + 5:
         return []
@@ -92,7 +94,8 @@ def find_divergences(bars: Sequence[dict], cfg=None, require_trend: bool | None 
                 if require_trend and not trend_ok:
                     break
                 uptrend = long_trend[s] is not None and closes[s] > long_trend[s]
-                if only_uptrend and kind == "bullish" and not uptrend:
+                if kind == "bullish" and ((context == "pullback_in_uptrend" and not uptrend)
+                                          or (context == "below_uptrend_sma" and uptrend)):
                     break
                 found.append({
                     "kind": kind, "i1": i1, "i2": i2, "s": s,
@@ -395,6 +398,7 @@ def _summary(rows: list[dict]) -> dict:
         "avg_r": round(sum(r["result_r"] for r in closed) / n, 3),
         "pf": round(sum(wins) / sum(losses), 2) if sum(losses) else None,
         "small_sample": n < 30,
+        **risk_metrics((r.get("exit_date"), r["result_r"]) for r in closed),
     }
     for h in HORIZONS:
         vals = [r[f"ret_{h}"] for r in rows if r.get(f"ret_{h}") is not None]

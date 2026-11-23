@@ -136,6 +136,10 @@ class MarketDataScheduler:
         self.waiting_for: str | None = None
         self.scans_done: dict[str, date | datetime] = {}
         self.options_attempt: datetime | None = None
+        self.started_at: datetime | None = None
+        self.scan_ok_at: dict[str, datetime] = {}      # exchange -> last hourly scan that completed
+        self.stall_alerted: dict[str, datetime] = {}   # exchange -> stall already warned about
+        self.stall: dict[str, str] = {}                # exchange -> current stall message
 
     # --- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -180,6 +184,8 @@ class MarketDataScheduler:
 
         now = now or datetime.now(IST).replace(tzinfo=None)
         self.last_tick = now
+        if self.started_at is None:
+            self.started_at = now
         if self.scans_done.get("cash_swing") != now.date():
             from backend.signals.cash_swing import latest_run
             run = latest_run(now.date().isoformat())
@@ -210,6 +216,10 @@ class MarketDataScheduler:
                 exchange = NSE if key == "nse_1h" else MCX
                 result = run_hourly_scan("nse" if key == "nse_1h" else "mcx", now=now)
                 self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
+                if key == "nse_1h":
+                    self._momentum("hourly", now)
+                if result.get("status") not in ("error", "busy") and result.get("reason") != "paused":
+                    self.scan_ok_at[exchange] = now
             elif job == "scan:orb":
                 from backend.signals.orb import run_orb_scan
                 result = run_orb_scan(now=now)
@@ -227,7 +237,14 @@ class MarketDataScheduler:
                     except Exception as exc:  # never let it stop the scheduler
                         cup = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
                     self.last_results["scan:cup_handle"] = {"at": now.isoformat(timespec="seconds"), **_brief(cup)}
+                    try:
+                        from backend.signals.wolfe import run_scan as run_wolfe_scan
+                        wolfe = run_wolfe_scan(now=now)
+                    except Exception as exc:  # never let it stop the scheduler
+                        wolfe = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                    self.last_results["scan:wolfe"] = {"at": now.isoformat(timespec="seconds"), **_brief(wolfe)}
                     self._divergence("nse", now)
+                    self._momentum("daily", now)
             else:
                 _, exchange, interval = job.split(":")
                 bar = latest_closed_bar(exchange, interval, now)
@@ -236,11 +253,41 @@ class MarketDataScheduler:
                     self.done[job] = bar
                     if exchange == MCX and interval == "day":
                         self._divergence("mcx", now)   # MCX daily bars are complete after the evening close
+                    if interval in ("10minute", "60minute"):
+                        self._my_trades(exchange, interval, now)
             self.last_results[job] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
             ran.append(job)
             if result.get("status") == "busy":
                 break  # try the rest on the next tick
+        self._watchdog(now, state)
         return ran
+
+    def _my_trades(self, exchange: str, interval: str, now: datetime) -> None:
+        """Trailing stops of your own futures trades after each synced bar."""
+        try:
+            from backend.my_trades import update_trades
+            result = update_trades(exchange=exchange, interval=interval)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"my_trades:{exchange}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+    def _watchdog(self, now: datetime, state: dict) -> None:
+        """Telegram warning when the hourly scans go quiet during market hours (one per stall)."""
+        from backend.watchdog import check_and_warn, stall_reason
+        for exchange in (NSE, MCX):
+            try:
+                found = stall_reason(now, exchange, self.scan_ok_at.get(exchange), self.started_at,
+                                     state["paused"], state["kite_connected"])
+                if found is None:
+                    self.stall.pop(exchange, None)
+                    continue
+                self.stall[exchange] = found[0]
+                status = check_and_warn(now, exchange, self.scan_ok_at.get(exchange), self.started_at,
+                                        state["paused"], state["kite_connected"], self.stall_alerted)
+                if status:
+                    self.last_results[f"watchdog:{exchange}"] = {"at": now.isoformat(timespec="seconds"),
+                                                                 "status": status, "reason": found[0][:200]}
+            except Exception:   # never let it stop the scheduler
+                log.exception("scan watchdog failed")
 
     def _divergence(self, group: str, now: datetime) -> None:
         """Information-only daily alerts on the day's completed bars: RSI divergence and
@@ -258,6 +305,16 @@ class MarketDataScheduler:
             except Exception as exc:  # never let it stop the scheduler
                 result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
             self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+
+    def _momentum(self, kind: str, now: datetime) -> None:
+        """Momentum book: entries/stops after each NSE hourly bar; ranking and
+        end-of-day exits after the close."""
+        from backend.momentum.book import daily_run, hourly_run
+        try:
+            result = (hourly_run if kind == "hourly" else daily_run)(now=now)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"momentum:{kind}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _weekly_backup(self, now: datetime) -> list[str]:
         """Weekly backups of the app's data (runs while paused and without Kite)."""
@@ -289,10 +346,18 @@ class MarketDataScheduler:
             result = daily_update(now=now)
         except Exception as exc:   # never let it stop the scheduler
             result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        ran = ["options:eod"]
         if result.get("complete"):
             self.scans_done["options_eod"] = now.date()
+            try:
+                from backend.options.spreads import run_eod
+                spread = run_eod(now.date())
+            except Exception as exc:   # never let it stop the scheduler
+                spread = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+            self.last_results["options:spreads"] = {"at": now.isoformat(timespec="seconds"), **_brief(spread)}
+            ran.append("options:spreads")
         self.last_results["options:eod"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
-        return ["options:eod"]
+        return ran
 
     def _postmortem_week(self, now: datetime) -> date | None:
         from backend.journal.postmortem import exists, postmortem_due
@@ -321,13 +386,15 @@ class MarketDataScheduler:
             "last_tick": self.last_tick.isoformat(timespec="seconds") if self.last_tick else None,
             "waiting_for": self.waiting_for,
             "last_bar_synced": {k: v.isoformat(timespec="minutes") for k, v in self.done.items() if v},
+            "last_scan_ok": {k: v.isoformat(timespec="minutes") for k, v in self.scan_ok_at.items()},
+            "stalled": dict(self.stall),
             "last_results": self.last_results,
         }
 
 
 def _brief(result: dict) -> dict:
     keep = ("status", "reason", "series_synced", "candles_saved", "valid_setups", "above_60", "shortlisted",
-            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert", "checked", "by_pattern")
+            "closed", "ai_status", "counts", "complete", "telegram", "new", "alert", "checked", "by_pattern", "moved", "hit")
     out = {k: result[k] for k in keep if k in result}
     if result.get("errors"):
         out["errors"] = result["errors"][:5]

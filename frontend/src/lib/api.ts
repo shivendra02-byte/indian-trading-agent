@@ -136,6 +136,7 @@ export const runAnalysis = (data: {
   output_language?: string;
 }) => fetchAPI(`/api/analysis/run`, { method: "POST", body: JSON.stringify(data) });
 export const getAnalysisResult = (taskId: string) => fetchAPI(`/api/analysis/${taskId}`);
+export const getRecentAnalysisTasks = () => fetchAPI(`/api/analysis/tasks/recent`);
 export const getAnalysisHistory = (limit = 50) => fetchAPI(`/api/analysis/history/list?limit=${limit}`);
 // Omit exit_price to mark the trade as open (no exit yet).
 export const updatePnL = (taskId: string, data: { entry_price: number; exit_price?: number; reflect?: boolean }) =>
@@ -275,6 +276,58 @@ export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "PO
 export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
 export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
 
+// Your own futures trades (system-calculated trailing stop)
+export type MyTradeInput = {
+  symbol: string;
+  exchange: "NFO" | "MCX";
+  contract?: string;
+  direction: "long" | "short";
+  lots: number;
+  entry_price: number;
+  entry_time?: string;
+  initial_stop: number;
+  target?: number | null;
+  interval?: "10minute" | "60minute";
+  trail_atr?: number;
+  breakeven_at_r?: number;
+  note?: string;
+};
+export const listMyTrades = () => fetchAPI(`/api/my-trades`);
+export const getMyTradeContracts = (symbol: string, exchange: "NFO" | "MCX") =>
+  fetchAPI(`/api/my-trades/contracts?symbol=${encodeURIComponent(symbol)}&exchange=${exchange}`);
+export const addMyTrade = (data: MyTradeInput) => fetchAPI(`/api/my-trades`, { method: "POST", body: JSON.stringify(data) });
+export const refreshMyTrades = () => fetchAPI(`/api/my-trades/refresh`, { method: "POST" });
+export const closeMyTrade = (id: number, exit_price: number) =>
+  fetchAPI(`/api/my-trades/${id}/close`, { method: "POST", body: JSON.stringify({ exit_price }) });
+export const deleteMyTrade = (id: number) => fetchAPI(`/api/my-trades/${id}`, { method: "DELETE" });
+// Wolfe Wave scan (cash, long only) + stored candles for pattern charts
+export const getWolfeScan = () => fetchAPI(`/api/scans/wolfe`);
+export const runWolfeScan = () => fetchAPI(`/api/scans/wolfe/run`, { method: "POST" });
+export const getStoredCandles = (token: number, interval: string, limit: number) =>
+  fetchAPI(`/api/marketdata/candles?token=${token}&interval=${interval}&limit=${limit}`);
+// Momentum book (weekly relative-strength ranking, stock futures, paper)
+export const getMomentum = () => fetchAPI(`/api/momentum/`);
+export const runMomentumRank = () => fetchAPI(`/api/momentum/rank`, { method: "POST" });
+export const runMomentumScan = () => fetchAPI(`/api/momentum/scan`, { method: "POST" });
+export const getMomentumBacktests = () => fetchAPI(`/api/momentum/backtests`);
+export const startMomentumBacktest = (data: {
+  start_date: string;
+  end_date: string;
+  sides: ("long" | "short")[];
+  daily_only: boolean;
+  split_date?: string | null;
+}) => fetchAPI(`/api/momentum/backtests`, { method: "POST", body: JSON.stringify(data) });
+export const deleteMomentumBacktest = (id: number) => fetchAPI(`/api/momentum/backtests/${id}`, { method: "DELETE" });
+// Index option credit spreads (EOD chains, AI-reviewed, paper)
+export const getOptionSpreads = () => fetchAPI(`/api/options/spreads`);
+export const runOptionSpreads = () => fetchAPI(`/api/options/spreads/run`, { method: "POST" });
+export const backtestOptionSpreads = (data: {
+  start_date: string;
+  end_date: string;
+  symbols?: string[] | null;
+  split_date?: string | null;
+}) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
@@ -304,6 +357,8 @@ export const sendTelegramTest = (text?: string) =>
 // Positions (local store, synced from Kite on demand)
 export const getPositions = () => fetchAPI(`/api/positions`);
 export const syncPositions = () => fetchAPI(`/api/positions/sync`, { method: "POST" });
+// Live open positions (F&O / intraday / MCX) from Kite positions(); read-only, not stored
+export const getKiteOpenPositions = () => fetchAPI(`/api/positions/kite-open`);
 export const addPosition = (data: {
   tradingsymbol: string;
   exchange?: string;
@@ -382,7 +437,8 @@ export const submitFiiDiiManual = (data: {
 }) => fetchAPI(`/api/fii-dii/manual`, { method: "POST", body: JSON.stringify(data) });
 
 // News Feed
-export const getNewsFeed = (maxPerSource = 10) => fetchAPI(`/api/news/?max_per_source=${maxPerSource}`);
+export const getNewsFeed = (maxPerSource = 10, marketOnly = true) =>
+  fetchAPI(`/api/news/?max_per_source=${maxPerSource}&market_only=${marketOnly}`);
 export const getTickerNews = (ticker: string, maxItems = 15) => fetchAPI(`/api/news/ticker/${ticker}?max_items=${maxItems}`);
 export const getNewsSources = () => fetchAPI(`/api/news/sources`);
 export const saveNewsSources = (data: { rss_feeds?: unknown; yf_queries?: string[] }) =>
@@ -481,8 +537,13 @@ export const applyRegimeWeights = (windowDays = 180, onlyRegimes?: string[]) =>
 export const resetRegimeWeights = () =>
   fetchAPI(`/api/signal-performance/regime-reset`, { method: "POST" });
 
+// Trade Journal header: AI reviews used today + trade limits (backend/journal/panel.py usage_today)
+export const getJournalUsage = () => fetchAPI(`/api/journal/usage`);
+
 // Market Regime (Bull/Bear/Sideways/High-Vol classifier)
 export const getCurrentRegime = () => fetchAPI(`/api/regime/current`);
+// Regime the trading engine uses (Kite NIFTY daily, EMA/ADX), backend/signals/regime.py
+export const getEngineRegime = () => fetchAPI(`/api/regime/engine`);
 export const backfillTradeRegimes = () =>
   fetchAPI(`/api/regime/backfill-trades`, { method: "POST" });
 export const getSignalPerformanceByRegime = (windowDays = 180) =>

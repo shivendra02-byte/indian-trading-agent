@@ -27,7 +27,11 @@ import {
   GitCompareArrows,
   Spline,
   Lightbulb,
+  Crosshair,
   type LucideIcon,
+  Waves,
+  Rocket,
+  Scale,
 } from "lucide-react";
 
 type NavItem = {
@@ -53,10 +57,13 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
+      { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, cash, AI-reviewed" },
       { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
+      { href: "/momentum", label: "Momentum Book", icon: Rocket, hint: "Weekly strongest/weakest F&O stocks, trend pullback entries" },
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
       { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },
       { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
+      { href: "/my-trades", label: "My Futures Trades", icon: Crosshair, hint: "Your trades with a trailing stop" },
       { href: "/recommendations", label: "Top Picks", icon: Sparkles, hint: "AI-free recommendations" },
       { href: "/scanner", label: "Market Scan", icon: Radar, hint: "Gap / Volume / Breakout" },
       { href: "/strategies", label: "Strategies", icon: Target, hint: "S/R, Cyclical patterns" },
@@ -70,6 +77,7 @@ const navGroups: NavGroup[] = [
       { href: "/equity-portfolio-analysis", label: "Equity portfolio analysis", icon: PieChart, hint: "Kite holdings review" },
       { href: "/charts", label: "Charts", icon: CandlestickChart, hint: "Candlestick charts" },
       { href: "/options-data", label: "Option Data", icon: Layers, hint: "NIFTY/BANKNIFTY/SENSEX option history, IV, delta" },
+      { href: "/option-spreads", label: "Option Spreads", icon: Scale, hint: "NIFTY/BANKNIFTY/SENSEX credit spreads, AI-reviewed" },
     ],
   },
   {
@@ -79,7 +87,7 @@ const navGroups: NavGroup[] = [
       { href: "/postmortem", label: "Weekly Post-mortem", icon: ClipboardCheck, hint: "Saturday review of the week's trades" },
       { href: "/rule-backtests", label: "Rule Backtest", icon: FlaskConical, hint: "Compare rule versions on history" },
       { href: "/performance", label: "Performance", icon: Award, hint: "Strategy win rates" },
-      { href: "/simulation", label: "Simulation", icon: FlaskConical, hint: "Paper trade + backtest" },
+      { href: "/simulation", label: "Top Picks Tracker", icon: FlaskConical, hint: "Top Picks you tapped Track on (not the trading engine)" },
       { href: "/insights", label: "Learning Insights", icon: Brain, hint: "What works for YOU" },
       { href: "/signals", label: "Signal Performance", icon: TrendingUp, hint: "Auto-tune recommender weights" },
       { href: "/verdict-calibration", label: "Verdict Calibration", icon: Target, hint: "Is the daily verdict accurate?" },
