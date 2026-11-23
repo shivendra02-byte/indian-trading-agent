@@ -670,7 +670,9 @@ def run_wolfe(start: date, end: date, symbols: list[dict], nifty: list[dict],
             lo = bisect.bisect_left(h_index, entry_day)
             hi = bisect.bisect_left(h_index, window[1].isoformat()) if len(window) > 1 else len(hourly)
             fwd_hourly = hourly[lo:hi]
-            fwd_daily = [{**b, "eod": True} for b in daily[i:] if entry_day < b["ts"][:10] <= window[-1].isoformat()]
+            wolfe_inst = get_config().instrument("wolfe")
+            exit_by = window[-1] if wolfe_inst.time_stop else _next_days(d, wolfe_inst.max_hold_trading_days)[-1]
+            fwd_daily = [{**b, "eod": True} for b in daily[i:] if entry_day < b["ts"][:10] <= exit_by.isoformat()]
             if fwd_hourly and fwd_hourly[0]["ts"][:10] == entry_day:
                 path, data, fill_until = mark_eod(fwd_hourly) + fwd_daily, "hourly", f"{entry_day}T{entry_end}"
             else:
@@ -678,7 +680,7 @@ def run_wolfe(start: date, end: date, symbols: list[dict], nifty: list[dict],
                 if not entry_bar:
                     continue
                 path, data, fill_until = entry_bar + fwd_daily, "daily_only", f"{entry_day}T23:59:59"
-            outcome = _simulate(c, path, fill_until, window[-1], segment="wolfe")
+            outcome = _simulate(c, path, fill_until, exit_by, segment="wolfe")
             rec = _record(c, stock["symbol"], iso, _decision(c, min_score), outcome)
             rec.update(data=data, untested=None, pattern={k2: c["pattern"][k2] for k2 in
                                                           ("time_ratio", "overshoot_atr", "rsi_divergence", "span_bars")})

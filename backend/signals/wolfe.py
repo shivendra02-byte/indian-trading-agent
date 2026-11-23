@@ -247,6 +247,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
     hold = events.trading_days_after(signal_date, cfg["hold_days"])
     first, last = hold[0], hold[-1]
     block_last = hold[min(cfg["event_block_days"], len(hold)) - 1]
+    if not cfg["inst"].time_stop:   # no time stop (23 Nov 2026): target / stop / trailing stop, safety exit later
+        last = events.trading_days_after(signal_date, cfg["inst"].max_hold_trading_days)[-1]
     nifty = spot_instrument("NIFTY")
     nifty_bars = get_candles(nifty["instrument_token"], "day", limit=800) if nifty else []
     problem = data_quality(nifty_bars, signal_date) if nifty else "NIFTY instrument missing"

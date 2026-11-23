@@ -313,7 +313,9 @@ instruments:
     primary_tf: day
     directions: [long]
     shortlist_per_scan: 2
-    hold_trading_days: 20          # time stop
+    hold_trading_days: 20          # window for the event checks; no time exit (see time_stop)
+    time_stop: false               # 23 Nov 2026: exit = target, stop or trailing stop (as cash swing / cup & handle)
+    max_hold_trading_days: 120     # safety exit only, ~6 months
     min_primary_bars: 120
     entry_window: ["09:15", "15:15"]   # buy limit at the signal close, next session
     event_block_days: 5            # results/RBI/Budget checked for the first days of the hold
