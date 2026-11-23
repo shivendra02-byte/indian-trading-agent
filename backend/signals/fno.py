@@ -200,7 +200,7 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     if exchange == NSE:
         nifty = spot_instrument("NIFTY")
         nifty_daily = get_candles(nifty["instrument_token"], "day", limit=300) if nifty else []
-        problem = data_quality(nifty_daily, daily_expected) if nifty else "NIFTY instrument missing"
+        problem = data_quality(nifty_daily, daily_expected, need_volume=False) if nifty else "NIFTY instrument missing"
         if problem:
             return _finish_run(run_id, "blocked", {"reason": f"NIFTY data: {problem}", "tracking": tracked})
         market = events.market_events_between(hold[0], hold[-1], kinds=("RBI", "BUDGET"))
@@ -240,7 +240,9 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             continue
         if exchange == NSE:
             daily = get_candles(inst["spot"]["instrument_token"], "day", limit=300) if inst["spot"] else []
-            problem = data_quality(daily, daily_expected) if inst["spot"] else "no spot instrument"
+            # Index spot has no volume on Kite; stocks' spot volume is still checked.
+            problem = (data_quality(daily, daily_expected, need_volume=seg != "index_futures")
+                       if inst["spot"] else "no spot instrument")
             regime = regime_nse
         else:
             daily = get_candles(contract["instrument_token"], "day", limit=300)
