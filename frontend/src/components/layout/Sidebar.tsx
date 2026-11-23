@@ -8,18 +8,13 @@ import { logout } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Home,
-  Sparkles,
   Radar,
-  Target,
-  Search,
   CandlestickChart,
   Award,
   FlaskConical,
   History,
   Settings,
   TrendingUp,
-  Newspaper,
-  Brain,
   PieChart,
   LogOut,
   ClipboardCheck,
@@ -28,10 +23,10 @@ import {
   Spline,
   Lightbulb,
   Crosshair,
-  type LucideIcon,
   Waves,
   Rocket,
   Scale,
+  type LucideIcon,
 } from "lucide-react";
 
 type NavItem = {
@@ -46,6 +41,10 @@ type NavGroup = {
   items: NavItem[];
 };
 
+// The old upstream tools (Top Picks, Market Scan, Strategies, News, Deep Analysis, Performance,
+// Top Picks Tracker, Learning Insights, Signal Performance, Verdict/Confidence Calibration,
+// Shadow Trades, Memory Admin, AI Backtest, My Trades) are off the sidebar (23 Nov 2026) but their
+// pages still open by URL.
 const navGroups: NavGroup[] = [
   {
     items: [
@@ -53,53 +52,49 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "DISCOVER",
+    title: "CASH (AFTER THE CLOSE)",
     items: [
       { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
-      { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, cash, AI-reviewed" },
-      { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
-      { href: "/momentum", label: "Momentum Book", icon: Rocket, hint: "Weekly strongest/weakest F&O stocks, trend pullback entries" },
-      { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
-      { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },
-      { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
+      { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, AI-reviewed" },
+    ],
+  },
+  {
+    title: "FUTURES",
+    items: [
+      { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures, MCX and ORB setups" },
+      { href: "/momentum", label: "Momentum Book", icon: Rocket, hint: "Weekly strongest/weakest F&O stocks" },
       { href: "/my-trades", label: "My Futures Trades", icon: Crosshair, hint: "Your trades with a trailing stop" },
-      { href: "/recommendations", label: "Top Picks", icon: Sparkles, hint: "AI-free recommendations" },
-      { href: "/scanner", label: "Market Scan", icon: Radar, hint: "Gap / Volume / Breakout" },
-      { href: "/strategies", label: "Strategies", icon: Target, hint: "S/R, Cyclical patterns" },
-      { href: "/news", label: "News Feed", icon: Newspaper, hint: "RSS + customizable" },
     ],
   },
   {
-    title: "ANALYZE",
+    title: "OPTIONS",
     items: [
-      { href: "/analysis", label: "Deep Analysis", icon: Search, hint: "AI-powered (paid)" },
-      { href: "/equity-portfolio-analysis", label: "Equity portfolio analysis", icon: PieChart, hint: "Kite holdings review" },
-      { href: "/charts", label: "Charts", icon: CandlestickChart, hint: "Candlestick charts" },
-      { href: "/options-data", label: "Option Data", icon: Layers, hint: "NIFTY/BANKNIFTY/SENSEX option history, IV, delta" },
-      { href: "/option-spreads", label: "Option Spreads", icon: Scale, hint: "NIFTY/BANKNIFTY/SENSEX credit spreads, AI-reviewed" },
+      { href: "/option-spreads", label: "Option Spreads", icon: Scale, hint: "Index credit spreads, AI-reviewed" },
+      { href: "/options-data", label: "Option Data", icon: Layers, hint: "Option history, IV, delta" },
     ],
   },
   {
-    title: "VALIDATE",
+    title: "ALERTS",
     items: [
-      { href: "/journal", label: "Trade Journal", icon: History, hint: "Every signal, MFE/MAE, learning" },
-      { href: "/postmortem", label: "Weekly Post-mortem", icon: ClipboardCheck, hint: "Saturday review of the week's trades" },
+      { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
+      { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles" },
+      { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
+    ],
+  },
+  {
+    title: "REVIEW",
+    items: [
+      { href: "/journal", label: "Trade Journal", icon: History, hint: "Every signal, AI decision, outcome" },
+      { href: "/postmortem", label: "Weekly Post-mortem", icon: ClipboardCheck, hint: "Saturday review of the week" },
       { href: "/rule-backtests", label: "Rule Backtest", icon: FlaskConical, hint: "Compare rule versions on history" },
-      { href: "/performance", label: "Performance", icon: Award, hint: "Strategy win rates" },
-      { href: "/simulation", label: "Top Picks Tracker", icon: FlaskConical, hint: "Top Picks you tapped Track on (not the trading engine)" },
-      { href: "/insights", label: "Learning Insights", icon: Brain, hint: "What works for YOU" },
-      { href: "/signals", label: "Signal Performance", icon: TrendingUp, hint: "Auto-tune recommender weights" },
-      { href: "/verdict-calibration", label: "Verdict Calibration", icon: Target, hint: "Is the daily verdict accurate?" },
-      { href: "/confidence-calibration", label: "Confidence Calibration", icon: Award, hint: "Brier score: are probabilities honest?" },
-      { href: "/shadow-trades", label: "Shadow Trades", icon: Search, hint: "Counterfactual: trades you skipped" },
-      { href: "/memory-admin", label: "Memory Admin", icon: Brain, hint: "Inspect + prune agent BM25 memories" },
-      { href: "/backtest", label: "AI Backtest", icon: FlaskConical, hint: "AI on past dates (paid)" },
-      { href: "/history", label: "My Trades", icon: History, hint: "Real trades & P&L" },
     ],
   },
   {
+    title: "TOOLS",
     items: [
+      { href: "/equity-portfolio-analysis", label: "Equity Portfolio", icon: PieChart, hint: "Kite holdings review" },
+      { href: "/charts", label: "Charts", icon: CandlestickChart, hint: "Candlestick charts" },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
