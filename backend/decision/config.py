@@ -182,7 +182,8 @@ class DivergenceCfg(_Strict):
     trend_ema: int = Field(default=50, ge=5, le=400)          # reversal needs a prior trend: below (bullish) / above (bearish) this EMA
     require_trend: bool = True
     uptrend_sma: int = Field(default=200, ge=20, le=400)      # "pullback in an uptrend" = close above this SMA
-    bullish_context: Literal["any", "pullback_in_uptrend"] = "any"   # live bullish alerts: all, or only pullbacks in an uptrend
+    # live bullish alerts: all / only above the uptrend SMA / only below it (study 23 Nov 2026: below = +0.12R both halves)
+    bullish_context: Literal["any", "pullback_in_uptrend", "below_uptrend_sma"] = "below_uptrend_sma"
     bearish_alert: Literal["all", "open_longs", "off"] = "open_longs"  # bearish = exit warning only for symbols you hold long
     study_split_date: str = Field(default="2025-06-01", pattern=r"^\d{4}-\d{2}-\d{2}$")   # history study: train before, test from
     stop_atr: float = Field(default=0.25, ge=0, le=3)         # risk unit: beyond the second swing by this many ATR

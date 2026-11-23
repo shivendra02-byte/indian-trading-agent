@@ -98,7 +98,7 @@ global:
     trend_ema: 50                  # needs a trend to reverse: bullish below the 50 EMA, bearish above
     require_trend: true
     uptrend_sma: 200               # "pullback in an uptrend" = close above the 200-day SMA (studied, see bullish_context)
-    bullish_context: any           # any | pullback_in_uptrend: change only after the history study's test half agrees
+    bullish_context: below_uptrend_sma   # agreed 23 Nov 2026: study showed bullish divergence below the 200 SMA +0.12R/PF 1.22 in both halves, above it -0.39R train (any | pullback_in_uptrend | below_uptrend_sma)
     bearish_alert: open_longs      # agreed 22 Nov 2026: bearish = exit warning, only for symbols with an open long (all | open_longs | off)
     study_split_date: "2025-06-01" # history study reports train (before) and test (from) separately
     stop_atr: 0.25                 # outcome tracking: risk = beyond the second swing + 0.25 ATR

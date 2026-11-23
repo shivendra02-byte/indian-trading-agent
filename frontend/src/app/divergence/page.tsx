@@ -185,7 +185,8 @@ export default function DivergencePage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   A variant is only worth switching to if it is better in both halves. &quot;Above {sma} SMA&quot; is the
-                  pullback-in-an-uptrend version (config <code>bullish_context: pullback_in_uptrend</code>).
+                  pullback-in-an-uptrend version. Live bullish alerts use <code>bullish_context: below_uptrend_sma</code> (only below
+                  the {sma} SMA) since 23 Nov 2026, after it held in both halves.
                 </p>
                 <SummaryTable
                   rows={pick(["train", "test"].flatMap((p) => [`bullish | ${p}`, `bullish | above ${sma} SMA | ${p}`,
