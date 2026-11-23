@@ -52,9 +52,12 @@ def _count(where: str, params: tuple) -> int:
 
 
 def evaluations_today(today: date) -> int:
-    """AI calls made today (approve, reject or error; not limit skips)."""
-    return _count("panel_decision IN ('approve', 'reject', 'error') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
-                  (today.isoformat(),))
+    """AI calls made today (approve, reject or error; not limit skips), trade journal
+    plus option spreads: one shared daily budget."""
+    from backend.options.spreads import evaluations_today as spread_evaluations
+    journal = _count("panel_decision IN ('approve', 'reject', 'error') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
+                     (today.isoformat(),))
+    return journal + spread_evaluations(today)
 
 
 FNO_BOOK = ("stock_futures", "index_futures", "mcx", "index_options", "stock_options")

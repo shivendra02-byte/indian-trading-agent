@@ -275,6 +275,16 @@ export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "PO
 export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
 export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
 
+// Index option credit spreads (EOD chains, AI-reviewed, paper)
+export const getOptionSpreads = () => fetchAPI(`/api/options/spreads`);
+export const runOptionSpreads = () => fetchAPI(`/api/options/spreads/run`, { method: "POST" });
+export const backtestOptionSpreads = (data: {
+  start_date: string;
+  end_date: string;
+  symbols?: string[] | null;
+  split_date?: string | null;
+}) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>

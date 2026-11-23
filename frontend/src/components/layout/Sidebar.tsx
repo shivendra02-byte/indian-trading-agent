@@ -28,6 +28,7 @@ import {
   Spline,
   Lightbulb,
   type LucideIcon,
+  Scale,
 } from "lucide-react";
 
 type NavItem = {
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
       { href: "/equity-portfolio-analysis", label: "Equity portfolio analysis", icon: PieChart, hint: "Kite holdings review" },
       { href: "/charts", label: "Charts", icon: CandlestickChart, hint: "Candlestick charts" },
       { href: "/options-data", label: "Option Data", icon: Layers, hint: "NIFTY/BANKNIFTY/SENSEX option history, IV, delta" },
+      { href: "/option-spreads", label: "Option Spreads", icon: Scale, hint: "NIFTY/BANKNIFTY/SENSEX credit spreads, AI-reviewed" },
     ],
   },
   {
