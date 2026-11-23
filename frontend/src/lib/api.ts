@@ -357,6 +357,8 @@ export const sendTelegramTest = (text?: string) =>
 // Positions (local store, synced from Kite on demand)
 export const getPositions = () => fetchAPI(`/api/positions`);
 export const syncPositions = () => fetchAPI(`/api/positions/sync`, { method: "POST" });
+// Live open positions (F&O / intraday / MCX) from Kite positions(); read-only, not stored
+export const getKiteOpenPositions = () => fetchAPI(`/api/positions/kite-open`);
 export const addPosition = (data: {
   tradingsymbol: string;
   exchange?: string;
@@ -435,7 +437,8 @@ export const submitFiiDiiManual = (data: {
 }) => fetchAPI(`/api/fii-dii/manual`, { method: "POST", body: JSON.stringify(data) });
 
 // News Feed
-export const getNewsFeed = (maxPerSource = 10) => fetchAPI(`/api/news/?max_per_source=${maxPerSource}`);
+export const getNewsFeed = (maxPerSource = 10, marketOnly = true) =>
+  fetchAPI(`/api/news/?max_per_source=${maxPerSource}&market_only=${marketOnly}`);
 export const getTickerNews = (ticker: string, maxItems = 15) => fetchAPI(`/api/news/ticker/${ticker}?max_items=${maxItems}`);
 export const getNewsSources = () => fetchAPI(`/api/news/sources`);
 export const saveNewsSources = (data: { rss_feeds?: unknown; yf_queries?: string[] }) =>
@@ -534,8 +537,13 @@ export const applyRegimeWeights = (windowDays = 180, onlyRegimes?: string[]) =>
 export const resetRegimeWeights = () =>
   fetchAPI(`/api/signal-performance/regime-reset`, { method: "POST" });
 
+// Trade Journal header: AI reviews used today + trade limits (backend/journal/panel.py usage_today)
+export const getJournalUsage = () => fetchAPI(`/api/journal/usage`);
+
 // Market Regime (Bull/Bear/Sideways/High-Vol classifier)
 export const getCurrentRegime = () => fetchAPI(`/api/regime/current`);
+// Regime the trading engine uses (Kite NIFTY daily, EMA/ADX), backend/signals/regime.py
+export const getEngineRegime = () => fetchAPI(`/api/regime/engine`);
 export const backfillTradeRegimes = () =>
   fetchAPI(`/api/regime/backfill-trades`, { method: "POST" });
 export const getSignalPerformanceByRegime = (windowDays = 180) =>

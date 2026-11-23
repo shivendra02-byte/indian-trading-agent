@@ -15,11 +15,10 @@ interface Props {
   disabled?: boolean;
 }
 
+// News, Social and Fundamentals analysts removed (agreed 21 Nov 2026): price data only.
+// Must match ALLOWED_ANALYSTS in backend/models.py.
 const availableAnalysts = [
   { value: "market", label: "Market", description: "Technical indicators (RSI, MACD, Bollinger)" },
-  { value: "social", label: "Social", description: "Social media sentiment" },
-  { value: "news", label: "News", description: "Indian + global market news" },
-  { value: "fundamentals", label: "Fundamentals", description: "P&L, balance sheet, cash flow" },
 ];
 
 const depthOptions = [
@@ -114,7 +113,7 @@ export function AnalysisOptions({
               })}
             </div>
             <p className="text-[10px] text-muted-foreground mt-1">
-              Fewer analysts = faster + cheaper. At least 1 is required.
+              Price data only: the News, Social and Fundamentals analysts are not used.
             </p>
           </div>
 

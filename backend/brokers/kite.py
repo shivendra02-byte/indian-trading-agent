@@ -291,6 +291,56 @@ def fetch_equity_holdings() -> list[dict[str, Any]]:
     return normalize_holdings(holdings)
 
 
+def fetch_open_positions() -> list[dict[str, Any]]:
+    """Today's open F&O / intraday / MCX positions (Kite ``positions()["net"]``, quantity != 0).
+
+    Read-only and not stored: holdings stay in the local positions store (asked 23 Nov 2026)."""
+    client = get_authenticated_client()
+    try:
+        data = client.positions()
+    except Exception as exc:
+        if _is_auth_error(exc):
+            clear_kite_access_token()
+            raise KiteAuthExpired("Kite session expired. Please connect Kite again.") from exc
+        raise KiteConfigError("Kite positions could not be fetched") from exc
+    return normalize_positions(data)
+
+
+def normalize_positions(data: Any) -> list[dict[str, Any]]:
+    if not isinstance(data, dict) or not isinstance(data.get("net", []), list):
+        raise KiteConfigError("Kite returned an invalid positions snapshot")
+    rows = []
+    for p in data.get("net") or []:
+        if not isinstance(p, dict) or not isinstance(p.get("tradingsymbol"), str):
+            raise KiteConfigError("Kite returned an invalid positions row")
+        quantity = _num(p.get("quantity"))
+        if quantity == 0:
+            continue  # closed today: only realised P&L left
+        multiplier = _num(p.get("multiplier")) or 1.0
+        average_price = _num(p.get("average_price"))
+        last_price = _num(p.get("last_price"))
+        unrealised = p.get("unrealised")
+        rows.append({
+            "tradingsymbol": p["tradingsymbol"].strip().upper(),
+            "exchange": str(p.get("exchange") or "").upper(),
+            "product": p.get("product"),
+            "side": "long" if quantity > 0 else "short",
+            "quantity": quantity,
+            "overnight_quantity": _num(p.get("overnight_quantity")),
+            "multiplier": multiplier,
+            "average_price": round(average_price, 2),
+            "last_price": round(last_price, 2),
+            "pnl": round(_num(p.get("pnl")), 2),
+            "unrealised": round(_num(unrealised) if unrealised is not None
+                                else (last_price - average_price) * quantity * multiplier, 2),
+            "realised": round(_num(p.get("realised")), 2),
+            "m2m": round(_num(p.get("m2m")), 2),
+            "exposure": round(abs(quantity) * last_price * multiplier, 2),
+        })
+    rows.sort(key=lambda r: (r["exchange"], r["tradingsymbol"]))
+    return rows
+
+
 def _num(value: Any) -> float:
     try:
         return float(value or 0)

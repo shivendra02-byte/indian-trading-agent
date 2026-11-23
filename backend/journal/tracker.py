@@ -11,6 +11,7 @@ then hourly bars for the rest of that day, then daily bars to the time stop.
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import date, datetime, timedelta
 
@@ -19,6 +20,8 @@ from backend.journal.simulate import delivery_charges, futures_charges, simulate
 from backend.journal.store import list_records, update_record
 from backend.marketdata.candles import get_candles
 from tradingagents.utils.market_calendar import is_trading_day, session_windows
+
+log = logging.getLogger(__name__)
 
 def _risk_per_trade() -> float:
     g = get_config().global_
@@ -52,7 +55,7 @@ def cash_swing_bars(token: int, entry_date: str, time_stop_date: str) -> tuple[l
         b["eod"] = False
     hourly[-1]["eod"] = hourly[-1]["ts"][11:16] >= "15:15"
     end = min(date.fromisoformat(time_stop_date), date.today())
-    daily = [b for b in get_candles(token, "day", limit=120)
+    daily = [b for b in get_candles(token, "day", limit=400)   # trades may now run for months (no time stop)
              if entry_date < b["ts"][:10] <= time_stop_date]
     expected = _trading_days(date.fromisoformat(entry_date) + timedelta(days=1), end)
     have = [b["ts"][:10] for b in daily]
@@ -139,6 +142,9 @@ def track_record(rec: dict) -> dict:
         fields["track_status"] = "open"
         if problem:
             fields["extra"] = {**(fields.get("extra") or rec.get("extra") or {}), "data_problem": problem}
+        if status == "open" and result.get("trail_stop") is not None:
+            fields["extra"] = {**(fields.get("extra") or rec.get("extra") or {}),
+                               "stop_now": _stop_now(rec, result)}
         return fields
     s = 1 if rec["direction"] == "long" else -1
     qty, per_point = _size(rec, result["fill_price"], result["risk_per_unit"])
@@ -156,6 +162,25 @@ def track_record(rec: dict) -> dict:
                    "exit_reason": result["exit_reason"], "pnl_r": result["pnl_r"], "qty": qty,
                    "charges": charges, "pnl_rupees": round(gross - charges, 2)})
     return fields
+
+
+def _stop_now(rec: dict, result: dict) -> dict:
+    """Where the managed stop is now (initial / breakeven / trailing), shown on the Trade Journal
+    and sent as a "move your stop" message for trades you were alerted on (asked 23 Nov 2026)."""
+    from backend.journal.panel import stop_move_alert
+    s = 1 if rec["direction"] == "long" else -1
+    risk = result["risk_per_unit"]
+    level = result["trail_stop"]
+    now = {"level": level, "state": result.get("stop_state") or "initial",
+           "locked_r": round(s * (level - result["fill_price"]) / risk, 2) if risk else 0.0,
+           "mfe_r": result["mfe_r"], "last_close": result.get("last_close"),
+           "at": datetime.now().isoformat(timespec="seconds")}
+    try:
+        return stop_move_alert(rec, now, risk)
+    except Exception as exc:   # a message must never stop the tracker
+        log.warning("stop alert failed for %s: %s", rec.get("symbol"), exc)
+        return {**now, **{k: v for k, v in ((rec.get("extra") or {}).get("stop_now") or {}).items()
+                          if k in ("alerted_level", "alert")}}
 
 
 def track_open_records() -> dict:

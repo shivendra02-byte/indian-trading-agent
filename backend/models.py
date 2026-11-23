@@ -1,17 +1,30 @@
 """Pydantic models for the API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
+
+
+# Agreed 21 Nov 2026: the AI agents work on price data only. The News, Social (sentiment)
+# and Fundamentals analysts are not run; the upstream graph still has them.
+ALLOWED_ANALYSTS = ["market"]
 
 
 class AnalysisRequest(BaseModel):
     ticker: str
     trade_date: str
-    analysts: list[str] = ["market", "social", "news", "fundamentals"]
+    analysts: list[str] = list(ALLOWED_ANALYSTS)
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
     output_language: str = "English"
+
+    @field_validator("analysts")
+    @classmethod
+    def _only_allowed(cls, v: list[str]) -> list[str]:
+        bad = [a for a in v if a not in ALLOWED_ANALYSTS]
+        if bad:
+            raise ValueError(f"analysts not enabled: {', '.join(bad)} (only {', '.join(ALLOWED_ANALYSTS)})")
+        return v or list(ALLOWED_ANALYSTS)
 
 
 class AnalysisResponse(BaseModel):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getNewsFeed, getNewsSources, saveNewsSources } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,8 @@ interface Article {
 /** GET /api/news/ (backend/routers/news.py get_news). */
 interface NewsFeed {
   articles: Article[];
+  market_only: boolean;
+  filtered_out: number;
 }
 
 /** One entry of rss_feeds in backend/news_sources.py (see DEFAULT_RSS_FEEDS). */
@@ -58,17 +60,25 @@ export default function NewsPage() {
   const [activeTab, setActiveTab] = useState("feed");
   const [saving, setSaving] = useState(false);
   const [newQuery, setNewQuery] = useState("");
+  const [marketOnly, setMarketOnly] = useState(true);
+  const [filteredOut, setFilteredOut] = useState(0);
 
-  const loadNews = async () => {
+  // Sets state only in promise callbacks (data-loading effect convention).
+  const fetchNews = useCallback(
+    (onlyMarket: boolean) =>
+      (getNewsFeed(8, onlyMarket) as Promise<NewsFeed>)
+        .then((data) => {
+          setArticles(data.articles || []);
+          setFilteredOut(data.filtered_out || 0);
+        })
+        .catch(() => toast.error("Failed to load news"))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  const loadNews = (onlyMarket = marketOnly) => {
     setLoading(true);
-    try {
-      const data = (await getNewsFeed(8)) as NewsFeed;
-      setArticles(data.articles || []);
-    } catch {
-      toast.error("Failed to load news");
-    } finally {
-      setLoading(false);
-    }
+    return fetchNews(onlyMarket);
   };
 
   const loadSources = async () => {
@@ -86,9 +96,9 @@ export default function NewsPage() {
   };
 
   useEffect(() => {
-    loadNews();
+    fetchNews(true);
     loadSources();
-  }, []);
+  }, [fetchNews]);
 
   const toggleRssFeed = (key: string) => {
     if (!sources) return;
@@ -154,7 +164,7 @@ export default function NewsPage() {
           </h1>
           <p className="text-sm text-muted-foreground">Aggregated Indian market news from RSS feeds + yfinance</p>
         </div>
-        <Button variant="outline" size="sm" onClick={loadNews} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => loadNews()} disabled={loading}>
           {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
           Refresh
         </Button>
@@ -170,6 +180,24 @@ export default function NewsPage() {
 
         {/* News Feed */}
         <TabsContent value="feed">
+          {!loading && (
+            <p className="text-xs text-muted-foreground mb-2">
+              {marketOnly
+                ? `Market news only${filteredOut ? `: ${filteredOut} off-topic article${filteredOut > 1 ? "s" : ""} (sport, travel, politics…) hidden` : ""}. `
+                : "Showing every article from the sources. "}
+              <button
+                type="button"
+                className="underline hover:text-foreground"
+                onClick={() => {
+                  const next = !marketOnly;
+                  setMarketOnly(next);
+                  loadNews(next);
+                }}
+              >
+                {marketOnly ? "Show all" : "Market news only"}
+              </button>
+            </p>
+          )}
           {loading ? (
             <div className="py-20 text-center">
               <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />

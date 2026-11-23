@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getJournal, getLearningReport, markJournalAction, runAiPanel, trackJournal } from "@/lib/api";
+import { getJournal, getJournalUsage, getLearningReport, markJournalAction, runAiPanel, trackJournal } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,32 @@ type JournalRecord = {
   user_exit_price?: number | null;
   user_note?: string | null;
   panel?: { confidence?: number; reasons?: string[]; risks?: string[]; error?: string; skipped?: string } | null;
+  // backend/journal/tracker.py _stop_now: the managed stop while the trade is open
+  extra?: {
+    stop_now?: {
+      level: number;
+      state: "initial" | "breakeven" | "trailing";
+      locked_r: number;
+      mfe_r?: number;
+      last_close?: number | null;
+      at: string;
+      alert?: string | null;
+    };
+  } | null;
 };
+
+function StopNow({ r }: { r: JournalRecord }) {
+  const sn = r.extra?.stop_now;
+  if (r.track_status !== "open" || !sn) return <span className="text-muted-foreground">—</span>;
+  const tone = sn.state === "trailing" ? "text-green-600" : sn.state === "breakeven" ? "text-amber-600" : "";
+  const title = `Updated ${sn.at.replace("T", " ").slice(0, 16)} · locks ${sn.locked_r >= 0 ? "+" : ""}${sn.locked_r}R` +
+    (sn.last_close != null ? ` · last close ${sn.last_close}` : "") + (sn.alert ? ` · Telegram: ${sn.alert}` : "");
+  return (
+    <span className={tone} title={title}>
+      {sn.level} <span className="text-muted-foreground">{sn.state}</span>
+    </span>
+  );
+}
 
 function panelText(r: JournalRecord): string {
   const p = r.panel;
@@ -156,6 +181,20 @@ function Question({ title, children }: { title: string; children: React.ReactNod
   );
 }
 
+// GET /api/journal/usage (backend/journal/panel.py usage_today)
+type Usage = {
+  date: string;
+  ai_reviews: number;
+  ai_limit: number;
+  approved_today: number;
+  max_new_trades_day: number;
+  approved_week: number;
+  max_new_trades_week: number;
+  fno_open: number;
+  fno_max_open: number;
+  limit_block: string | null;
+};
+
 const DECISIONS = ["", "shortlisted", "approved", "rejected_panel", "not_selected", "below_score", "soft_rejected"];
 
 export default function JournalPage() {
@@ -164,12 +203,16 @@ export default function JournalPage() {
   const [decision, setDecision] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const [usage, setUsage] = useState<Usage | null>(null);
+
   const fetchData = useCallback((dec: string) => {
-    Promise.all([getLearningReport(), getJournal({ decision: dec || undefined, limit: 300 })])
+    Promise.all([getLearningReport(), getJournal({ decision: dec || undefined, limit: 300 }),
+      getJournalUsage().catch(() => null)])
       .then((res) => {
-        const [rep, jr] = res as [Report, { records: JournalRecord[] }];
+        const [rep, jr, us] = res as [Report, { records: JournalRecord[] }, Usage | null];
         setReport(rep);
         setRecords(jr.records);
+        setUsage(us);
       })
       .catch((e) => toast.error(errorMessage(e, "Could not load the journal")))
       .finally(() => setLoading(false));
@@ -218,6 +261,20 @@ export default function JournalPage() {
           <p className="text-sm text-muted-foreground">
             Every signal — taken or rejected — followed to its outcome. The learning engine only recommends; it never changes rules.
           </p>
+          {usage && (
+            <p className="text-xs mt-1">
+              Today: AI reviews{" "}
+              <span className={usage.ai_reviews >= usage.ai_limit ? "font-medium text-amber-600" : "font-medium"}>
+                {usage.ai_reviews}/{usage.ai_limit}
+              </span>
+              {" · "}approved trades {usage.approved_today}/{usage.max_new_trades_day}
+              {" · "}this week {usage.approved_week}/{usage.max_new_trades_week}
+              {" · "}F&amp;O open {usage.fno_open}/{usage.fno_max_open}
+              {usage.limit_block && (
+                <span className="ml-1 text-red-600">· new trades blocked: {usage.limit_block}</span>
+              )}
+            </p>
+          )}
         </div>
         <Button className="ml-auto" variant="outline" size="sm" onClick={runPanel} disabled={loading}
           title="Review shortlisted trades whose entry window is still open (the scans do this automatically)">
@@ -285,7 +342,7 @@ export default function JournalPage() {
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-left">
                   <tr>
-                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Status", "Exit", "R", "MFE / MAE", "₹", "You"].map((h) => (
+                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Stop now", "Status", "Exit", "R", "MFE / MAE", "₹", "You"].map((h) => (
                       <th key={h} className="px-2 py-1.5 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -310,6 +367,7 @@ export default function JournalPage() {
                         ) : null}
                       </td>
                       <td className="px-2 py-1">{r.entry} / {r.stop} / {r.target}</td>
+                      <td className="px-2 py-1"><StopNow r={r} /></td>
                       <td className="px-2 py-1">{r.track_status}</td>
                       <td className="px-2 py-1">{r.exit_reason ?? "—"}</td>
                       <td className={`px-2 py-1 ${r.pnl_r !== null && r.pnl_r < 0 ? "text-red-600" : "text-green-600"}`}>{r.pnl_r ?? "—"}</td>
@@ -319,7 +377,7 @@ export default function JournalPage() {
                     </tr>
                   ))}
                   {records.length === 0 && (
-                    <tr><td colSpan={13} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
+                    <tr><td colSpan={14} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
                   )}
                 </tbody>
               </table>

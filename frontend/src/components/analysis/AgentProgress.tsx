@@ -10,9 +10,6 @@ interface Agent {
 
 const defaultAgents: Agent[] = [
   { name: "Market Analyst", status: "pending" },
-  { name: "Social Analyst", status: "pending" },
-  { name: "News Analyst", status: "pending" },
-  { name: "Fundamentals Analyst", status: "pending" },
   { name: "Bull Researcher", status: "pending" },
   { name: "Bear Researcher", status: "pending" },
   { name: "Research Manager", status: "pending" },
@@ -30,9 +27,6 @@ interface Props {
 export function AgentProgress({ reports, status }: Props) {
   const reportMap: Record<string, string> = {
     "Market Analyst": "market_report",
-    "Social Analyst": "sentiment_report",
-    "News Analyst": "news_report",
-    "Fundamentals Analyst": "fundamentals_report",
     "Research Manager": "investment_plan",
     "Trader": "trader_investment_plan",
     "Portfolio Manager": "final_trade_decision",

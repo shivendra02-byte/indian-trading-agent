@@ -89,7 +89,11 @@ class HourlyScanTests(IsolatedStateTestCase, unittest.TestCase):
         rec = brk[0]
         self.assertEqual(rec["signal_ts"], "2026-11-23T11:15:00")
         self.assertEqual(rec["fill_until"], "2026-11-23T14:15:00")
-        self.assertEqual(rec["time_stop_date"], "2026-11-26")   # 23, 25, 26 (24th is a holiday)
+        # No 3-day time stop for futures (agreed 23 Nov 2026): the latest exit is the session
+        # before the contract's expiry; the trade otherwise ends at target / stop / trailing stop.
+        expiry = date.fromisoformat(rec["extra"]["expiry"])
+        self.assertLess(rec["time_stop_date"], expiry.isoformat())
+        self.assertEqual(rec["time_stop_date"], "2026-12-28")   # contract expires 29 Dec
         self.assertGreaterEqual(rec["extra"]["lots"], 1)
         self.assertTrue(rec["soft_checks"]["oi_buildup"])
 

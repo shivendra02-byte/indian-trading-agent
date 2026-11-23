@@ -1,7 +1,7 @@
 export const analysisHelp = [
   {
     question: "What does this do?",
-    answer: "This runs a full AI-powered multi-agent analysis on any NSE/BSE stock. 10 AI agents collaborate to give you a trading decision:\n\n1. Market Analyst \u2014 reads price data and technical indicators (RSI, MACD, Bollinger, etc.)\n2. Social Analyst \u2014 checks social media sentiment\n3. News Analyst \u2014 scans Indian and global news (RBI, FII/DII, macro)\n4. Fundamentals Analyst \u2014 reviews balance sheet, P&L, cash flow\n5. Bull Researcher \u2014 makes the case FOR buying\n6. Bear Researcher \u2014 makes the case AGAINST buying\n7. Research Manager \u2014 judges the debate, decides Buy/Sell/Hold\n8. Trader \u2014 sets specific entry price, stop-loss, targets\n9. Risk Debate \u2014 3 analysts (aggressive/conservative/neutral) debate risk\n10. Portfolio Manager \u2014 final decision with entry/SL/target/position size",
+    answer: "This runs a full AI-powered multi-agent analysis on any NSE/BSE stock. The AI agents work on price data only (no news, sentiment or fundamentals):\n\n1. Market Analyst \u2014 reads price data and technical indicators (RSI, MACD, Bollinger, etc.)\n2. Bull Researcher \u2014 makes the case FOR buying\n3. Bear Researcher \u2014 makes the case AGAINST buying\n4. Research Manager \u2014 judges the debate, decides Buy/Sell/Hold\n5. Trader \u2014 sets specific entry price, stop-loss, targets\n6. Risk Debate \u2014 3 analysts (aggressive/conservative/neutral) debate risk\n7. Portfolio Manager \u2014 final decision with entry/SL/target/position size",
   },
   {
     question: "When should I use this?",
@@ -13,7 +13,7 @@ export const analysisHelp = [
   },
   {
     question: "How accurate is it?",
-    answer: "This is an AI tool, not a guarantee. Use it as one input in your decision-making:\n\n\u2022 The agent considers technicals, fundamentals, news, and sentiment \u2014 more comprehensive than manual analysis\n\u2022 Bull vs Bear debate reduces confirmation bias\n\u2022 The agent can make mistakes, especially around sudden events (unexpected RBI decisions, global crises)\n\u2022 Run backtests on historical dates to see how it would have performed\n\u2022 Track P&L on your actual trades to build confidence over time\n\nTip: Cross-check the agent's entry/SL/target with the Support/Resistance levels from the Strategies page. If they align, it's a stronger signal.",
+    answer: "This is an AI tool, not a guarantee. Use it as one input in your decision-making:\n\n\u2022 The agent works on price action and technicals only; it does not read news or results, so check those yourself\n\u2022 Bull vs Bear debate reduces confirmation bias\n\u2022 The agent can make mistakes, especially around sudden events (unexpected RBI decisions, global crises)\n\u2022 Run backtests on historical dates to see how it would have performed\n\u2022 Track P&L on your actual trades to build confidence over time\n\nTip: Cross-check the agent's entry/SL/target with the Support/Resistance levels from the Strategies page. If they align, it's a stronger signal.",
   },
 ];
 

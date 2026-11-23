@@ -220,7 +220,7 @@ class IndexAndDailyOnlyTests(EndToEndTests):
         self.assertGreater(funnel["counts"]["bars_evaluated"], 0)
         self.assertGreater(sum(funnel["regime_days"].values()), 0)
         self.assertTrue(funnel["rejections"])
-        self.assertEqual(summary["exit_mode"], "fixed")
+        self.assertEqual(summary["exit_mode"], "breakeven_trail")   # index futures trail since 23 Nov 2026
 
     def test_index_futures_with_sideways_mean_reversion_and_managed_exit(self):
         from backend.marketdata.candles import save_candles

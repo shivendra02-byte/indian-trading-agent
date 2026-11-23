@@ -162,7 +162,16 @@ class AiPanelCfg(_Strict):
     min_confidence: int = Field(default=60, ge=0, le=100)   # approve needs at least this
     notify_telegram: bool = True                             # alert every approved trade
     notify_unreviewed: bool = True                           # also alert shortlisted trades the AI limit skipped
+    notify_limit_blocks: bool = True                         # one note a day per portfolio limit that blocks a trade
     timeout_seconds: int = Field(default=90, ge=10, le=600)
+
+
+class StopAlertsCfg(_Strict):
+    """Telegram "move your stop" messages for trades you were alerted on (asked 23 Nov 2026):
+    once when the managed stop leaves the initial stop (breakeven / trailing), then each time it
+    moves at least ``min_move_r`` R further. Checked on every tracker run (hourly)."""
+    enabled: bool = True
+    min_move_r: float = Field(default=0.25, gt=0, le=5)
 
 
 class OptionDataCfg(_Strict):
@@ -279,6 +288,7 @@ class GlobalCfg(_Strict):
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
     my_trades: MyTradesCfg = MyTradesCfg()
+    stop_alerts: StopAlertsCfg = StopAlertsCfg()
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()
@@ -294,8 +304,15 @@ class InstrumentCfg(BaseModel):
     htf_score_tf: str | None = None
     directions: list[Literal["long", "short", "long_options"]] = []
     shortlist_per_scan: int = 0
-    hold_trading_days: int = 0
+    hold_trading_days: int = 0     # time stop (when time_stop) and the window checked for events
     min_primary_bars: int = 60
+    # time_stop: false = no time exit (agreed 23 Nov 2026): the trade ends at the target, the stop
+    # or the managed (breakeven -> trailing) stop. Safety exit: futures on the last session before
+    # expiry; cash (no expiry) after max_hold_trading_days. Backtests on spot data (futures proxies)
+    # also follow a trade for at most max_hold_trading_days.
+    time_stop: bool = True
+    max_hold_trading_days: int = Field(default=20, ge=1, le=250)
+    exit_management: ExitCfg | None = None     # overrides global.exit_management for this instrument
 
     @model_validator(mode="after")
     def _tfs(self):
@@ -338,6 +355,12 @@ class DecisionConfig(_Strict):
         if name not in self.instruments:
             raise KeyError(f"instrument {name!r} not configured")
         return self.instruments[name]
+
+    def exit_rule(self, name: str | None) -> dict:
+        """The real exit for an instrument / journal segment: its own ``exit_management``
+        or ``global.exit_management``."""
+        inst = self.instruments.get(name) if name else None
+        return (inst.exit_management if inst and inst.exit_management else self.global_.exit_management).model_dump()
 
     def strategy(self, name: str) -> StrategyCfg:
         return self.strategies[name]
@@ -386,15 +409,9 @@ def _load(path: str, mtime: float) -> DecisionConfig:
 
 
 def exit_rule_for(segment: str | None) -> dict:
-    """The real exit for a journal segment: ``global.exit_management``, overridden by
-    the segment's own ``instruments.<segment>.exit_management`` block when it has one."""
-    cfg = get_config()
-    base = cfg.global_.exit_management.model_dump()
-    if segment and segment in cfg.instruments:
-        override = (cfg.instrument(segment).model_extra or {}).get("exit_management")
-        if override:
-            return ExitCfg(**{**base, **override}).model_dump()
-    return base
+    """The real exit for a journal segment / instrument: its own ``instruments.<x>.exit_management``
+    or ``global.exit_management``. One implementation: ``DecisionConfig.exit_rule``."""
+    return get_config().exit_rule(segment)
 
 
 def get_config() -> DecisionConfig:

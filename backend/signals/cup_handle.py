@@ -27,7 +27,7 @@ from datetime import date, datetime
 from typing import Callable, Sequence
 
 from backend.decision.config import get_config
-from backend.signals.indicators import swing_points
+from backend.signals.indicators import atr, swing_points
 from backend.signals.selection import choose_shortlist
 from backend.signals.setups import stage
 
@@ -197,6 +197,11 @@ def score(p: dict) -> dict:
     return {"factors": factors, "score": float(sum(factors.values()))}
 
 
+def _last_atr(bars: Sequence[dict]) -> float | None:
+    vals = atr(bars[-60:], 14) if len(bars) >= 15 else []
+    return round(vals[-1], 4) if vals and vals[-1] else None
+
+
 def candidate(bars: Sequence[dict], benchmark: Sequence[dict] | None, cfg: dict | None = None,
               swing_highs=None, regime: str | None = None) -> dict:
     """Journal-ready candidate (setup, entry, stop, target, score, stages) or a rejection."""
@@ -216,6 +221,7 @@ def candidate(bars: Sequence[dict], benchmark: Sequence[dict] | None, cfg: dict 
         "setup": SETUP, "direction": "long", "valid": True, "trackable": True, "reject_reason": None,
         "regime": regime, "entry": round(entry, 2), "stop": round(stop, 2), "target": round(target, 2),
         "risk_per_unit": round(close - stop, 2), "rr": round(cfg["target_pct"] / cfg["stop_pct"], 2),
+        "atr": _last_atr(bars),     # daily ATR(14): the trailing stop needs it
         "signal_close": round(close, 2),
         "score": sc["score"], "factors": sc["factors"], "pattern": p, "vol_ratio": p["vol_ratio"],
         "rs_vs_nifty_pct": p["rs_vs_nifty_pct"], "soft_checks": {"handle_dry_up": p["handle_volume_dry_up"]},
@@ -261,6 +267,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
     run_id = _start_run(signal_date.isoformat(), now, segment=SEGMENT)
     hold = events.trading_days_after(signal_date, cfg["hold_days"])
     first, last = hold[0], hold[-1]
+    if not cfg["inst"].time_stop:   # no time stop: target / stop / trailing stop, safety exit later
+        last = events.trading_days_after(signal_date, cfg["inst"].max_hold_trading_days)[-1]
     block_last = hold[min(cfg["event_block_days"], len(hold)) - 1]
 
     nifty = spot_instrument("NIFTY")
@@ -343,7 +351,7 @@ def journal_row(r: dict, signal_date: date, first: date, last: date, fill_until:
         "signal_date": signal_date.isoformat(), "setup": SETUP, "direction": "long",
         "regime": r.get("regime"), "score": r.get("score"), "factors": r.get("factors"),
         "soft_checks": r.get("soft_checks"), "decision": decision, "reject_reason": r.get("selection_skip"),
-        "entry": r["entry"], "stop": r["stop"], "target": r["target"], "rr": r.get("rr"), "atr": None,
+        "entry": r["entry"], "stop": r["stop"], "target": r["target"], "rr": r.get("rr"), "atr": r.get("atr"),
         "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T{fill_until}",
         "time_stop_date": last.isoformat(),
         "extra": {"pattern": r.get("pattern"), "turnover_cr": r.get("turnover_cr")},

@@ -146,7 +146,9 @@ def follow(trade: dict, bars: list[dict], atr: float | None) -> dict:
     last = bars[-1] if bars else None
     if res["status"] == "open":
         current = res["trail_stop"]
-        stage = "initial" if abs(current - stop) < 1e-9 else "breakeven" if abs(current - breakeven) < 1e-9 else "trailing"
+        # same label the engine's "Stop now" uses (simulate._run_exit); computed locally only as a fallback
+        stage = res.get("stop_state") or ("initial" if abs(current - stop) < 1e-9
+                                          else "breakeven" if abs(current - breakeven) < 1e-9 else "trailing")
         close = last["close"] if last else None
         return {"status": "open", "current_stop": round(current, 2), "stop_stage": stage, "atr": atr,
                 "last_close": close, "last_bar_ts": last["ts"] if last else None, "mfe_r": res["mfe_r"],

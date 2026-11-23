@@ -73,7 +73,9 @@ class WolfeTests(unittest.TestCase):
     def test_own_exit_rule(self):
         self.assertEqual(exit_rule_for("wolfe")["mode"], "breakeven_trail")
         self.assertEqual(exit_rule_for(None), get_config().global_.exit_management.model_dump())
-        self.assertEqual(exit_rule_for("cash_swing"), get_config().global_.exit_management.model_dump())
+        # cash swing has its own trailing exit too since 23 Nov 2026 (no time stop)
+        self.assertEqual(exit_rule_for("cash_swing")["mode"], "breakeven_trail")
+        self.assertEqual(exit_rule_for("not_an_instrument"), get_config().global_.exit_management.model_dump())
 
     def test_registered_as_cash_book(self):
         from backend.journal import panel, postmortem, tracker

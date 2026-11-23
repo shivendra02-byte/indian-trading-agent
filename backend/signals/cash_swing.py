@@ -201,7 +201,11 @@ def run_scan(now: datetime | None = None, force: bool = False,
     signal_date = expected_last_daily_bar(now)
     run_id = _start_run(signal_date.isoformat(), now)
     window = events.trading_days_after(signal_date, cfg["hold_days"])
-    first, last = window[0], window[-1]
+    first, last = window[0], window[-1]          # events/results are checked over this window
+    inst = cfg["inst"]
+    # No time stop (agreed 23 Nov 2026): exit at target / stop / trailing stop; safety exit after
+    # max_hold_trading_days (shares have no expiry).
+    exit_by = last if inst.time_stop else events.trading_days_after(signal_date, inst.max_hold_trading_days)[-1]
 
     # Market-level checks — fail closed for the whole scan.
     nifty = spot_instrument("NIFTY")
@@ -275,13 +279,13 @@ def run_scan(now: datetime | None = None, force: bool = False,
             r["stages"] = [*r["stages"], stage("ai_panel", "pending" if selected else "not_sent"),
                            stage("final_approval", "pending" if selected else "not_applicable")]
     _save(run_id, signal_date.isoformat(), rows)
-    journal_add([_journal_row(r, signal_date, first, last, cfg["entry_window"][1])
+    journal_add([_journal_row(r, signal_date, first, exit_by, cfg["entry_window"][1])
                  for r in rows if r.get("trackable")])
     from backend.journal.panel import review_after_scan
     panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
         "ai_panel": panel,
-        "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": last.isoformat(),
+        "signal_date": signal_date.isoformat(), "entry_window": first.isoformat(), "time_stop": exit_by.isoformat(),
         "regime": regime, "stocks": len(universe), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],
         "skipped_open_trade": [r["symbol"] for r in ranked if r.get("selection_skip")],
