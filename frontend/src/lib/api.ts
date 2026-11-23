@@ -275,6 +275,20 @@ export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "PO
 export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
 export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
 
+// Momentum book (weekly relative-strength ranking, stock futures, paper)
+export const getMomentum = () => fetchAPI(`/api/momentum/`);
+export const runMomentumRank = () => fetchAPI(`/api/momentum/rank`, { method: "POST" });
+export const runMomentumScan = () => fetchAPI(`/api/momentum/scan`, { method: "POST" });
+export const getMomentumBacktests = () => fetchAPI(`/api/momentum/backtests`);
+export const startMomentumBacktest = (data: {
+  start_date: string;
+  end_date: string;
+  sides: ("long" | "short")[];
+  daily_only: boolean;
+  split_date?: string | null;
+}) => fetchAPI(`/api/momentum/backtests`, { method: "POST", body: JSON.stringify(data) });
+export const deleteMomentumBacktest = (id: number) => fetchAPI(`/api/momentum/backtests/${id}`, { method: "DELETE" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
