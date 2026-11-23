@@ -113,3 +113,38 @@ def option_chain(symbol: str = Query("NIFTY", pattern=r"^[A-Z]{3,15}$"),
         "lot_size": first.get("lot_size"), "vix": store.vix_on(day), "atm_strike": atm,
         "rows": [by_strike[k] for k in sorted(by_strike)],
     }
+
+
+# --- credit spreads -----------------------------------------------------------------------
+
+class SpreadBacktestRequest(BaseModel):
+    start_date: date
+    end_date: date
+    symbols: list[Literal["NIFTY", "BANKNIFTY", "SENSEX"]] | None = None
+    split_date: date | None = None
+
+
+@router.get("/spreads")
+def spreads_status():
+    from backend.options.spreads import record, settings, spreads
+    cfg = settings()
+    return {"enabled": cfg["enabled"], "settings": {k: cfg[k] for k in (
+        "short_delta", "min_credit_ratio", "take_profit_pct", "stop_multiple", "max_vix", "max_open", "symbols",
+        "regime_strategy")}, "open": spreads("open"), "closed": spreads("closed"), "record": record()}
+
+
+@router.post("/spreads/run")
+def spreads_run():
+    """Follow open spreads and build today's candidates from the stored option files."""
+    from backend.options.spreads import run_eod
+    return run_eod()
+
+
+@router.post("/spreads/backtest")
+def spreads_backtest(req: SpreadBacktestRequest):
+    from backend.options.spreads import backtest
+    if req.end_date <= req.start_date:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+    result = backtest(req.start_date, req.end_date, req.symbols, req.split_date)
+    result["trades"] = result["trades"][-300:]
+    return result

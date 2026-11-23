@@ -223,6 +223,22 @@ instruments:
     min_primary_bars: 60
   stock_options:
     enabled: false                 # excluded from the initial version
+  option_spreads:                  # index credit spreads on end-of-day chains (agreed 22 Nov 2026) — paper, AI-reviewed
+    enabled: true
+    short_delta: [0.15, 0.20]      # short leg |delta| band (closest to the middle)
+    min_oi: 0                      # open interest of the short leg (contracts)
+    min_credit_ratio: 0.15         # credit at least 15% of the width
+    take_profit_pct: 50            # buy back at 50% of the credit
+    stop_multiple: 2.0             # stop when the spread costs 2x the credit (1R = one credit)
+    max_vix: 25.0                  # no new spread above this India VIX
+    max_open: 3                    # approved spreads open at once (one per index)
+    max_loss_pct: 3.0              # worst case (width - credit) of the position, % of capital
+    regime_strategy: {STRONG_UP: bull_put, STRONG_DOWN: bear_call, SIDEWAYS: iron_condor}   # none in HIGH_VOL / UNSTABLE
+    regime_source: {SENSEX: NIFTY} # SENSEX has no stored daily candles
+    symbols:                       # weekdays Mon=0; calendar days to expiry; wing in index points
+      NIFTY: {wing: 200, lot_size: 65, weekdays: [2, 3, 4], min_days: 4, max_days: 6}       # Wed-Fri before the Tuesday expiry
+      BANKNIFTY: {wing: 500, lot_size: 30, weekdays: [0, 1, 2, 3, 4], min_days: 10, max_days: 20}   # monthly, 10-20 days out
+      SENSEX: {wing: 500, lot_size: 20, weekdays: [4, 0], min_days: 3, max_days: 6}         # Fri-Mon before the Thursday expiry
   cash_swing:
     enabled: true
     primary_tf: day

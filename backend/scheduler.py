@@ -319,10 +319,18 @@ class MarketDataScheduler:
             result = daily_update(now=now)
         except Exception as exc:   # never let it stop the scheduler
             result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        ran = ["options:eod"]
         if result.get("complete"):
             self.scans_done["options_eod"] = now.date()
+            try:
+                from backend.options.spreads import run_eod
+                spread = run_eod(now.date())
+            except Exception as exc:   # never let it stop the scheduler
+                spread = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+            self.last_results["options:spreads"] = {"at": now.isoformat(timespec="seconds"), **_brief(spread)}
+            ran.append("options:spreads")
         self.last_results["options:eod"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
-        return ["options:eod"]
+        return ran
 
     def _postmortem_week(self, now: datetime) -> date | None:
         from backend.journal.postmortem import exists, postmortem_due
