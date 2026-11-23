@@ -52,8 +52,10 @@ def _count(where: str, params: tuple) -> int:
 
 
 def evaluations_today(today: date) -> int:
-    """AI calls made today (approve, reject or error; not limit skips)."""
-    return _count("panel_decision IN ('approve', 'reject', 'error') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
+    """AI calls answered today (approve or reject; not errors or limit skips)."""
+    # Failed calls (panel_decision 'error') don't count: they never got an answer, and a
+    # broken model or key must not use up the day's budget (23 Nov 2026: 5 failures did).
+    return _count("panel_decision IN ('approve', 'reject') AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
                   (today.isoformat(),))
 
 
