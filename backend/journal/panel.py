@@ -222,6 +222,8 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
         f"Size: {e(_size_text(rec))} · Score {round(rec.get('score') or 0)} · Regime {e(str(rec.get('regime') or '-'))}",
         f"Time stop: close of {e(str(rec.get('time_stop_date')))}",
     ]
+    if kind == "ai_error" and panel.get("error"):
+        lines.append(e(panel["error"]))
     if kind == "approved":
         lines.append(f"AI confidence: {panel.get('confidence')}")
         lines += [f"• {e(r)}" for r in panel.get("reasons", [])]
@@ -292,7 +294,9 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             text, model = (llm_call or _default_llm_call)(build_prompt(rec))
             verdict = parse_reply(text)
         except Exception as exc:
-            reason = f"AI review failed: {type(exc).__name__}"
+            log.warning("AI panel call failed for %s", rec["symbol"], exc_info=True)
+            detail = " ".join(str(exc).split())[:160]
+            reason = f"AI review failed: {type(exc).__name__}" + (f": {detail}" if detail else "")
             panel = {"evaluated_at": evaluated_at, "error": reason}
             update_record(rec["id"], {"panel": panel, "panel_decision": "error", "stages": _set_stages(
                 rec, stage("ai_panel", "fail", reason), stage("final_approval", "pending", "rules only"))})

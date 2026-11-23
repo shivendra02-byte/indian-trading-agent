@@ -113,6 +113,8 @@ class PanelTests(IsolatedStateTestCase, unittest.TestCase):
         r = self.rec("AAA")
         self.assertEqual((r["decision"], r["panel_decision"]), ("shortlisted", "error"))
         self.assertIn("AI review failed", self.sent[0])
+        self.assertIn("ValueError: no JSON in the reply", r["panel"]["error"])    # the reason, not just the type
+        self.assertIn("no JSON in the reply", self.sent[0])
 
     def test_expired_window_paused_and_disabled(self):
         from backend.journal.panel import review_pending
