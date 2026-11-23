@@ -62,7 +62,32 @@ type JournalRecord = {
   user_exit_price?: number | null;
   user_note?: string | null;
   panel?: { confidence?: number; reasons?: string[]; risks?: string[]; error?: string; skipped?: string } | null;
+  // backend/journal/tracker.py _stop_now: the managed stop while the trade is open
+  extra?: {
+    stop_now?: {
+      level: number;
+      state: "initial" | "breakeven" | "trailing";
+      locked_r: number;
+      mfe_r?: number;
+      last_close?: number | null;
+      at: string;
+      alert?: string | null;
+    };
+  } | null;
 };
+
+function StopNow({ r }: { r: JournalRecord }) {
+  const sn = r.extra?.stop_now;
+  if (r.track_status !== "open" || !sn) return <span className="text-muted-foreground">—</span>;
+  const tone = sn.state === "trailing" ? "text-green-600" : sn.state === "breakeven" ? "text-amber-600" : "";
+  const title = `Updated ${sn.at.replace("T", " ").slice(0, 16)} · locks ${sn.locked_r >= 0 ? "+" : ""}${sn.locked_r}R` +
+    (sn.last_close != null ? ` · last close ${sn.last_close}` : "") + (sn.alert ? ` · Telegram: ${sn.alert}` : "");
+  return (
+    <span className={tone} title={title}>
+      {sn.level} <span className="text-muted-foreground">{sn.state}</span>
+    </span>
+  );
+}
 
 function panelText(r: JournalRecord): string {
   const p = r.panel;
@@ -285,7 +310,7 @@ export default function JournalPage() {
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-left">
                   <tr>
-                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Status", "Exit", "R", "MFE / MAE", "₹", "You"].map((h) => (
+                    {["Date", "Symbol", "Setup", "Regime", "Score", "Decision", "Entry / Stop / Target", "Stop now", "Status", "Exit", "R", "MFE / MAE", "₹", "You"].map((h) => (
                       <th key={h} className="px-2 py-1.5 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -305,6 +330,7 @@ export default function JournalPage() {
                         )}
                       </td>
                       <td className="px-2 py-1">{r.entry} / {r.stop} / {r.target}</td>
+                      <td className="px-2 py-1"><StopNow r={r} /></td>
                       <td className="px-2 py-1">{r.track_status}</td>
                       <td className="px-2 py-1">{r.exit_reason ?? "—"}</td>
                       <td className={`px-2 py-1 ${r.pnl_r !== null && r.pnl_r < 0 ? "text-red-600" : "text-green-600"}`}>{r.pnl_r ?? "—"}</td>
@@ -314,7 +340,7 @@ export default function JournalPage() {
                     </tr>
                   ))}
                   {records.length === 0 && (
-                    <tr><td colSpan={13} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
+                    <tr><td colSpan={14} className="px-2 py-4 text-center text-muted-foreground">No records yet — the first scan runs after Monday&apos;s close.</td></tr>
                   )}
                 </tbody>
               </table>

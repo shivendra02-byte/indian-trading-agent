@@ -151,6 +151,14 @@ class AiPanelCfg(_Strict):
     timeout_seconds: int = Field(default=90, ge=10, le=600)
 
 
+class StopAlertsCfg(_Strict):
+    """Telegram "move your stop" messages for trades you were alerted on (asked 23 Nov 2026):
+    once when the managed stop leaves the initial stop (breakeven / trailing), then each time it
+    moves at least ``min_move_r`` R further. Checked on every tracker run (hourly)."""
+    enabled: bool = True
+    min_move_r: float = Field(default=0.25, gt=0, le=5)
+
+
 class OptionDataCfg(_Strict):
     """End-of-day option data (exchange bhavcopy files) for the option spread
     strategy: download, implied volatility and Greeks. Data only — no signals."""
@@ -263,6 +271,7 @@ class GlobalCfg(_Strict):
     exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
     ai_panel: AiPanelCfg = AiPanelCfg()
+    stop_alerts: StopAlertsCfg = StopAlertsCfg()
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()

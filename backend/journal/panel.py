@@ -251,16 +251,68 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
     return "\n".join(lines)
 
 
-def _notify(rec: dict, panel: dict, kind: str) -> str:
+def _send(text: str) -> str:
     from backend.notifications.telegram import TelegramConfigError, TelegramSendError, send_html_message
     try:
-        send_html_message(build_alert(rec, panel, kind))
+        send_html_message(text)
         return "sent"
     except TelegramConfigError as exc:
         return f"not sent: {exc}"
     except TelegramSendError as exc:
         log.warning("telegram alert failed: %s", exc)
         return f"failed: {exc}"
+
+
+def _notify(rec: dict, panel: dict, kind: str, store: bool = False) -> str:
+    status = _send(build_alert(rec, panel, kind))
+    if store:   # remembered so the stop-move messages follow only trades you were told about
+        update_record(rec["id"], {"panel": {**panel, "alert": status, "alert_kind": kind}})
+    return status
+
+
+def was_alerted(rec: dict) -> bool:
+    return (rec.get("panel") or {}).get("alert") == "sent" or rec.get("decision") == APPROVED
+
+
+def build_stop_move(rec: dict, old_level: float, stop_now: dict) -> str:
+    e = html.escape
+    extra = rec.get("extra") or {}
+    name = extra.get("tradingsymbol") or rec["symbol"]
+    arrow = "↑ long" if rec["direction"] == "long" else "↓ short"
+    state = {"breakeven": "breakeven", "trailing": "trailing stop"}.get(stop_now["state"], stop_now["state"])
+    lines = [
+        "<b>Move your stop-loss</b>",
+        f"<b>{e(name)}</b> {arrow} · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])}",
+        f"SL {old_level:g} → <b>{stop_now['level']:g}</b> ({e(state)}) · locks {stop_now['locked_r']:+.2f}R",
+    ]
+    if stop_now.get("last_close") is not None:
+        lines.append(f"Last close {stop_now['last_close']:g} · best so far {stop_now.get('mfe_r', 0):+.2f}R · "
+                     f"target {rec['target']:g}")
+    lines.append("Paper trading only: update your Kite SL order if you took this trade.")
+    return "\n".join(lines)
+
+
+def stop_move_alert(rec: dict, stop_now: dict, risk: float) -> dict:
+    """Send a "move your stop" message when the managed stop of an alerted trade has moved far
+    enough since the last message (or left the initial stop). Returns ``stop_now`` with the
+    alert bookkeeping (``alerted_level``, ``alert``) added."""
+    cfg = get_config().global_.stop_alerts
+    prev = (rec.get("extra") or {}).get("stop_now") or {}
+    out = {**stop_now, "alerted_level": prev.get("alerted_level"), "alert": prev.get("alert")}
+    if not cfg.enabled or not was_alerted(rec) or stop_now["state"] == "initial" or risk <= 0:
+        return out
+    last = prev.get("alerted_level") if prev.get("alerted_level") is not None else rec["stop"]
+    s = 1 if rec["direction"] == "long" else -1
+    first_move = prev.get("alerted_level") is None
+    if not first_move and s * (stop_now["level"] - last) < cfg.min_move_r * risk:
+        return out
+    if s * (stop_now["level"] - last) <= 0:
+        return out
+    status = _send(build_stop_move(rec, last, stop_now))
+    out.update(alert=status, alert_at=datetime.now().isoformat(timespec="seconds"))
+    if status == "sent":
+        out["alerted_level"] = stop_now["level"]
+    return out
 
 
 # --- the panel ---------------------------------------------------------------------------
@@ -306,7 +358,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             out["not_sent"].append({"symbol": rec["symbol"], "reason": reason})
             if cfg.ai_panel.notify_telegram and cfg.ai_panel.notify_unreviewed:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "unreviewed",
-                                      "status": _notify(rec, panel, "unreviewed")})
+                                      "status": _notify(rec, panel, "unreviewed", store=True)})
             continue
         try:
             text, model = (llm_call or _default_llm_call)(build_prompt(rec))
@@ -319,7 +371,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             out["errors"].append({"symbol": rec["symbol"], "reason": reason})
             if cfg.ai_panel.notify_telegram:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "ai_error",
-                                      "status": _notify(rec, panel, "ai_error")})
+                                      "status": _notify(rec, panel, "ai_error", store=True)})
             continue
         approve = verdict["decision"] == "approve" and verdict["confidence"] >= cfg.ai_panel.min_confidence
         panel = {**verdict, "evaluated_at": evaluated_at, "model": model,
@@ -333,7 +385,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
             out["approved"].append(rec["symbol"])
             if cfg.ai_panel.notify_telegram:
                 out["alerts"].append({"symbol": rec["symbol"], "kind": "approved",
-                                      "status": _notify(rec, panel, "approved")})
+                                      "status": _notify(rec, panel, "approved", store=True)})
         else:
             reason = why if verdict["decision"] == "reject" else \
                 f"confidence {verdict['confidence']} < {cfg.ai_panel.min_confidence}"

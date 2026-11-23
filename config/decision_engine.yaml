@@ -137,6 +137,9 @@ global:
     include_mcx: true
     notify_telegram: true
     max_alerts_per_message: 25
+  stop_alerts:                     # Telegram "move your stop-loss" for trades you were alerted on (23 Nov 2026)
+    enabled: true
+    min_move_r: 0.25               # first move off the initial stop, then every further 0.25R
   option_data:                     # end-of-day NSE/BSE option files for the spread strategy (data only, asked 22 Nov 2026)
     enabled: true
     symbols: {NSE: [NIFTY, BANKNIFTY], BSE: [SENSEX]}

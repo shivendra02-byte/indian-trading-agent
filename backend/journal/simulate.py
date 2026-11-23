@@ -90,8 +90,10 @@ def _run_exit(bars: Sequence[dict], start: int, fill: float, stop: float, target
                 trail = max(trail, candidate) if s > 0 else min(trail, candidate)
         if b["ts"][:10] >= time_stop_date and b.get("eod", True):
             return _exit(b, b["close"], "time_stop", fill, risk, s, best_fav, worst_adv, i)
+    state = "initial" if trail == stop else "breakeven" if abs(trail - breakeven) < 1e-9 else "trailing"
     return {"status": "open", "mfe_r": round(best_fav / risk, 3), "mae_r": round(worst_adv / risk, 3),
-            "trail_stop": round(trail, 4)}
+            "trail_stop": round(trail, 4), "stop_state": state,
+            "last_close": round(bars[-1]["close"], 4) if len(bars) > start else None}
 
 
 def _exit(bar, price, reason, fill, risk, s, fav, adv, i) -> dict:
