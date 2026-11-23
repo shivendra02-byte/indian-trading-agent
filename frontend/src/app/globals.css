@@ -132,3 +132,40 @@
     font-family: var(--font-open-sans), ui-sans-serif, system-ui, sans-serif;
   }
 }
+
+/* Phones and portrait tablets (asked 23 Nov 2026). Pages are built for a desktop width;
+   these rules keep them usable without rewriting every page. */
+@media (max-width: 767px) {
+  /* Page wrappers: less padding so content gets the width. */
+  main > div[class~="p-6"],
+  main > div[class~="p-8"] {
+    padding: 0.75rem;
+  }
+  /* Wide tables scroll sideways inside their card instead of squeezing every column. */
+  main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  main th,
+  main td {
+    white-space: nowrap;
+  }
+  /* Long text inside a cell (AI reasons, notes) still wraps. */
+  main td :where(p, details, summary) {
+    white-space: normal;
+    min-width: 14rem;
+  }
+  /* iOS zooms into inputs below 16px; keep the page steady when typing. */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* Long headings and subtitles never push the page wider than the screen. */
+  main h1,
+  main p {
+    overflow-wrap: anywhere;
+  }
+}
