@@ -539,6 +539,7 @@ export const resetRegimeWeights = () =>
 
 // Trade Journal header: AI reviews used today + trade limits (backend/journal/panel.py usage_today)
 export const getJournalUsage = () => fetchAPI(`/api/journal/usage`);
+export const getAiPicksToday = () => fetchAPI(`/api/journal/ai-today`);
 
 // Market Regime (Bull/Bear/Sideways/High-Vol classifier)
 export const getCurrentRegime = () => fetchAPI(`/api/regime/current`);
