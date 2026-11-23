@@ -258,7 +258,7 @@ class GlobalCfg(_Strict):
     geometry: GeometryCfg
     regime: RegimeCfg
     permissions: dict[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"],
-                      dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion"], Permission]]
+                      dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion", "fib_pullback", "choch_flip"], Permission]]
     trailing_shadow: TrailingCfg
     exit_management: ExitCfg = ExitCfg()
     selection: SelectionCfg = SelectionCfg()
@@ -315,7 +315,7 @@ class DecisionConfig(_Strict):
     version: int
     global_: GlobalCfg = Field(alias="global")
     instruments: dict[str, InstrumentCfg]
-    strategies: dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion", "orb"], StrategyCfg]
+    strategies: dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion", "fib_pullback", "choch_flip", "orb"], StrategyCfg]
     rule_version: str = ""
 
     def instrument(self, name: str) -> InstrumentCfg:

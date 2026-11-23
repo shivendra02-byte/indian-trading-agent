@@ -28,7 +28,7 @@ from backend.decision.config import get_config
 from backend.signals.indicators import atr, ema, rsi, sma, swing_points
 
 SETUPS = ("pullback", "breakout", "range_reversal")
-OPTIONAL_SETUPS = ("mean_reversion",)      # checked only when the rule set configures them
+OPTIONAL_SETUPS = ("mean_reversion", "fib_pullback", "choch_flip")      # checked only when the rule set configures them
 
 
 def active_setups() -> tuple[str, ...]:
@@ -224,6 +224,120 @@ def _mean_reversion(bars, ctx, s) -> tuple[bool, str, int, dict]:
                                              "volume": ctx["vol_ratio"] >= st.volume_multiplier}
 
 
+def _impulse(bars, ctx, s, lookback: int) -> tuple[dict | None, str]:
+    """The latest break of structure in direction ``s`` and the impulse leg that made it.
+
+    For longs: the highest high of the last ``lookback`` bars before the signal bar
+    (the impulse extreme); the most recent confirmed swing high before it and below
+    it (the structure level); the first close above that level (the break); the
+    lowest low between the structure swing and the extreme (the impulse origin).
+    Shorts mirrored. Only bars before the signal bar define the leg."""
+    last = len(bars) - 1
+    window = range(max(0, last - lookback), last)
+    if not window:
+        return None, "not enough bars"
+    ext = max(window, key=lambda i: bars[i]["high"]) if s > 0 else min(window, key=lambda i: bars[i]["low"])
+    ext_p = bars[ext]["high"] if s > 0 else bars[ext]["low"]
+    highs, lows = ctx["swings"]
+    peaks = [(i, p) for i, p in (highs if s > 0 else lows) if i < ext and s * (ext_p - p) > 0]
+    if not peaks:
+        return None, "no break of structure"
+    pk_i, pk_p = peaks[-1]
+    bos = next((i for i in range(pk_i + 1, ext + 1) if s * (bars[i]["close"] - pk_p) > 0), None)
+    if bos is None:
+        return None, "no break of structure"
+    leg = range(pk_i, ext + 1)
+    org = min(leg, key=lambda i: bars[i]["low"]) if s > 0 else max(leg, key=lambda i: bars[i]["high"])
+    org_p = bars[org]["low"] if s > 0 else bars[org]["high"]
+    if org >= ext:
+        return None, "no impulse leg"
+    return {"ext": ext, "ext_p": ext_p, "org": org, "org_p": org_p, "level": pk_p, "bos": bos,
+            "range": abs(ext_p - org_p)}, ""
+
+
+def _fib_levels(imp: dict, s: int, frac: float) -> float:
+    """Price at a retracement fraction of the impulse (0 = extreme, 1 = origin)."""
+    return imp["ext_p"] - s * frac * imp["range"]
+
+
+def _fib_pullback(bars, ctx, s) -> tuple[bool, str, int, dict]:
+    """Trend continuation after a break of structure: price pulls back into the
+    ``zone`` retracement of the impulse (default 60–70%) and the signal bar is a
+    rejection back out of it. One entry per break: an earlier rejection in the zone
+    after the same extreme uses it up. Invalid once a close goes beyond the impulse
+    origin. Stop beyond the pullback extreme (``stop: retrace``) or the impulse
+    origin (``stop: origin``); target ``target: fixed_r`` at ``target_r`` R."""
+    st = ctx["strategy"]
+    a = ctx["atr"][-1]
+    imp, why = _impulse(bars, ctx, s, st.lookback)
+    if imp is None:
+        return False, why, 0, {}
+    if imp["range"] < float(_extra(st, "min_impulse_atr", 2.0)) * a:
+        return False, "impulse too small", 0, {}
+    z1, z2 = _extra(st, "zone", [0.6, 0.7])
+    near, far = _fib_levels(imp, s, z1), _fib_levels(imp, s, z2)
+    last = len(bars) - 1
+    after = range(imp["ext"] + 1, last + 1)
+    if not after:
+        return False, "no pullback yet", 0, {}
+    if any(s * (bars[i]["close"] - imp["org_p"]) <= 0 for i in after):
+        return False, "pullback went beyond the impulse origin", 0, {}
+
+    def in_zone(i):
+        b = bars[i]
+        return (b["low"] <= near and b["close"] >= far) if s > 0 else (b["high"] >= near and b["close"] <= far)
+
+    if not in_zone(last):
+        return False, "not in the retracement zone", 0, {}
+    if not _rejection(bars[last], s):
+        return False, "no rejection candle", 0, {}
+    if any(in_zone(i) and _rejection(bars[i], s) for i in range(imp["ext"] + 1, last)):
+        return False, "zone already used for this break", 0, {}
+    pull = [bars[i] for i in after]
+    extreme = min(b["low"] for b in pull) if s > 0 else max(b["high"] for b in pull)
+    depth = abs(imp["ext_p"] - extreme) / imp["range"]
+    ctx["stop_anchor"] = imp["org_p"] if _extra(st, "stop", "retrace") == "origin" else extreme
+    ctx["fib"] = {"extreme": round(imp["ext_p"], 2), "origin": round(imp["org_p"], 2),
+                  "structure_level": round(imp["level"], 2), "zone": [round(near, 2), round(far, 2)],
+                  "depth": round(depth, 3)}
+    golden = 0.6 <= depth <= 0.66
+    return True, "", 5 if golden else 0, {"golden_zone": golden,
+                                          "volume": ctx["vol_ratio"] >= st.volume_multiplier}
+
+
+def _choch_flip(bars, ctx, s) -> tuple[bool, str, int, dict]:
+    """Change of character: a break of structure in the *other* direction pulled
+    back into its zone and then failed — the signal bar is the first close beyond
+    that impulse's origin. Trade in direction ``s`` (a short after a failed bullish
+    structure). Stop beyond the bounce extreme since the zone touch; fixed-R target."""
+    st = ctx["strategy"]
+    a = ctx["atr"][-1]
+    imp, why = _impulse(bars, ctx, -s, st.lookback)
+    if imp is None:
+        return False, why, 0, {}
+    if imp["range"] < float(_extra(st, "min_impulse_atr", 2.0)) * a:
+        return False, "impulse too small", 0, {}
+    z1, _ = _extra(st, "zone", [0.6, 0.7])
+    near = _fib_levels(imp, -s, z1)
+    last = len(bars) - 1
+    after = list(range(imp["ext"] + 1, last + 1))
+    if len(after) < 2:
+        return False, "no pullback yet", 0, {}
+    beyond = lambda i: s * (bars[i]["close"] - imp["org_p"]) > 0  # noqa: E731  (s = trade direction)
+    if not beyond(last):
+        return False, "no close beyond the impulse origin", 0, {}
+    if any(beyond(i) for i in after[:-1]):
+        return False, "origin already broken earlier", 0, {}
+    touched = [i for i in after if (bars[i]["low"] <= near if -s > 0 else bars[i]["high"] >= near)]
+    if not touched:
+        return False, "the failed structure never reached its zone", 0, {}
+    since = bars[touched[0]:last + 1]
+    ctx["stop_anchor"] = max(b["high"] for b in since) if s < 0 else min(b["low"] for b in since)
+    ctx["fib"] = {"extreme": round(imp["ext_p"], 2), "origin": round(imp["org_p"], 2),
+                  "structure_level": round(imp["level"], 2), "failed_direction": "long" if s < 0 else "short"}
+    return True, "", 0, {"volume": ctx["vol_ratio"] >= st.volume_multiplier}
+
+
 def _clusters(points, tolerance):
     out = []
     for _, p in points:
@@ -297,6 +411,12 @@ def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | No
         lo, hi = ctx["range"]
         edge = (hi if s > 0 else lo) if target_mode == "range_opposite" else (lo + hi) / 2
         name = "the opposite side of the range" if target_mode == "range_opposite" else "the middle of the range"
+    elif target_mode == "fixed_r":
+        rr = min(float(_extra(st, "target_r", 2.5)), g.max_rr)
+        if rr < min_rr:
+            return {**result, "ok": False, "reason": f"target_r {rr:g} below min_rr {min_rr:g}"}
+        return {**result, "ok": True, "reason": "", "target": round(entry + s * rr * risk, 2), "rr": round(rr, 2),
+                "next_level": None}
     elif target_mode in ("mean", "band_opposite") and ctx.get("band"):
         lo, mid, hi = ctx["band"]
         edge = mid if target_mode == "mean" else (hi if s > 0 else lo)
@@ -360,7 +480,7 @@ def score(*, setup, s, htf, quality_bonus, close_pos, vol_ratio, geo, regime_fit
     indices) are left out and the score is scaled back to 100."""
     htf_aligned = htf * s
     raw = {
-        "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup in ("range_reversal", "mean_reversion")
+        "htf_trend": 25 if htf_aligned >= 1 else 12 if (htf_aligned > 0 or (setup in ("range_reversal", "mean_reversion", "choch_flip")
                                                                              and htf_aligned == 0)) else 0,
         "setup_quality": min(25, 15 + (5 if close_pos >= 0.75 else 2 if close_pos >= 0.6 else 0) + quality_bonus),
         "volume_oi": _volume_oi_points(vol_ratio, oi_change_pct, price_change, s) if volume_available else None,
@@ -457,7 +577,7 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             hard_block = not permitted and setup_regime in sel.hard_permission_regimes
             stages.append(stage("regime", "pass" if permitted else "fail" if hard_block else "soft_fail",
                                 "" if permitted else f"{setup} {direction} not allowed in {setup_regime}"))
-            if setup in ("pullback", "breakout") and htf * s <= 0:
+            if setup in ("pullback", "breakout", "fib_pullback") and htf * s <= 0:
                 if not scored_mode:
                     cand["reject_reason"] = "higher-timeframe trend does not agree"
                     stages.append(stage("setup", "fail", cand["reject_reason"]))
@@ -480,6 +600,10 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
                 ok, why, bonus, soft = _breakout(bars, ctx, s, volume_needed)
             elif setup == "mean_reversion":
                 ok, why, bonus, soft = _mean_reversion(bars, ctx, s)
+            elif setup == "fib_pullback":
+                ok, why, bonus, soft = _fib_pullback(bars, ctx, s)
+            elif setup == "choch_flip":
+                ok, why, bonus, soft = _choch_flip(bars, ctx, s)
             else:
                 ok, why, bonus, soft = _range_reversal(bars, ctx, s)
             if not ok:
@@ -509,6 +633,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
             regime_fit = (10 if rule.get("preferred") else 5) if permitted else 0
             if setup == "mean_reversion" and "band" in ctx:
                 cand["band"] = [round(v, 2) for v in ctx["band"]]
+            if "fib" in ctx:
+                cand["fib"] = ctx["fib"]
             scored = score(setup=setup, s=s, htf=htf, quality_bonus=bonus,
                            close_pos=_close_position(bars[-1], s), vol_ratio=ctx["vol_ratio"], geo=geo,
                            regime_fit=regime_fit, is_stock=is_stock, rs_points=rs_points,
