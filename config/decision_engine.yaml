@@ -265,6 +265,35 @@ instruments:
     rs_lookback_days: 126          # must outperform NIFTY over ~6 months
     max_position_value: 200000     # proposed: own book, to be confirmed
     max_open_positions: 3          # proposed: own book, to be confirmed
+  wolfe:                           # bullish Wolfe Wave — cash, long only, own book (agreed 23 Nov 2026)
+    enabled: true
+    primary_tf: day
+    directions: [long]
+    shortlist_per_scan: 2
+    hold_trading_days: 20          # time stop
+    min_primary_bars: 120
+    entry_window: ["09:15", "15:15"]   # buy limit at the signal close, next session
+    event_block_days: 5            # results/RBI/Budget checked for the first days of the hold
+    min_turnover_cr: 50
+    swing_bars: 2                  # 5-bar fractal swings for points 1-5
+    min_span_bars: 15              # point 1 to point 5
+    max_span_bars: 150
+    min_time_ratio: 0.5            # bars 3->5 vs bars 1->3 (symmetry)
+    max_time_ratio: 2.0
+    line_tolerance_atr: 0.25       # point 5 may stop this close above the 1-3 line
+    max_overshoot_atr: 1.0         # ...or overshoot below it by at most this ("sweet zone")
+    require_convergence: true      # 2-4 line falls faster than the 1-3 line
+    stop_atr: 0.25                 # stop this far under point 5
+    max_stop_pct: 8
+    min_rr: 2.0                    # target = the 1-4 line on the signal day, at least 2R away
+    max_position_value: 200000
+    max_open_positions: 3
+    exit_management:               # this book's exit (the global one stays fixed): breakeven at 1R, then 2 ATR trail
+      mode: breakeven_trail
+      breakeven_at_r: 1.0
+      breakeven_lock_r: 0.0
+      trail_start_r: 1.0
+      trail_atr: 2.0
 
 strategies:
   pullback:

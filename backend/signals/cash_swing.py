@@ -132,7 +132,7 @@ def _save(run_id: int, signal_date: str, rows: list[dict], segment: str = SEGMEN
                  json.dumps({k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend",
                                                      "rs_vs_nifty_pct", "risk_mult", "turnover_cr", "pattern",
                                                      "penalties", "tradingsymbol", "lots", "oi_change_pct",
-                                                     "or_high", "or_low", "stop_type", "range_atr")}))
+                                                     "or_high", "or_low", "stop_type", "range_atr", "token")}))
                 for r in rows
             ],
         )

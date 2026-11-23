@@ -28,6 +28,7 @@ import {
   Spline,
   Lightbulb,
   type LucideIcon,
+  Waves,
 } from "lucide-react";
 
 type NavItem = {
@@ -53,6 +54,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
+      { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, cash, AI-reviewed" },
       { href: "/hourly-scan", label: "Futures & MCX Scan", icon: Radar, hint: "Hourly futures and commodity setups" },
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
       { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles + their record" },

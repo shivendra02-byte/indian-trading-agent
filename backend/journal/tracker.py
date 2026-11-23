@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timedelta
 
-from backend.decision.config import get_config
+from backend.decision.config import exit_rule_for, get_config
 from backend.journal.simulate import delivery_charges, futures_charges, simulate
 from backend.journal.store import list_records, update_record
 from backend.marketdata.candles import get_candles
@@ -25,7 +25,7 @@ def _risk_per_trade() -> float:
     return g.capital * g.risk.risk_per_trade_pct / 100
 
 
-CASH_SEGMENTS = ("cash_swing", "cup_handle")   # delivery trades: next-day hourly entry, then daily bars
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")   # delivery trades: next-day hourly entry, then daily bars
 
 
 def _cash_max_value(segment: str = "cash_swing") -> float:
@@ -124,7 +124,7 @@ def track_record(rec: dict) -> dict:
                       time_stop_date=rec["time_stop_date"],
                       trail_start_r=get_config().global_.trailing_shadow.start_r,
                       trail_atr=get_config().global_.trailing_shadow.trail_atr,
-                      exit_rule=get_config().global_.exit_management.model_dump())
+                      exit_rule=exit_rule_for(rec["segment"]))
     status = result["status"]
     if status == "pending":
         return {}

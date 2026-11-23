@@ -38,9 +38,9 @@ log = logging.getLogger(__name__)
 
 APPROVED = "approved"
 REJECTED = "rejected_panel"
-CASH_SEGMENTS = ("cash_swing", "cup_handle")
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")
 SEGMENT_LABEL = {"stock_futures": "Stock futures", "index_futures": "Index futures", "mcx": "MCX",
-                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle"}
+                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe Wave"}
 
 
 # --- limits ------------------------------------------------------------------------------

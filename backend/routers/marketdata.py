@@ -68,6 +68,20 @@ def cup_handle_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/wolfe")
+def wolfe_latest():
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.wolfe import SEGMENT
+    return latest_run(segment=SEGMENT) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/wolfe/run")
+def wolfe_run():
+    """Run the Wolfe Wave scan now on the latest completed daily bars."""
+    from backend.signals.wolfe import run_scan
+    return run_scan(force=True)
+
+
 @router.get("/api/scans/orb")
 def orb_latest():
     from backend.signals.cash_swing import latest_run

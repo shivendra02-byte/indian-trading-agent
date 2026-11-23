@@ -275,6 +275,12 @@ export const addIdea = (data: IdeaInput) => fetchAPI(`/api/ideas`, { method: "PO
 export const deleteIdea = (id: number) => fetchAPI(`/api/ideas/${id}`, { method: "DELETE" });
 export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST" });
 
+// Wolfe Wave scan (cash, long only) + stored candles for pattern charts
+export const getWolfeScan = () => fetchAPI(`/api/scans/wolfe`);
+export const runWolfeScan = () => fetchAPI(`/api/scans/wolfe/run`, { method: "POST" });
+export const getStoredCandles = (token: number, interval: string, limit: number) =>
+  fetchAPI(`/api/marketdata/candles?token=${token}&interval=${interval}&limit=${limit}`);
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>
