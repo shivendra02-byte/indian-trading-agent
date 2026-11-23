@@ -17,6 +17,41 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 # In-memory task state
 _tasks: dict[str, dict] = {}
 
+# Report fields the pipeline streams; the snapshot keeps the latest text of each.
+_SNAPSHOT_SIDES = {"debate": "debates", "risk_debate": "risk_debates"}
+
+
+def _new_progress() -> dict:
+    return {"reports": {}, "debates": {}, "risk_debates": {}, "heartbeat": "", "signal": None}
+
+
+def _track(task_id: str, event: dict) -> None:
+    """Keep everything streamed so far, so a browser that lost the WebSocket (iPad
+    asleep, tab reloaded) can catch up with GET /api/analysis/{task_id}."""
+    task = _tasks.get(task_id)
+    if task is None:
+        return
+    progress = task.setdefault("progress", _new_progress())
+    kind = event.get("type")
+    if kind == "report":
+        progress["reports"][event["section"]] = event["content"]
+    elif kind in _SNAPSHOT_SIDES:
+        progress[_SNAPSHOT_SIDES[kind]][event["side"]] = event["content"]
+    elif kind == "heartbeat":
+        progress["heartbeat"] = event.get("last_activity") or f"Processing chunk #{event.get('chunk')}"
+    elif kind == "signal":
+        progress["signal"] = event.get("decision")
+    task["updated_at"] = time.time()
+
+
+def _emit(loop, task_id: str, event: dict) -> None:
+    """Record the event, then stream it. A failed send never stops the analysis."""
+    _track(task_id, event)
+    try:
+        loop.run_until_complete(manager.send_event(task_id, event))
+    except Exception as exc:  # pragma: no cover - a dead socket must not kill the run
+        print(f"[Analysis {task_id}] could not stream {event.get('type')}: {exc}", flush=True)
+
 
 def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict, selected_analysts: list[str] = None):
     """Run the trading agent analysis in a background thread."""
@@ -66,11 +101,11 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
                 last_message = f"{msg_type}{tool_calls}: {content_preview}"
             print(f"[Analysis {task_id}] Chunk #{chunk_count} — {last_message}", flush=True)
 
-            loop.run_until_complete(manager.send_event(task_id, {
+            _emit(loop, task_id, {
                 "type": "heartbeat",
                 "chunk": chunk_count,
                 "last_activity": last_message[:120],
-            }))
+            })
 
             # Detect report updates
             for field in ["market_report", "sentiment_report", "news_report",
@@ -80,11 +115,11 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
                 if val and val != prev_reports.get(field):
                     prev_reports[field] = val
                     print(f"[Analysis {task_id}] Report completed: {field}", flush=True)
-                    loop.run_until_complete(manager.send_event(task_id, {
+                    _emit(loop, task_id, {
                         "type": "report",
                         "section": field,
                         "content": val,
-                    }))
+                    })
 
             # Detect debate updates
             invest_state = chunk.get("investment_debate_state")
@@ -93,20 +128,20 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
                 bear = invest_state.get("bear_history", "")
                 if bull and bull != prev_reports.get("bull_history"):
                     prev_reports["bull_history"] = bull
-                    loop.run_until_complete(manager.send_event(task_id, {
+                    _emit(loop, task_id, {
                         "type": "debate", "side": "bull", "content": bull,
-                    }))
+                    })
                 if bear and bear != prev_reports.get("bear_history"):
                     prev_reports["bear_history"] = bear
-                    loop.run_until_complete(manager.send_event(task_id, {
+                    _emit(loop, task_id, {
                         "type": "debate", "side": "bear", "content": bear,
-                    }))
+                    })
                 judge = invest_state.get("judge_decision", "")
                 if judge and judge != prev_reports.get("judge_decision"):
                     prev_reports["judge_decision"] = judge
-                    loop.run_until_complete(manager.send_event(task_id, {
+                    _emit(loop, task_id, {
                         "type": "report", "section": "investment_plan", "content": judge,
-                    }))
+                    })
 
             # Detect risk debate updates
             risk_state = chunk.get("risk_debate_state")
@@ -116,9 +151,9 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
                     val = risk_state.get(key, "")
                     if val and val != prev_reports.get(f"risk_{key}"):
                         prev_reports[f"risk_{key}"] = val
-                        loop.run_until_complete(manager.send_event(task_id, {
+                        _emit(loop, task_id, {
                             "type": "risk_debate", "side": side, "content": val,
-                        }))
+                        })
 
         # Get final state
         final_state = chunk  # Last chunk is the final state
@@ -128,17 +163,17 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
         stats_summary = stats.summary()
 
         # Send final events
-        loop.run_until_complete(manager.send_event(task_id, {
+        _emit(loop, task_id, {
             "type": "signal", "decision": signal, "ticker": ticker,
-        }))
-        loop.run_until_complete(manager.send_event(task_id, {
+        })
+        _emit(loop, task_id, {
             "type": "stats", **stats_summary,
-        }))
-        loop.run_until_complete(manager.send_event(task_id, {
+        })
+        _emit(loop, task_id, {
             "type": "complete",
             "duration_seconds": round(duration, 1),
             "stats": stats_summary,
-        }))
+        })
 
         # Save to DB
         invest_state = final_state.get("investment_debate_state", {})
@@ -167,13 +202,15 @@ def _run_analysis_sync(task_id: str, ticker: str, trade_date: str, config: dict,
         save_analysis(task_id, result_data)
         _tasks[task_id]["status"] = "completed"
         _tasks[task_id]["result"] = result_data
+        _tasks[task_id]["finished_at"] = time.time()
 
     except Exception as e:
         _tasks[task_id]["status"] = "error"
         _tasks[task_id]["error"] = str(e)
-        loop.run_until_complete(manager.send_event(task_id, {
+        _tasks[task_id]["finished_at"] = time.time()
+        _emit(loop, task_id, {
             "type": "error", "message": str(e),
-        }))
+        })
     finally:
         loop.close()
 
@@ -194,6 +231,8 @@ def run_analysis(req: AnalysisRequest):
         "ticker": ticker,
         "trade_date": req.trade_date,
         "analysts": req.analysts,
+        "started_at": time.time(),
+        "progress": _new_progress(),
     }
 
     thread = threading.Thread(
@@ -230,8 +269,11 @@ def get_analysis_result(task_id: str):
     if task_id in _tasks:
         task = _tasks[task_id]
         if task["status"] == "completed":
-            return task.get("result", {})
-        return {"task_id": task_id, "status": task["status"]}
+            return {**task.get("result", {}), "task_id": task_id, "status": "completed"}
+        # Still running (or failed): everything streamed so far, so the page can catch up.
+        return {"task_id": task_id, "status": task["status"], "ticker": task.get("ticker"),
+                "trade_date": task.get("trade_date"), "error": task.get("error"),
+                "started_at": task.get("started_at"), "progress": task.get("progress") or _new_progress()}
 
     # Check DB
     result = get_analysis(task_id)
@@ -386,6 +428,18 @@ def get_memory_stats():
     except Exception as e:
         print(f"[Analysis] Memory stats failed: {e!r}", flush=True)
         return {"error": "Could not load agent memory stats."}
+
+
+@router.get("/tasks/recent")
+def recent_tasks(hours: float = 24):
+    """Analyses started since this backend started (newest first): running, failed or done.
+    Lets the page find an analysis it lost track of; finished ones are also in history."""
+    since = time.time() - hours * 3600
+    rows = [{"task_id": tid, "ticker": t.get("ticker"), "trade_date": t.get("trade_date"),
+             "status": t.get("status"), "error": t.get("error"), "started_at": t.get("started_at"),
+             "finished_at": t.get("finished_at")}
+            for tid, t in list(_tasks.items()) if (t.get("started_at") or 0) >= since]
+    return sorted(rows, key=lambda r: r["started_at"] or 0, reverse=True)
 
 
 @router.get("/history/list")

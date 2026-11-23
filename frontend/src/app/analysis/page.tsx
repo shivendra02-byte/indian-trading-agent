@@ -59,6 +59,25 @@ function AnalysisPageInner() {
   const [language, setLanguage] = useState("English");
   const [calcOpen, setCalcOpen] = useState(false);
 
+  // Catch up with an analysis the page lost track of: on load (Safari reloads a tab
+  // that sat in the background) and whenever the screen comes back on.
+  const resume = analysis.resume;
+  useEffect(() => {
+    const st = useAnalysisStore.getState();
+    if (st.status === "idle" || st.status === "running") void resume();
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && useAnalysisStore.getState().status === "running") {
+        void resume();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
+  }, [resume]);
+
   const handleRun = () => {
     if (!tickerInput.trim()) return;
     analysis.start(tickerInput.trim(), tradeDateInput, {
