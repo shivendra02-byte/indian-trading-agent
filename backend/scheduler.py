@@ -44,12 +44,20 @@ DAILY_BUFFER = timedelta(minutes=10)
 MORNING_REFRESH_AT = time(8, 30)
 MORNING_RETRY = timedelta(minutes=15)
 CASH_SWING_SCAN_AT = time(15, 45)
-BAR_LENGTH = {"10minute": timedelta(minutes=10), "60minute": timedelta(hours=1)}
+BAR_LENGTH = {"5minute": timedelta(minutes=5), "10minute": timedelta(minutes=10), "60minute": timedelta(hours=1)}
 # (exchange, interval) pairs the scheduler keeps fresh.
 # ORB: first possible signal bar ends 09:55 (after the 30-minute range); no entry in the last 30 minutes.
 ORB_FIRST_SIGNAL_END = time(9, 55)
 ORB_LAST_SIGNAL_END = time(14, 50)
 SCHEDULE = ((NSE, "10minute"), (NSE, "60minute"), (NSE, "day"), (MCX, "60minute"), (MCX, "day"))
+
+
+def _nifty_options_on() -> bool:
+    try:
+        from backend.signals.nifty_options import settings
+        return bool(settings()["enabled"])
+    except Exception:
+        return False
 
 
 def scheduler_enabled() -> bool:
@@ -117,6 +125,12 @@ def due_jobs(now: datetime, state: dict) -> list[str]:
             and ORB_FIRST_SIGNAL_END <= bar10.time() <= ORB_LAST_SIGNAL_END
             and state.get("scans_done", {}).get("orb") != bar10):
         jobs.append("scan:orb")
+    if state.get("nifty_options"):   # NIFTY option buying: 5-minute bars, then the scan
+        bar5 = latest_closed_bar(NSE, "5minute", now)
+        if bar5 and (done.get("candles:NSE:5minute") is None or done["candles:NSE:5minute"] < bar5):
+            jobs.append("candles:NSE:5minute")
+        elif bar5 and state.get("scans_done", {}).get("nifty_opt") != bar5:
+            jobs.append("scan:nifty_opt")
     nse_close = latest_closed_bar(NSE, "day", now)
     day_synced = done.get("candles:NSE:day")
     if (nse_close and now.time() >= CASH_SWING_SCAN_AT and day_synced and day_synced >= nse_close
@@ -177,6 +191,7 @@ class MarketDataScheduler:
             "last_morning_attempt": self.last_morning_attempt,
             "done": self.done,
             "scans_done": self.scans_done,
+            "nifty_options": _nifty_options_on(),
         }
 
     def tick(self, now: datetime | None = None) -> list[str]:
@@ -224,6 +239,13 @@ class MarketDataScheduler:
                 from backend.signals.orb import run_orb_scan
                 result = run_orb_scan(now=now)
                 self.scans_done["orb"] = latest_closed_bar(NSE, "10minute", now)
+            elif job == "scan:nifty_opt":
+                from backend.signals.nifty_options import run_scan as run_opt_scan
+                try:
+                    result = run_opt_scan(now=now)
+                except Exception as exc:  # never let it stop the scheduler
+                    result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                self.scans_done["nifty_opt"] = latest_closed_bar(NSE, "5minute", now)
             elif job == "scan:cash_swing":
                 from backend.signals.cash_swing import run_scan
                 result = run_scan(now=now)

@@ -100,6 +100,7 @@ global:
     - wolfe
     - orb
     - momentum
+    - nifty_options                # NIFTY option buying: shadow until it shows an edge
   my_trades:                       # your own futures trades: trailing stop worked out by the system (asked 23 Nov 2026)
     interval: 60minute             # bars the stop is trailed on (60minute | 10minute)
     atr_period: 14
@@ -249,6 +250,39 @@ instruments:
     min_primary_bars: 60
   stock_options:
     enabled: false                 # excluded from the initial version
+  nifty_options:                   # NIFTY option buying on 5-minute bars (asked 23 Nov 2026) — shadow first
+    enabled: true
+    primary_tf: 5minute
+    directions: [long, short]      # long = buy the ATM call, short = buy the ATM put
+    setups: [opt_vwap_ema, opt_orb, opt_supertrend]   # all tracked side by side; the backtest/shadow record picks
+    first_signal: "09:30"          # signal bar end
+    last_signal: "14:30"
+    exit_time: "15:15"             # everything out with the bar ending at/after this time
+    expiry_day_cutoff: "13:00"     # no new trade on the weekly expiry day from this time
+    max_signals_per_setup_day: 2
+    ema_fast: 9
+    ema_slow: 21                   # also the 15-minute trend filter (close vs EMA21 of 15-minute bars)
+    structure_bars: 3              # opt_vwap_ema: first close beyond the last 3 bars' extreme
+    orb_minutes: 15                # opt_orb: opening range
+    supertrend_period: 10
+    supertrend_mult: 3.0
+    stop_lookback: 3               # stop beyond the extreme of the last 3 bars ...
+    stop_buffer_atr: 0.1           # ... plus 0.1 ATR (5-minute ATR14)
+    min_stop_atr: 0.5
+    max_stop_atr: 2.0
+    target_r: 2.0
+    entry_valid_bars: 2            # limit at the signal close for the next 2 bars
+    strike_step: 50                # ATM strike rounding
+    lot_size: 65                   # fallback when the instrument master has none
+    assumed_delta: 0.5             # option P&L estimate: index points x lot x delta
+    underlying: NIFTY
+    time_stop: false
+    exit_management:               # breakeven at 1R, then 2 ATR behind the best close; out at 15:15
+      mode: breakeven_trail
+      breakeven_at_r: 1.0
+      breakeven_lock_r: 0.0
+      trail_start_r: 1.0
+      trail_atr: 2.0
   option_spreads:                  # index credit spreads on end-of-day chains (agreed 22 Nov 2026) — paper, AI-reviewed
     enabled: true
     short_delta: [0.15, 0.20]      # short leg |delta| band (closest to the middle)

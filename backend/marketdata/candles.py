@@ -17,6 +17,7 @@ from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
 
 # Interval -> (bar length, max days per Kite request; kept under Kite's limits).
 INTERVALS: dict[str, tuple[timedelta, int]] = {
+    "5minute": (timedelta(minutes=5), 90),
     "10minute": (timedelta(minutes=10), 90),
     "60minute": (timedelta(hours=1), 365),
     "day": (timedelta(days=1), 1800),

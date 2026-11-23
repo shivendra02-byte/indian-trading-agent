@@ -82,6 +82,31 @@ def wolfe_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/nifty-options")
+def nifty_options_latest():
+    """Latest 5-minute NIFTY option-buying scan and today's signals with their outcome."""
+    from datetime import date
+    from backend.journal.store import list_records
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.nifty_options import SCAN_SEGMENT, SEGMENT, option_premium_move, settings
+    recs = list_records("segment = ?", (SEGMENT,), limit=60)
+    for r in recs:
+        r["premium"] = option_premium_move(r) if r.get("fill_ts") else None
+    cfg = settings()
+    return {"latest_run": latest_run(segment=SCAN_SEGMENT), "records": recs, "today": date.today().isoformat(),
+            "settings": {k: cfg[k] for k in ("enabled", "setups", "first_signal", "last_signal", "exit_time",
+                                               "target_r", "expiry_day_cutoff", "max_signals_per_setup_day")},
+            "shadow": "nifty_options" in __import__("backend.decision.config", fromlist=["get_config"])
+            .get_config().global_.shadow_strategies}
+
+
+@router.post("/api/scans/nifty-options/run")
+def nifty_options_run():
+    """Run the NIFTY option-buying scan now on the latest stored 5-minute bar."""
+    from backend.signals.nifty_options import run_scan
+    return run_scan(force=True)
+
+
 @router.get("/api/scans/orb")
 def orb_latest():
     from backend.signals.cash_swing import latest_run

@@ -27,6 +27,7 @@ import {
   Rocket,
   Scale,
   type LucideIcon,
+  Zap,
 } from "lucide-react";
 
 type NavItem = {
@@ -71,6 +72,7 @@ const navGroups: NavGroup[] = [
     title: "OPTIONS",
     items: [
       { href: "/option-spreads", label: "Option Spreads", icon: Scale, hint: "Index credit spreads, AI-reviewed" },
+      { href: "/nifty-options", label: "NIFTY Option Buying", icon: Zap, hint: "5-min call/put signals (shadow)" },
       { href: "/options-data", label: "Option Data", icon: Layers, hint: "Option history, IV, delta" },
     ],
   },

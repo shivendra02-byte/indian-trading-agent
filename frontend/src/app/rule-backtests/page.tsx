@@ -99,6 +99,8 @@ const SEGMENT_LABEL: Record<string, string> = {
   stock_futures_proxy: "Stock futures (1H, spot proxy)",
   orb_proxy: "Stock futures ORB (10-min, spot proxy)",
   index_futures_proxy: "Index futures (1H, NIFTY/BANKNIFTY spot proxy)",
+  wolfe: "Wolfe Wave (daily, cash)",
+  nifty_options_proxy: "NIFTY option buying (5-min, R on the index)",
 };
 
 function formatEta(seconds: number | null | undefined): string {
