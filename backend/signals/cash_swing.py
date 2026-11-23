@@ -92,8 +92,12 @@ def expected_last_daily_bar(now: datetime) -> date:
     return previous_trading_day(today)
 
 
-def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250) -> str | None:
-    """None if OK, else the reason. Checks freshness, gaps in the last 20 days, volume and depth."""
+def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250,
+                 need_volume: bool = True) -> str | None:
+    """None if OK, else the reason. Checks freshness, gaps in the last 20 days, volume and depth.
+
+    ``need_volume=False`` for index spot (NIFTY, BANKNIFTY ...): Kite returns volume 0 for
+    indices, so a volume check there would block every scan."""
     if len(bars) < min_bars:
         return f"only {len(bars)} daily bars (need {min_bars})"
     last = date.fromisoformat(bars[-1]["ts"][:10])
@@ -108,7 +112,7 @@ def data_quality(bars: list[dict], expected_last: date, min_bars: int = 250) -> 
     missing = [x for x in days if x not in have]
     if missing:
         return f"missing daily bars ({len(missing)} of the last 20 trading days)"
-    if not bars[-1].get("volume"):
+    if need_volume and not bars[-1].get("volume"):
         return "no volume on the last bar"
     return None
 
@@ -202,7 +206,7 @@ def run_scan(now: datetime | None = None, force: bool = False,
     # Market-level checks — fail closed for the whole scan.
     nifty = spot_instrument("NIFTY")
     nifty_bars = get_candles(nifty["instrument_token"], "day", limit=DAILY_BARS) if nifty else []
-    problem = data_quality(nifty_bars, signal_date) if nifty else "NIFTY instrument missing"
+    problem = data_quality(nifty_bars, signal_date, need_volume=False) if nifty else "NIFTY instrument missing"
     if problem:
         return _finish_run(run_id, "blocked", {"reason": f"NIFTY data: {problem}"})
     market = events.market_events_between(first, last, kinds=("RBI", "BUDGET"))

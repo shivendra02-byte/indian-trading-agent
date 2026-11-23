@@ -30,8 +30,8 @@ PROVIDERS_INFO = {
         "name": "Anthropic Claude",
         "key_format": "sk-ant-...",
         "signup_url": "https://console.anthropic.com/",
-        "models_deep": ["claude-opus-4-20250514", "claude-sonnet-4-20250514"],
-        "models_quick": ["claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"],
+        "models_deep": ["claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-4-20250514", "claude-sonnet-4-20250514"],
+        "models_quick": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-20250514"],
     },
     "openai": {
         "name": "OpenAI",
@@ -135,11 +135,11 @@ def test_api_key(provider: str, key: str | None = None) -> dict:
             from anthropic import Anthropic
             client = Anthropic(api_key=key)
             resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-5-5",
                 max_tokens=10,
                 messages=[{"role": "user", "content": "Say hi"}],
             )
-            return {"ok": True, "model": "claude-haiku-4-5-20251001", "message": "API key works!"}
+            return {"ok": True, "model": "claude-haiku-5-5", "message": "API key works!"}
 
         elif provider == "openai":
             from openai import OpenAI
