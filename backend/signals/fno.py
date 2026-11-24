@@ -81,6 +81,36 @@ def last_session_before(exchange: str, expiry: date, today: date) -> date:
     return max(d, today)
 
 
+def _last_scan_note(segment_key: str) -> str:
+    from backend.signals.cash_swing import latest_run
+    run = latest_run(segment=segment_key)
+    return f" Last scan: {run['started_at'][:16].replace('T', ' ')} ({run['status']})." if run else ""
+
+
+def closed_reason(exchange: str, now: datetime, segment_key: str) -> str:
+    """Why "Run now" can't scan on a closed day (asked 24 Nov 2026). An hourly signal from the
+    last session's final bar would have its entry window already over, so nothing is re-scanned."""
+    from tradingagents.utils.market_calendar import holiday_name
+    d, nxt = now.date(), now.date() + timedelta(days=1)
+    while not session_windows(exchange, nxt):
+        nxt += timedelta(days=1)
+    first = datetime.combine(nxt, session_windows(exchange, nxt)[0][0]) + timedelta(hours=1)
+    why = holiday_name(d) if d.weekday() < 5 else "weekend"
+    return (f"{exchange} closed today ({why or 'holiday'}). An hourly scan needs a completed bar of today's "
+            f"session; the next one is after the bar ending {first:%a %d %b %H:%M}.{_last_scan_note(segment_key)}")
+
+
+def waiting_reason(exchange: str, now: datetime, segment_key: str) -> str:
+    """No completed hourly bar yet today: say when the first one closes."""
+    from backend.scheduler import CANDLE_BUFFER
+    windows = session_windows(exchange, now.date())
+    start, close = windows[0]
+    first = min(datetime.combine(now.date(), start) + timedelta(hours=1), datetime.combine(now.date(), close))
+    partial = " (morning session closed today)" if exchange == MCX and start >= time(17, 0) else ""
+    return (f"no completed hourly bar yet{partial}; the first bar closes at {first:%H:%M}, "
+            f"scan from about {first + CANDLE_BUFFER:%H:%M}.{_last_scan_note(segment_key)}")
+
+
 def latest_hourly_bar_start(exchange: str, now: datetime) -> datetime | None:
     """Start time of the last completed 1h bar today (Kite stamps bars by start)."""
     from backend.scheduler import CANDLE_BUFFER, bar_ends
@@ -186,10 +216,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         return {"status": "skipped", "reason": "paused", "tracking": tracked}
     windows = session_windows(exchange, now.date())
     if not windows:
-        return {"status": "skipped", "reason": f"{exchange} closed today", "tracking": tracked}
+        return {"status": "skipped", "reason": closed_reason(exchange, now, segment_key), "tracking": tracked}
     bar_start = latest_hourly_bar_start(exchange, now)
     if bar_start is None:
-        return {"status": "skipped", "reason": "no completed hourly bar yet", "tracking": tracked}
+        return {"status": "skipped", "reason": waiting_reason(exchange, now, segment_key), "tracking": tracked}
     signal_end = min(bar_start + timedelta(hours=1), datetime.combine(now.date(), windows[-1][1]))
     last_min = int(_x(lead, "no_entry_last_minutes", 30))
     first_min = int(_x(lead, "no_entry_first_minutes", 15))

@@ -25,7 +25,7 @@ from backend.signals.regime import current_regime
 from backend.signals.selection import choose_shortlist
 from backend.signals.setups import evaluate, min_score, stage
 from backend.system_state import is_paused
-from tradingagents.utils.market_calendar import IST, is_trading_day, previous_trading_day
+from tradingagents.utils.market_calendar import IST, holiday_name, is_trading_day, previous_trading_day
 
 SEGMENT = "cash_swing"
 DAILY_BARS = 300
@@ -194,7 +194,16 @@ def run_scan(now: datetime | None = None, force: bool = False,
     if is_paused():
         return {"status": "skipped", "reason": "paused"}
     if not is_trading_day(today):
-        return {"status": "skipped", "reason": "not an NSE trading day"}
+        if not force:
+            return {"status": "skipped", "reason": "not an NSE trading day"}
+        # "Run now" on a holiday/weekend (asked 24 Nov 2026): scan the last session's daily bars
+        # (entries are for the next session) unless that session's scan already ran.
+        last = expected_last_daily_bar(now).isoformat()
+        done = _last_ok_run(last)
+        if done:
+            return {"status": "skipped", "reason": f"market closed today ({holiday_name(today) or 'weekend'}); "
+                    f"the scan for {last} already ran at {done['started_at'][11:16]} — results below",
+                    "signal_date": last, "run_id": done["id"]}
     if now.time() < cfg["scan_after"] and not force:
         return {"status": "skipped", "reason": f"before {cfg['scan_after']:%H:%M}"}
 
@@ -292,6 +301,14 @@ def run_scan(now: datetime | None = None, force: bool = False,
         "journal_records": sum(1 for r in rows if r.get("trackable")), "tracking": tracked,
         "rule_version": get_config().rule_version,
     })
+
+
+def _last_ok_run(signal_date: str, segment: str = SEGMENT) -> dict | None:
+    ensure_scan_tables()
+    with get_db() as conn:
+        row = conn.execute("SELECT id, started_at FROM scan_runs WHERE segment = ? AND signal_date = ? "
+                           "AND status = 'ok' ORDER BY id DESC LIMIT 1", (segment, signal_date)).fetchone()
+    return dict(row) if row else None
 
 
 def latest_run(signal_date: str | None = None, segment: str = SEGMENT) -> dict | None:

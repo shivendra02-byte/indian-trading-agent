@@ -144,7 +144,13 @@ export default function OptionSpreadsPage() {
   const runNow = async () => {
     setBusy("run");
     try {
-      const res = (await runOptionSpreads()) as { status: string; reason?: string; results?: Record<string, string> };
+      const res = (await runOptionSpreads()) as {
+        status: string;
+        reason?: string;
+        note?: string;
+        results?: Record<string, string>;
+      };
+      if (res.note) toast.message(res.note);
       if (res.status === "ok") toast.success(Object.entries(res.results ?? {}).map(([k, x]) => `${k}: ${x}`).join(" · ") || "Done");
       else toast.message(res.reason ?? res.status);
       fetchData();

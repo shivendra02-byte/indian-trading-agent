@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/my-trades", tags=["my-trades"])
 
 class TradeRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=25)
-    exchange: Literal["NFO", "MCX"] = "NFO"
+    exchange: Literal["NFO", "BFO", "MCX"] = "NFO"
     contract: str | None = Field(default=None, max_length=40)
     direction: Literal["long", "short"]
     lots: int = Field(ge=1, le=1000)
@@ -41,7 +41,7 @@ def list_trades():
 
 
 @router.get("/contracts")
-def contracts(symbol: str = Query(..., min_length=1, max_length=25), exchange: Literal["NFO", "MCX"] = "NFO"):
+def contracts(symbol: str = Query(..., min_length=1, max_length=25), exchange: Literal["NFO", "BFO", "MCX"] = "NFO"):
     return {"contracts": my_trades.contracts(symbol, exchange)}
 
 
@@ -55,7 +55,8 @@ def add(data: TradeRequest):
 
 @router.post("/refresh")
 def refresh():
-    return my_trades.update_trades()
+    """Recalculate: fetch each open trade's bars from Kite, then re-follow it."""
+    return my_trades.recalculate()
 
 
 @router.post("/{trade_id}/close")

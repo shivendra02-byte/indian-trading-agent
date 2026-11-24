@@ -9,6 +9,7 @@ import {
   getMomentumBacktests,
   runMomentumRank,
   runMomentumScan,
+  setMomentumSide,
   startMomentumBacktest,
 } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -210,6 +211,19 @@ export default function MomentumPage() {
     }
   };
 
+  const toggleSide = async (side: "long" | "short", enabled: boolean) => {
+    setBusy(side);
+    try {
+      await setMomentumSide(side, enabled);
+      toast.success(`${side === "long" ? "Long" : "Short"} entries switched ${enabled ? "on" : "off"}`);
+      fetchData();
+    } catch (e) {
+      toast.error(errorMessage(e, "Could not change the switch"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const startBacktest = () => {
     const sides = [form.long ? "long" : null, form.short ? "short" : null].filter(Boolean) as ("long" | "short")[];
     if (!sides.length) {
@@ -267,8 +281,23 @@ export default function MomentumPage() {
           <CardHeader>
             <CardTitle className="flex flex-wrap items-center gap-2 text-base">
               Week of {data.week ?? "—"}
-              <Badge variant={data.long_enabled ? "default" : "outline"}>Long {data.long_enabled ? "on" : "off"}</Badge>
-              <Badge variant={data.short_enabled ? "default" : "outline"}>Short {data.short_enabled ? "on" : "off"}</Badge>
+              {(["long", "short"] as const).map((side) => {
+                const on = side === "long" ? data.long_enabled : data.short_enabled;
+                return (
+                  <Button
+                    key={side}
+                    size="sm"
+                    variant={on ? "default" : "outline"}
+                    className="h-7 px-2 text-xs"
+                    disabled={busy !== null}
+                    title={`Click to switch ${side} entries ${on ? "off" : "on"} (open positions are still followed)`}
+                    onClick={() => toggleSide(side, !on)}
+                  >
+                    {busy === side ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                    {side === "long" ? "Long" : "Short"} {on ? "on" : "off"}
+                  </Button>
+                );
+              })}
               {!data.enabled && <Badge variant="destructive">Disabled</Badge>}
             </CardTitle>
             <CardDescription>

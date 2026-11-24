@@ -61,16 +61,17 @@ class FollowTests(unittest.TestCase):
 
     def test_validate(self):
         from backend.my_trades import validate
-        ok = validate({"symbol": "reliance", "direction": "long", "lots": 1, "entry_price": 100, "initial_stop": 98},
-                      ROWS)
+        when = {"entry_time": "2026-11-23T10:05"}
+        ok = validate({"symbol": "reliance", "direction": "long", "lots": 1, "entry_price": 100, "initial_stop": 98,
+                       **when}, ROWS)
         self.assertEqual((ok["contract"], ok["instrument_token"], ok["interval"]), ("RELIANCE26DECFUT", 222, "60minute"))
         picked = validate({"symbol": "RELIANCE", "contract": "RELIANCE26NOVFUT", "direction": "long", "lots": 1,
-                           "entry_price": 100, "initial_stop": 98}, ROWS)
+                           "entry_price": 100, "initial_stop": 98, **when}, ROWS)
         self.assertEqual(picked["instrument_token"], 111)
         for bad in ({"initial_stop": 101}, {"lots": 0}, {"contract": "TCS26DECFUT"}, {"exchange": "MCX", "interval": "10minute"}):
             with self.assertRaises(ValueError):
                 validate({"symbol": "RELIANCE", "direction": "long", "lots": 1, "entry_price": 100, "initial_stop": 98,
-                          **bad}, ROWS)
+                          **when, **bad}, ROWS)
 
 
 class StoreTests(IsolatedStateTestCase, unittest.TestCase):
@@ -107,7 +108,8 @@ class StoreTests(IsolatedStateTestCase, unittest.TestCase):
             with mock.patch("backend.my_trades.contracts", return_value=ROWS), \
                     mock.patch("backend.marketdata.candles.get_candles", return_value=[]):
                 r = client.post("/api/my-trades", json={"symbol": "RELIANCE", "direction": "short", "lots": 1,
-                                                        "entry_price": 100, "initial_stop": 103},
+                                                        "entry_price": 100, "initial_stop": 103,
+                                                        "entry_time": "2026-11-23T10:05"},
                                 headers=csrf_headers(client))
                 self.assertEqual(r.status_code, 200, r.text)
                 bad = client.post("/api/my-trades", json={"symbol": "RELIANCE", "direction": "short", "lots": 1,

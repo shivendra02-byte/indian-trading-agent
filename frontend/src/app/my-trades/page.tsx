@@ -47,6 +47,8 @@ type Trade = {
   realised_r: number | null;
   realised_pnl: number | null;
   note: string | null;
+  best_close: number | null;
+  data_note: string | null;
 };
 type Settings = { interval: string; trail_atr: number; breakeven_at_r: number; trail_start_r: number };
 type ListResponse = { trades: Trade[]; settings: Settings };
@@ -85,7 +87,7 @@ export default function MyTradesPage() {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [exits, setExits] = useState<Record<number, string>>({});
   const [form, setForm] = useState({
-    exchange: "NFO" as "NFO" | "MCX",
+    exchange: "NFO" as "NFO" | "BFO" | "MCX",
     symbol: "",
     contract: "",
     direction: "long" as "long" | "short",
@@ -112,10 +114,10 @@ export default function MyTradesPage() {
 
   const set = (key: keyof typeof form, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
-  const findContracts = async () => {
-    if (!form.symbol) return;
+  const loadContracts = async (symbol: string, exchange: "NFO" | "BFO" | "MCX") => {
+    if (!symbol) return;
     try {
-      const res = (await getMyTradeContracts(form.symbol, form.exchange)) as { contracts: Contract[] };
+      const res = (await getMyTradeContracts(symbol, exchange)) as { contracts: Contract[] };
       setContracts(res.contracts);
       const active = res.contracts.find((c) => c.active) ?? res.contracts[0];
       set("contract", active?.contract ?? "");
@@ -123,6 +125,15 @@ export default function MyTradesPage() {
     } catch (e) {
       toast.error(errorMessage(e, "Could not load contracts"));
     }
+  };
+
+  const findContracts = () => loadContracts(form.symbol, form.exchange);
+
+  // Index futures in one tap (asked 24 Nov 2026): SENSEX trades on BSE (BFO).
+  const pickIndex = (symbol: string) => {
+    const exchange = symbol === "SENSEX" ? "BFO" : "NFO";
+    setForm((f) => ({ ...f, symbol, exchange }));
+    loadContracts(symbol, exchange);
   };
 
   const submit = async () => {
@@ -144,6 +155,7 @@ export default function MyTradesPage() {
       };
       const t = (await addMyTrade(payload)) as Trade;
       toast.success(`${t.contract} ${t.direction} added, stop ${fmt(t.current_stop)}`);
+      if (t.data_note) toast.warning(t.data_note);
       setForm((f) => ({ ...f, symbol: "", contract: "", entry_price: "", initial_stop: "", target: "", note: "", entry_time: nowLocal() }));
       setContracts([]);
       fetchData();
@@ -157,7 +169,9 @@ export default function MyTradesPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      await refreshMyTrades();
+      const res = (await refreshMyTrades()) as { fetch_problems?: Record<string, string> };
+      const problems = Object.values(res.fetch_problems ?? {});
+      if (problems.length) toast.warning(problems[0]);
       fetchData();
     } catch (e) {
       toast.error(errorMessage(e, "Refresh failed"));
@@ -222,6 +236,7 @@ export default function MyTradesPage() {
               <span className="text-xs text-muted-foreground">Exchange</span>
               <select className={input} value={form.exchange} onChange={(e) => set("exchange", e.target.value)}>
                 <option value="NFO">NSE F&amp;O</option>
+                <option value="BFO">BSE F&amp;O (SENSEX)</option>
                 <option value="MCX">MCX</option>
               </select>
             </label>
@@ -229,7 +244,7 @@ export default function MyTradesPage() {
               <span className="text-xs text-muted-foreground">Underlying</span>
               <input
                 className={`${input} w-32 uppercase`}
-                placeholder={form.exchange === "MCX" ? "GOLDM" : "RELIANCE"}
+                placeholder={form.exchange === "MCX" ? "GOLDM" : form.exchange === "BFO" ? "SENSEX" : "RELIANCE"}
                 value={form.symbol}
                 onChange={(e) => set("symbol", e.target.value)}
                 onBlur={findContracts}
@@ -238,6 +253,16 @@ export default function MyTradesPage() {
             <Button size="sm" variant="outline" onClick={findContracts} disabled={!form.symbol}>
               <Search className="mr-1 h-4 w-4" /> Contracts
             </Button>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Index futures</span>
+              <div className="flex gap-1">
+                {["NIFTY", "BANKNIFTY", "SENSEX"].map((idx) => (
+                  <Button key={idx} size="sm" variant={form.symbol === idx ? "default" : "outline"} className="h-8 px-2 text-xs" onClick={() => pickIndex(idx)}>
+                    {idx}
+                  </Button>
+                ))}
+              </div>
+            </div>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground">Contract</span>
               <select className={input} value={form.contract} onChange={(e) => set("contract", e.target.value)} disabled={!contracts.length}>
@@ -282,7 +307,7 @@ export default function MyTradesPage() {
               <span className="text-xs text-muted-foreground">Trail ATR</span>
               <input className={`${input} w-16`} inputMode="decimal" placeholder={String(s?.trail_atr ?? 2)} value={form.trail_atr} onChange={(e) => set("trail_atr", e.target.value)} />
             </label>
-            {form.exchange === "NFO" && (
+            {form.exchange !== "MCX" && (
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Trail on</span>
                 <select className={input} value={form.interval} onChange={(e) => set("interval", e.target.value)}>
@@ -325,6 +350,10 @@ export default function MyTradesPage() {
                       <td className="px-2 py-1 font-medium">
                         {t.contract}
                         <div className="text-muted-foreground">{t.entry_time.replace("T", " ").slice(0, 16)}</div>
+                        <div className="text-muted-foreground">
+                          {t.interval === "10minute" ? "10-min" : "1-hour"} bars · trail {t.trail_atr} ATR
+                          {t.atr ? ` (${fmt(t.atr)} pts)` : ""}
+                        </div>
                       </td>
                       <td className={`px-2 py-1 ${t.direction === "long" ? "text-emerald-600" : "text-red-600"}`}>{t.direction}</td>
                       <td className="px-2 py-1">{t.lots}</td>
@@ -337,10 +366,23 @@ export default function MyTradesPage() {
                             <Badge variant="outline" className="mt-0.5 text-[10px]">{STAGE[t.stop_stage] ?? t.stop_stage}</Badge>
                           </div>
                         )}
+                        {t.best_close != null && t.status !== "closed" && (
+                          <div className="text-muted-foreground" title="The trail follows the best close since entry">
+                            best close {fmt(t.best_close)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-1">
-                        {fmt(t.last_close)}
-                        {t.last_bar_ts && <div className="text-muted-foreground">{t.last_bar_ts.slice(11, 16)}</div>}
+                        {t.last_close == null && t.data_note ? (
+                          <span className="text-amber-600">{t.data_note}</span>
+                        ) : (
+                          fmt(t.last_close)
+                        )}
+                        {t.last_bar_ts && (
+                          <div className="text-muted-foreground" title="Start time of the last completed bar">
+                            bar {t.last_bar_ts.slice(5, 10).split("-").reverse().join("/")} {t.last_bar_ts.slice(11, 16)}
+                          </div>
+                        )}
                       </td>
                       <td className={`px-2 py-1 ${tone(t.status === "closed" ? t.realised_r : t.open_r)}`}>
                         {t.status === "closed"
@@ -353,6 +395,9 @@ export default function MyTradesPage() {
                           <Badge variant="destructive">stop hit {fmt(t.hit_price)}</Badge>
                         )}
                         {t.status === "target_hit" && <Badge>target {fmt(t.hit_price)}</Badge>}
+                        {t.hit_time && t.status !== "open" && (
+                          <div className="text-muted-foreground">at {t.hit_time.replace("T", " ").slice(5, 16)}</div>
+                        )}
                         {t.status === "closed" && <span className="text-muted-foreground">closed at {fmt(t.exit_price)}</span>}
                       </td>
                       <td className="px-2 py-1">

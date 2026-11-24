@@ -12,6 +12,7 @@ import { CalendarBanner } from "@/components/dashboard/CalendarBanner";
 import { ConcentrationWidget } from "@/components/dashboard/ConcentrationWidget";
 import { DailyVerdict } from "@/components/dashboard/DailyVerdict";
 import { RegimeBadge } from "@/components/dashboard/RegimeBadge";
+import { TodayPnl } from "@/components/dashboard/TodayPnl";
 
 function getGreeting() {
   const hour = new Date().getHours();
@@ -53,6 +54,9 @@ export default function DashboardPage() {
       {/* === HEADLINE DECISION CARD ===
           Synthesizes all filters into one TRADE / SELECTIVE / STAND DOWN verdict */}
       <DailyVerdict />
+
+      {/* Today's P&L — your futures trades + the system's paper trades (asked 24 Nov 2026) */}
+      <TodayPnl />
 
       {/* FII/DII Flow Banner */}
       <FIIDIIBanner />

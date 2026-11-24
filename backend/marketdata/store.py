@@ -9,8 +9,11 @@ INDEX_UNDERLYINGS = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50
 SCANNED_INDICES = ("NIFTY", "BANKNIFTY")
 # MCX mini contracts we scan (Kite instrument "name").
 MCX_UNDERLYINGS = ("GOLDM", "SILVERM", "CRUDEOILM", "NATGASMINI")
-# Kite tradingsymbols of the NSE spot indices (segment INDICES).
-INDEX_SPOT_SYMBOLS = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FIN SERVICE"}
+# BSE index futures kept in the master (Kite segment BFO-FUT) — for My futures trades (asked 24 Nov 2026).
+BFO_INDICES = ("SENSEX",)
+# Kite tradingsymbols of the spot indices (segment INDICES; SENSEX is on BSE).
+INDEX_SPOT_SYMBOLS = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FIN SERVICE",
+                      "SENSEX": "SENSEX"}
 
 
 def ensure_marketdata_tables() -> None:
