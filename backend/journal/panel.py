@@ -68,7 +68,7 @@ def evaluations_today(today: date) -> int:
 FNO_BOOK = ("stock_futures", "index_futures", "mcx", "index_options", "stock_options")
 
 # Review books: each has its own share of the daily AI reviews (ai_panel.reviews_per_day).
-REVIEW_BOOKS = {"futures": ("stock_futures", "index_futures"), "mcx": ("mcx",), "cash": CASH_SEGMENTS,
+REVIEW_BOOKS = {"futures": ("stock_futures", "index_futures", "nifty_options"), "mcx": ("mcx",), "cash": CASH_SEGMENTS,
                 "option_spreads": ()}
 
 

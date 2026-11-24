@@ -23,7 +23,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEFAULT_PATH = Path(__file__).resolve().parents[2] / "config" / "decision_engine.yaml"
-TIMEFRAMES = ("10minute", "30m", "60minute", "1h", "2h", "4h", "day", "week")
+TIMEFRAMES = ("5minute", "10minute", "30m", "60minute", "1h", "2h", "4h", "day", "week")
 
 
 class _Strict(BaseModel):
@@ -327,7 +327,7 @@ class GlobalCfg(_Strict):
     # Strategies still scanned and journal-tracked but never sent to the AI and never alerted
     # (agreed 23 Nov 2026). Names: a journal segment, "orb" (setup), "momentum" or "option_spreads".
     shadow_strategies: list[Literal["cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
-                                    "index_futures", "mcx", "option_spreads"]] = []
+                                    "index_futures", "mcx", "option_spreads", "nifty_options"]] = []
 
     def is_shadow(self, segment: str, setup: str | None = None) -> bool:
         names = set(self.shadow_strategies)

@@ -328,6 +328,10 @@ export const backtestOptionSpreads = (data: {
   split_date?: string | null;
 }) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
 
+// NIFTY option buying (5-minute, shadow)
+export const getNiftyOptions = () => fetchAPI(`/api/scans/nifty-options`);
+export const runNiftyOptions = () => fetchAPI(`/api/scans/nifty-options/run`, { method: "POST" });
+
 // Kite + Equity Portfolio Analysis
 export const getKiteStatus = () => fetchAPI(`/api/kite/status`);
 export const saveKiteCredentials = (data: { api_key: string; api_secret: string }) =>

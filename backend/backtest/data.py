@@ -92,6 +92,15 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
                 ten_min.add(nifty["instrument_token"])
     except Exception:
         pass
+    five_min = set()
+    try:  # NIFTY option buying: 5-minute index history (same depth as the 10-minute history)
+        from backend.signals.nifty_options import settings as opt_settings
+        if opt_settings()["enabled"]:
+            inst = spot_instrument(opt_settings()["underlying"])
+            if inst:
+                five_min.add(inst["instrument_token"])
+    except Exception:
+        pass
     ten_min_start = now - timedelta(days=HISTORY_10MIN_MONTHS * 31)
     saved, errors = 0, []
     _set_progress(status="running", started_at=now.isoformat(timespec="seconds"), finished_at=None,
@@ -104,6 +113,8 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
                 saved += backfill_series(client, token, "60minute", hourly_start, now)
                 if token in ten_min:
                     saved += backfill_series(client, token, "10minute", ten_min_start, now)
+                if token in five_min:
+                    saved += backfill_series(client, token, "5minute", ten_min_start, now)
             except Exception as exc:
                 from backend.brokers.kite import KiteAuthExpired, _is_auth_error
                 if _is_auth_error(exc):

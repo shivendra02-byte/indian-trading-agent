@@ -17,7 +17,8 @@ router = APIRouter(prefix="/api/rule-backtests", tags=["rule-backtests"])
 
 
 class RunRequest(BaseModel):
-    segment: Literal["cash_swing", "cup_handle", "wolfe", "stock_futures_proxy", "orb_proxy", "index_futures_proxy"]
+    segment: Literal["cash_swing", "cup_handle", "wolfe", "stock_futures_proxy", "orb_proxy", "index_futures_proxy",
+                     "nifty_options_proxy"]
     rule_set: str = Field(max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
     start_date: date
     end_date: date

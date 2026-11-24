@@ -37,7 +37,8 @@ from backend.signals.regime import current_regime, label_series, regime_at
 from backend.signals.setups import _relative_strength_points, evaluate
 from tradingagents.utils.market_calendar import NSE, is_trading_day
 
-SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "stock_futures_proxy", "orb_proxy", "index_futures_proxy")
+SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "stock_futures_proxy", "orb_proxy", "index_futures_proxy",
+            "nifty_options_proxy")
 _COMMON = [
     "Portfolio limits are not applied: every candidate is counted on its own.",
     "Only RBI and Budget dates are checked for market-wide events.",
@@ -72,6 +73,14 @@ LIMITATIONS = {
         "Stock futures are approximated by the spot stock (10-minute bars), because expired contracts cannot "
         "be downloaded; no open interest, F&O ban list, bid-ask spreads or results dates.",
         "10-minute history covers about 24 months.",
+        *_COMMON],
+    "nifty_options_proxy": [
+        "Results are in R on the NIFTY index (5-minute bars): the option's premium can't be replayed, because "
+        "expired options' intraday history can't be downloaded. Premium decay, IV changes and the bid-ask "
+        "spread are not modelled, so option buying will do worse than these R figures.",
+        "The index has no volume: the 'VWAP' is a time-weighted session average.",
+        "Weekly expiry day taken as Thursday before 1 Sep 2025 and Tuesday from then on.",
+        "5-minute history covers about 24 months.",
         *_COMMON],
     "index_futures_proxy": [
         "NIFTY and BANKNIFTY futures are approximated by the index, because expired contracts cannot be "
@@ -330,7 +339,7 @@ class Funnel:
 
 # backtest segment -> the live instrument whose rules (and exit) it replays
 SEGMENT_INSTRUMENT = {"stock_futures_proxy": "stock_futures", "index_futures_proxy": "index_futures",
-                      "orb_proxy": "stock_futures"}
+                      "orb_proxy": "stock_futures", "nifty_options_proxy": "nifty_options"}
 
 
 def _simulate(c: dict, path: list[dict], fill_until: str, time_stop: date, segment: str | None = None) -> dict:
@@ -773,6 +782,74 @@ def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
     return trades
 
 
+def run_nifty_options(start: date, end: date, symbols: list[dict], nifty: list[dict],
+                      progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+                      funnel: Funnel | None = None) -> list[dict]:
+    """NIFTY option buying on 5-minute index bars: every configured setup on every bar
+    from first_signal to last_signal, point in time (a window of the last 400 bars),
+    out at exit_time the same day. Results in R on the index."""
+    from backend.signals import nifty_options as no
+    from backend.signals.indicators import atr as atr_series
+    from backend.signals.orb import mark_exit
+
+    oc = no.settings()
+    inst = spot_instrument(oc["underlying"])
+    bars = get_candles(inst["instrument_token"], "5minute", limit=400000) if inst else []
+    if not bars:
+        raise RuntimeError("no 5-minute NIFTY history; run the history download first")
+    dirs = no.supertrend_dirs(bars, oc["supertrend_period"], oc["supertrend_mult"])
+    atrs = atr_series(bars, 14)
+    blocked_cache: dict = {}
+    first, last = no._hm(oc["first_signal"]), no._hm(oc["last_signal"])
+    cutoff = no._hm(oc["expiry_day_cutoff"])
+    trades, taken = [], {}
+    day_index: dict[str, list[int]] = {}
+    for i, b in enumerate(bars):
+        day_index.setdefault(b["ts"][:10], []).append(i)
+    days = [d for d in sorted(day_index) if start.isoformat() <= d <= end.isoformat()]
+    for n, day in enumerate(days, 1):
+        d = date.fromisoformat(day)
+        if _market_blocked(d, d, blocked_cache):
+            if funnel:
+                funnel.add("days_skipped_events")
+            continue
+        expiry_wd = 1 if d >= date(2025, 9, 1) else 3
+        idx = day_index[day]
+        for i in idx:
+            end_t = no._end(bars[i])
+            if end_t.time() < first or end_t.time() > last:
+                continue
+            if funnel:
+                funnel.add("bars_checked")
+            w0 = max(0, i - 399)
+            cands = no.candidates(bars[w0:i + 1], oc, st_dirs=dirs[w0:i + 1], atr_values=atrs[w0:i + 1])
+            if funnel:
+                funnel.candidates([c for c in cands if c.get("direction")])
+            for c in cands:
+                if not c.get("trackable"):
+                    continue
+                if d.weekday() == expiry_wd and end_t.time() >= cutoff:
+                    continue
+                key = (day, c["setup"])
+                if taken.get(key, 0) >= oc["max_signals_per_setup_day"]:
+                    continue
+                taken[key] = taken.get(key, 0) + 1
+                path = mark_exit([dict(x) for x in bars[i + 1:idx[-1] + 1]], oc["exit_time"], 5)
+                if not path:
+                    continue
+                fill_until = (end_t + oc["entry_valid_bars"] * no.BAR).isoformat(timespec="seconds")
+                outcome = _simulate(c, path, fill_until, d, "nifty_options")
+                # one position per setup at a time: each setup is its own "instrument" for the position book
+                rec = _record(c, f"{oc['underlying']} {c['setup']}", bars[i]["ts"], "passed", outcome)
+                rec.update(data="5minute", untested=None)
+                trades.append(rec)
+        if n % 20 == 0:
+            progress(f"{n}/{len(days)} days")
+    for t in trades:
+        t["shortlisted"] = True     # every signal is a trade (one ATM option each)
+    return trades
+
+
 def mark_shortlist(trades: list[dict], per_scan: int) -> None:
     """Top ``per_scan`` by score among candidates that passed every rule, per scan time."""
     by_scan: dict[str, list[dict]] = {}
@@ -791,6 +868,7 @@ _SHORTLIST = {
     "cash_swing": ("cash_swing", "ts"), "stock_futures_proxy": ("stock_futures", "ts"),
     "index_futures_proxy": ("index_futures", "ts"), "orb_proxy": ("stock_futures", "day"),
     "cup_handle": ("cup_handle", "ts"), "wolfe": ("wolfe", "ts"),
+    "nifty_options_proxy": ("nifty_options", "ts"),
 }
 OPEN_FOREVER = "9999-12-31"
 
@@ -1005,7 +1083,10 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             nifty = get_candles(nifty_inst["instrument_token"], "day", limit=5000) if nifty_inst else []
             if len(nifty) < 300:
                 raise RuntimeError("not enough NIFTY daily history; run the history download first")
-            if segment == "index_futures_proxy":
+            if segment == "nifty_options_proxy":
+                symbols = [{"symbol": "NIFTY", "spot_token": inst["instrument_token"]}
+                           for inst in [spot_instrument("NIFTY")] if inst]
+            elif segment == "index_futures_proxy":
                 symbols = [{"symbol": name, "spot_token": inst["instrument_token"]}
                            for name in ("NIFTY", "BANKNIFTY") if (inst := spot_instrument(name))]
             else:
@@ -1014,7 +1095,8 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             if not symbols:
                 raise RuntimeError("no instruments to test; run the history download first")
             runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle, "wolfe": run_wolfe, "orb_proxy": run_orb,
-                      "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures}[segment]
+                      "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures,
+                      "nifty_options_proxy": run_nifty_options}[segment]
             funnel = Funnel()
             trades = runner(start, end, symbols, nifty, lambda msg: _update(run_id, progress=msg),
                             daily_only=daily_only, funnel=funnel)
