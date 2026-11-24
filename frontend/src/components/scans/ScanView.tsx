@@ -121,7 +121,7 @@ function SetupCard({ c }: { c: Candidate }) {
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         {c.entry !== null && c.stop !== null && c.target !== null && (
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div><p className="text-xs text-muted-foreground">Entry (limit)</p><p className="font-medium">{c.entry}</p></div>
             <div><p className="text-xs text-muted-foreground">Stop</p><p className="font-medium text-red-600">{c.stop} <span className="text-xs">({pct(c.stop, c.entry)})</span></p></div>
             <div><p className="text-xs text-muted-foreground">Target</p><p className="font-medium text-green-600">{c.target} <span className="text-xs">({pct(c.target, c.entry)})</span></p></div>

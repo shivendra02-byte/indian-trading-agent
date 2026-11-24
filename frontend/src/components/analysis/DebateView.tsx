@@ -55,7 +55,7 @@ export function DebateView({ bull, bear, riskAggressive, riskConservative, riskN
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-[300px]">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <DebateMessage content={bull} side="Bull" icon={TrendingUp} color="border-green-500/20 bg-green-500/5" />
                 <DebateMessage content={bear} side="Bear" icon={TrendingDown} color="border-red-500/20 bg-red-500/5" />
               </div>
