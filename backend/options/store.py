@@ -163,3 +163,28 @@ def contract_history(symbol: str, expiry: str, strike: float, opt_type: str,
         args.append(end)
     with get_db() as conn:
         return [dict(r) for r in conn.execute(sql + " ORDER BY trade_date", args).fetchall()]
+
+
+def atm_iv_history(symbol: str, before: str, days: int = 400, min_dte: int = 5, max_dte: int = 45) -> list[tuple[str, float]]:
+    """ATM implied volatility per stored day before ``before`` (one value a day): the nearest
+    expiry with ``min_dte``–``max_dte`` days left, the strike closest to its forward, the mean of
+    the call's and put's IV. For the IV-percentile credit/debit switch (24 Nov 2026)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT trade_date, expiry, strike, opt_type, iv, forward, days_to_expiry FROM option_eod "
+            "WHERE symbol = ? AND trade_date < ? AND trade_date >= date(?, ?) AND opt_type IN ('CE', 'PE') "
+            "AND iv IS NOT NULL AND forward IS NOT NULL AND days_to_expiry BETWEEN ? AND ? "
+            "AND ABS(strike - forward) <= forward * 0.02",
+            (symbol, before, before, f"-{int(days)} days", min_dte, max_dte)).fetchall()
+    by_day: dict[str, list] = {}
+    for r in rows:
+        by_day.setdefault(r["trade_date"], []).append(dict(r))
+    out = []
+    for day in sorted(by_day):
+        items = by_day[day]
+        expiry = min(i["expiry"] for i in items)
+        same = [i for i in items if i["expiry"] == expiry]
+        strike = min(same, key=lambda i: abs(i["strike"] - i["forward"]))["strike"]
+        ivs = [i["iv"] for i in same if i["strike"] == strike]
+        out.append((day, sum(ivs) / len(ivs)))
+    return out

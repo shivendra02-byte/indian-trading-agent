@@ -14,7 +14,7 @@ from backend.journal.store import list_records
 from backend.metrics import risk_metrics
 
 MIN_SAMPLE = 30
-TRENDING = ("STRONG_UP", "STRONG_DOWN")
+TRENDING = ("STRONG_UP", "STRONG_DOWN", "MODERATE_UP", "MODERATE_DOWN")
 
 
 def stats(rows: Iterable[dict]) -> dict:

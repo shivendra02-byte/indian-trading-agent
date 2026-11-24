@@ -22,7 +22,7 @@ type CurrentRegime = {
 
 // GET /api/regime/engine (backend/signals/regime.py explain_current): the regime that gates trades.
 type EngineRegime = {
-  regime: "STRONG_UP" | "STRONG_DOWN" | "SIDEWAYS" | "HIGH_VOL" | "UNSTABLE" | null;
+  regime: "STRONG_UP" | "STRONG_DOWN" | "MODERATE_UP" | "MODERATE_DOWN" | "SIDEWAYS" | "HIGH_VOL" | "UNSTABLE" | null;
   reason: string;
   raw?: string;
   date?: string;
@@ -35,6 +35,7 @@ type EngineRegime = {
   adx?: number;
   adx_trend_min?: number;
   adx_sideways_max?: number;
+  adx_moderate_min?: number | null;
   vol_ratio?: number | null;
   high_vol_ratio?: number;
 };
@@ -42,6 +43,8 @@ type EngineRegime = {
 const engineStyles: Record<string, { key: string; label: string; desc: string }> = {
   STRONG_UP: { key: "BULL", label: "STRONG UP", desc: "NSE trades allowed: pullback and breakout longs." },
   STRONG_DOWN: { key: "BEAR", label: "STRONG DOWN", desc: "NSE trades allowed: pullback and breakout shorts." },
+  MODERATE_UP: { key: "BULL", label: "MODERATE UP", desc: "Trend up but ADX below the strong level: bullish option spreads only, no new futures or cash longs." },
+  MODERATE_DOWN: { key: "BEAR", label: "MODERATE DOWN", desc: "Trend down but ADX below the strong level: pullback and breakout futures shorts, bearish option spreads." },
   SIDEWAYS: { key: "SIDEWAYS", label: "SIDEWAYS", desc: "NSE trades allowed: range reversals; breakouts only on 2x volume." },
   HIGH_VOL: { key: "HIGH_VOL", label: "HIGH VOL", desc: "NSE trades allowed: with-trend pullbacks at half size." },
   UNSTABLE: { key: "UNKNOWN", label: "UNSTABLE", desc: "No clear regime: no new NSE setups are permitted (MCX uses each commodity's own regime)." },
@@ -51,7 +54,7 @@ function engineWhy(e: EngineRegime): string {
   if (e.close == null) return e.reason;
   const parts = [
     `NIFTY ${Math.round(e.close)} · EMA${e.ema_fast_period} ${Math.round(e.ema_fast ?? 0)} · EMA${e.ema_slow_period} ${Math.round(e.ema_slow ?? 0)} (${e.ema_slow_rising ? "rising" : "falling"})`,
-    `ADX ${e.adx} (trend ≥ ${e.adx_trend_min}, sideways < ${e.adx_sideways_max})`,
+    `ADX ${e.adx} (strong ≥ ${e.adx_trend_min}${e.adx_moderate_min != null ? `, moderate ≥ ${e.adx_moderate_min}` : ""}, sideways < ${e.adx_sideways_max})`,
   ];
   if (e.vol_ratio != null) parts.push(`vol ${e.vol_ratio}× its average (high ≥ ${e.high_vol_ratio}×)`);
   if (e.regime === "UNSTABLE" && e.reason) parts.push(e.reason);
@@ -156,7 +159,8 @@ export function RegimeBadge() {
             )}
             {data && (
               <p className="text-xs text-muted-foreground mt-1 truncate" title={data.reasoning}>
-                Top Picks regime (50/200 SMA): <span className="font-medium">{data.regime}</span> · {data.reasoning}
+                Stats regime (Top Picks learning only, 50/200 SMA — not used for trades):{" "}
+                <span className="font-medium">{data.regime}</span> · {data.reasoning}
               </p>
             )}
           </div>

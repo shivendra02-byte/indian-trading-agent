@@ -9,6 +9,27 @@ from unittest import mock
 from backend.options import spreads
 from tests._support import IsolatedStateTestCase
 
+
+# These tests cover the end-of-day rules (mode "eod", backtests and research): pin the
+# NIFTY entry window they were written for (Wed–Fri, 4–6 days; live moved to 7–13 days on 24 Nov 2026).
+EOD_NIFTY = {"weekdays": [2, 3, 4], "min_days": 4, "max_days": 6}
+_eod_patch = None
+
+
+def _eod_settings(real=spreads.settings):
+    cfg = real()
+    return {**cfg, "mode": "eod", "symbols": {**cfg["symbols"], "NIFTY": {**cfg["symbols"]["NIFTY"], **EOD_NIFTY}}}
+
+
+def setUpModule():
+    global _eod_patch
+    _eod_patch = mock.patch.object(spreads, "settings", _eod_settings)
+    _eod_patch.start()
+
+
+def tearDownModule():
+    _eod_patch.stop()
+
 RULE = {"wing": 200, "lot_size": 65, "weekdays": [2, 3, 4], "min_days": 4, "max_days": 6}
 
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, FlaskConical, Loader2, Play, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { backtestOptionSpreads, getOptionSpreads, runOptionSpreads } from "@/lib/api";
+import { backtestOptionSpreads, getOptionSpreads, getSpreadAlignment, runOptionSpreads } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,27 @@ type Spread = {
   exit_reason: string | null;
   pnl_r: number | null;
   pnl_inr: number | null;
+  mode?: string | null;
+  signal_ts?: string | null;
+  setup?: string | null;
+  direction?: string | null;
+  invalid?: number | { above: number; below: number } | null;
+  iv_pct?: number | null;
 };
+// GET /api/options/spreads/alignment (spreads.alignment → spread_mtf.evaluate per index)
+type TfState = { ok: boolean | null; note: string } | null;
+type Alignment = {
+  regime: string;
+  bias: string | null;
+  h4: TfState;
+  h1: TfState;
+  m15: TfState;
+  signal: { direction: string; kind: string } | null;
+  reason?: string;
+  source: string;
+  last_15m: string | null;
+};
+type AlignmentResponse = { mode: string; at: string; symbols: Record<string, Alignment> };
 type Stats = {
   trades: number;
   win_rate?: number;
@@ -127,6 +147,62 @@ function StatsTable({ rows }: { rows: [string, Stats | undefined][] }) {
   );
 }
 
+function invalidText(s: Spread): string {
+  const inv = s.invalid;
+  if (inv === null || inv === undefined) return "";
+  if (typeof inv === "object") return ` · out if 1H closes outside ${Math.round(inv.below)}–${Math.round(inv.above)}`;
+  return ` · out if 1H closes ${s.direction === "up" ? "below" : "above"} ${Math.round(inv)}`;
+}
+
+function TfCell({ label, st }: { label: string; st: TfState }) {
+  const mark = !st || st.ok === null ? "·" : st.ok ? "✓" : "✗";
+  const cls = !st || st.ok === null ? "text-muted-foreground" : st.ok ? "text-green-600" : "text-muted-foreground";
+  return (
+    <td className="pr-3" title={st?.note ?? ""}>
+      <span className={cls}>{label} {mark}</span>
+      <span className="ml-1 text-muted-foreground">{st?.note ?? ""}</span>
+    </td>
+  );
+}
+
+function AlignmentCard({ a }: { a: AlignmentResponse }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Entry alignment · {a.at.slice(11, 16)}</CardTitle>
+        <CardDescription>
+          Daily regime → 4H confirms → 1H setup → 15-minute trigger, on completed bars of the index (SENSEX follows
+          NIFTY). The scan runs after every 15-minute bar from 09:30 to 14:45; open spreads are checked on each 1H close.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <tbody>
+            {Object.entries(a.symbols).map(([sym, x]) => (
+              <tr key={sym} className="border-t">
+                <td className="py-1 pr-3 font-medium">{sym}</td>
+                <td className="pr-3">
+                  <Badge variant="outline">{x.regime.replace("_", " ")}</Badge>
+                </td>
+                <TfCell label="4H" st={x.h4} />
+                <TfCell label="1H" st={x.h1} />
+                <TfCell label="15m" st={x.m15} />
+                <td className="pr-3">
+                  {x.signal ? (
+                    <Badge>signal: {x.signal.kind.replace("_", " ")}</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">{x.reason ?? ""}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SpreadRow({ s }: { s: Spread }) {
   const tip = s.panel?.reasons?.length
     ? `AI ${s.panel.confidence}: ${s.panel.reasons.join("; ")}${s.panel.risks?.length ? ` · risks: ${s.panel.risks.join("; ")}` : ""}`
@@ -135,7 +211,9 @@ function SpreadRow({ s }: { s: Spread }) {
     <tr className="border-t" title={tip}>
       <td className="py-1 pr-3 font-medium">{s.symbol}</td>
       <td className="pr-3">{NAME[s.strategy] ?? s.strategy}</td>
-      <td className="pr-3">{s.signal_date}</td>
+      <td className="pr-3" title={s.setup ? `setup: ${s.setup.replace("_", " ")}${s.iv_pct != null ? ` · IV pct ${s.iv_pct}` : ""}` : ""}>
+        {s.signal_ts ? `${s.signal_date} ${s.signal_ts.slice(11, 16)}` : s.signal_date}
+      </td>
       <td className="pr-3">{s.expiry}</td>
       <td className="pr-3">{legsText(s.legs)}</td>
       <td className="pr-3 text-right">{v(s.credit, 1)}</td>
@@ -144,7 +222,7 @@ function SpreadRow({ s }: { s: Spread }) {
         <Badge variant={s.decision === "approved" ? "default" : "outline"}>{s.decision.replace("_", " ")}</Badge>
       </td>
       <td className="pr-3">
-        {s.status === "open" ? `now ${v(s.last_value, 1)} · exit by ${s.exit_by}` : `${(s.exit_reason ?? "").replace("_", " ")} ${s.exit_date}`}
+        {s.status === "open" ? `now ${v(s.last_value, 1)}${invalidText(s)} · exit by ${s.exit_by}` : `${(s.exit_reason ?? "").replace("_", " ")} ${s.exit_date}`}
       </td>
       <td className={`pr-3 text-right ${tone(s.pnl_r)}`}>{v(s.pnl_r)}</td>
       <td className={`text-right ${tone(s.pnl_inr)}`}>{s.pnl_inr === null ? "—" : s.pnl_inr.toLocaleString("en-IN")}</td>
@@ -154,6 +232,7 @@ function SpreadRow({ s }: { s: Spread }) {
 
 export default function OptionSpreadsPage() {
   const [data, setData] = useState<Status | null>(null);
+  const [align, setAlign] = useState<AlignmentResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [bt, setBt] = useState<Backtest | null>(null);
@@ -169,6 +248,9 @@ export default function OptionSpreadsPage() {
       .then((res) => setData(res as Status))
       .catch((e) => toast.error(errorMessage(e, "Could not load option spreads")))
       .finally(() => setLoading(false));
+    getSpreadAlignment()
+      .then((res) => setAlign(res as AlignmentResponse))
+      .catch(() => setAlign(null));
   }, []);
 
   useEffect(() => {
@@ -230,9 +312,10 @@ export default function OptionSpreadsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Option Spreads</h1>
           <p className="text-sm text-muted-foreground">
-            NIFTY / BANKNIFTY / SENSEX spreads from the evening option files · uptrend: bull put (sell), or bull call (buy)
-            when India VIX is below 11 · downtrend: bear call (sell), or bear put (buy) below VIX 11 · iron condor sideways ·
-            out the day before expiry · AI-reviewed, paper
+            NIFTY / BANKNIFTY / SENSEX · entry when the daily trend, 4H, 1H and a 15-minute trigger agree, priced from the
+            live option chain · uptrend (strong or moderate): bull put (sell), or bull call (buy) when the ATM IV
+            percentile is below 30 · downtrend: bear call, or bear put below it · iron condor on a 1H range rejection when
+            sideways · exits on 1H closes · AI-reviewed, paper
           </p>
         </div>
         <div className="flex gap-2">
@@ -244,6 +327,8 @@ export default function OptionSpreadsPage() {
           </Button>
         </div>
       </div>
+
+      {align && align.mode === "intraday" && <AlignmentCard a={align} />}
 
       {data && (
         <Card>
@@ -285,7 +370,8 @@ export default function OptionSpreadsPage() {
             <FlaskConical className="h-4 w-4" /> Backtest on stored option files
           </CardTitle>
           <CardDescription>
-            Live rules: one spread per index at a time. Strong uptrend: bull put, or bull call when India VIX is below the
+            Uses the end-of-day rules (entry on the evening option files, regime only, exits on daily closes): stored
+            option prices are daily, so the intraday 4H/1H/15m entry can&apos;t be replayed here yet. One spread per index at a time. Strong uptrend: bull put, or bull call when India VIX is below the
             switch level; strong downtrend: bear call, or bear put below it; iron condor sideways. Changing the ticked
             strategies switches to comparing them instead (each keeps its own book; the VIX switch is then not used).
             1R = the loss at the stop (credit spreads: one credit; debit spreads: half the debit).
