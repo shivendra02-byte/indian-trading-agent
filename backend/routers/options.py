@@ -155,3 +155,51 @@ def spreads_backtest(req: SpreadBacktestRequest):
                       debit_below_vix=req.debit_below_vix)
     result["trades"] = result["trades"][-300:]
     return result
+
+
+# --- research: strategy eligibility, exits, out-of-sample (asked 24 Nov 2026) --------------------
+
+class ResearchRequest(BaseModel):
+    start_date: date
+    end_date: date
+    split_date: date
+    symbols: list[Literal["NIFTY", "BANKNIFTY", "SENSEX"]] | None = None
+    min_credit_ratio_single: float | None = Field(None, ge=0, le=1)
+    costs: bool = True
+
+
+@router.post("/spreads/research")
+def spreads_research(req: ResearchRequest):
+    """Experiments A (exits), B (strategy per regime) and C (combined, unseen) in the background."""
+    from backend.options import spread_research
+    if not (req.start_date < req.split_date < req.end_date):
+        raise HTTPException(400, "need start < split < end")
+    return spread_research.start(req.model_dump(mode="json"))
+
+
+@router.get("/spreads/research")
+def spreads_research_status():
+    from backend.options import spread_research
+    return spread_research.status()
+
+
+@router.get("/spreads/research/{run_id}")
+def spreads_research_get(run_id: int, trades: bool = False):
+    from backend.options import spread_research
+    rec = spread_research.get(run_id)
+    if not rec:
+        raise HTTPException(404, "no such research run")
+    if rec.get("result") and not trades:
+        rec["result"] = {k: v for k, v in rec["result"].items() if k != "trades"}
+    return rec
+
+
+@router.get("/spreads/research/{run_id}/trades.csv")
+def spreads_research_csv(run_id: int, which: Literal["baseline", "all_strategies"] = "baseline"):
+    from fastapi.responses import Response
+    from backend.options import spread_research
+    text = spread_research.trades_csv(run_id, which)
+    if text is None:
+        raise HTTPException(404, "no finished research run with that id")
+    return Response(text, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="spread-research-{run_id}-{which}.csv"'})

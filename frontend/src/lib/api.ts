@@ -335,6 +335,20 @@ export const backtestOptionSpreads = (data: {
   split_date?: string | null;
 }) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
 
+// Option-spread research: experiments A/B/C (asked 24 Nov 2026)
+export const startSpreadResearch = (data: {
+  start_date: string;
+  end_date: string;
+  split_date: string;
+  symbols?: string[] | null;
+  min_credit_ratio_single?: number | null;
+  costs?: boolean;
+}) => fetchAPI(`/api/options/spreads/research`, { method: "POST", body: JSON.stringify(data) });
+export const getSpreadResearchRuns = () => fetchAPI(`/api/options/spreads/research`);
+export const getSpreadResearch = (id: number) => fetchAPI(`/api/options/spreads/research/${id}`);
+export const spreadResearchCsvUrl = (id: number, which: "baseline" | "all_strategies") =>
+  `${getApiBase()}/api/options/spreads/research/${id}/trades.csv?which=${which}`;
+
 // NIFTY option buying (5-minute, shadow)
 export const getNiftyOptions = () => fetchAPI(`/api/scans/nifty-options`);
 export const runNiftyOptions = () => fetchAPI(`/api/scans/nifty-options/run`, { method: "POST" });
