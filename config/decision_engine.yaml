@@ -163,6 +163,12 @@ global:
   stop_alerts:                     # Telegram "move your stop-loss" for trades you were alerted on (23 Nov 2026)
     enabled: true
     min_move_r: 0.25               # first move off the initial stop, then every further 0.25R
+  live_feed:                       # Kite WebSocket last price for open trades, live P&L only (24 Nov 2026)
+    enabled: true                  # never closes or moves a trade: stops/targets still run on completed bars
+    max_age_seconds: 120           # an older live price falls back to the last bar close
+    refresh_tokens_seconds: 30
+    max_instruments: 500
+    pnl_refresh_seconds: 5         # Today card refresh while live prices arrive
   option_data:                     # end-of-day NSE/BSE option files for the spread strategy (data only, asked 22 Nov 2026)
     enabled: true
     symbols: {NSE: [NIFTY, BANKNIFTY], BSE: [SENSEX]}

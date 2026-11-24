@@ -48,8 +48,12 @@ async def lifespan(app: FastAPI):
     from backend.scheduler import scheduler, scheduler_enabled
     if scheduler_enabled():
         scheduler.start()
+    from backend.marketdata.live import feed, feed_enabled
+    if scheduler_enabled() and feed_enabled():
+        feed.start()                 # Kite WebSocket last prices for the live P&L (24 Nov 2026)
     yield
     scheduler.stop()
+    feed.stop()
 
 
 app = FastAPI(
