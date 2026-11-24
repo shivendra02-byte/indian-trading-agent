@@ -328,6 +328,9 @@ export const backtestOptionSpreads = (data: {
   start_date: string;
   end_date: string;
   symbols?: string[] | null;
+  strategies?: string[] | null;
+  condor_in_unstable?: boolean;
+  min_credit_ratio_single?: number | null;
   split_date?: string | null;
 }) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
 
