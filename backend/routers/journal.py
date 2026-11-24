@@ -36,6 +36,38 @@ def journal(
     return {"count": len(rows), "records": rows}
 
 
+@router.get("/ai-today")
+def ai_today():
+    """Today's AI-approved trades for the Today page: trade journal + option spreads."""
+    from datetime import date
+    from backend.journal.store import list_records
+
+    today = date.today().isoformat()
+    picks = []
+    rows = list_records("decision = 'approved' AND substr(json_extract(panel, '$.evaluated_at'), 1, 10) = ?",
+                        (today,), limit=100)
+    for r in rows:
+        extra = r.get("extra") or {}
+        name = extra.get("contract") or extra.get("tradingsymbol") or r["symbol"]
+        picks.append({"name": name, "symbol": r["symbol"], "action": "BUY" if r["direction"] == "long" else "SELL",
+                      "confidence": (r.get("panel") or {}).get("confidence"), "segment": r["segment"],
+                      "setup": r["setup"], "at": (r.get("panel") or {}).get("evaluated_at")})
+    try:
+        from backend.options.spreads import spreads
+        label = {"bull_put": "BULL PUT", "bear_call": "BEAR CALL", "iron_condor": "IRON CONDOR"}
+        for sp in spreads():
+            panel = sp.get("panel") or {}
+            if sp["decision"] == "approved" and str(panel.get("evaluated_at") or "")[:10] == today:
+                picks.append({"name": f"{sp['symbol']} {sp['expiry']}", "symbol": sp["symbol"],
+                              "action": label.get(sp["strategy"], sp["strategy"]), "confidence": panel.get("confidence"),
+                              "segment": "option_spreads", "setup": sp["strategy"], "at": panel.get("evaluated_at")})
+    except Exception:  # option spreads table missing: just no spread picks
+        pass
+    picks.sort(key=lambda p: p.get("at") or "", reverse=True)
+    from backend.journal.panel import evaluations_today
+    return {"date": today, "picks": picks, "reviewed": evaluations_today(date.today())}
+
+
 @router.get("/learning")
 def learning(segment: str | None = Query(None, pattern=r"^[a-z_]{1,32}$")):
     return report(segment)

@@ -3,7 +3,7 @@
 import { MarketOverview } from "@/components/dashboard/MarketOverview";
 import { Watchlist } from "@/components/dashboard/Watchlist";
 import { RecentAnalyses } from "@/components/dashboard/RecentAnalyses";
-import { TodayPicks } from "@/components/dashboard/TodayPicks";
+import { AiPicksToday } from "@/components/dashboard/AiPicksToday";
 import { WorkflowGuide } from "@/components/dashboard/WorkflowGuide";
 import { QuickActions } from "@/components/dashboard/QuickActions";
 import { SectorHeatmap } from "@/components/dashboard/SectorHeatmap";
@@ -64,7 +64,7 @@ export default function DashboardPage() {
       <ConcentrationWidget />
 
       {/* Today's Top Picks — auto-loaded */}
-      <TodayPicks universe="nifty100" />
+      <AiPicksToday />
 
       {/* Sector Heatmap */}
       <SectorHeatmap />
