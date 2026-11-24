@@ -343,7 +343,7 @@ instruments:
     symbols:                       # weekdays Mon=0; calendar days to expiry; wing in index points
       NIFTY: {wing: 200, lot_size: 65, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}   # agreed 24 Nov 2026: the next weekly, always 7+ days out (was Wed-Fri, 4-6 days)
       BANKNIFTY: {wing: 500, lot_size: 30, weekdays: [0, 1, 2, 3, 4], min_days: 10, max_days: 20}   # monthly, 10-20 days out
-      SENSEX: {wing: 500, lot_size: 20, weekdays: [4, 0], min_days: 3, max_days: 6}         # Fri-Mon before the Thursday expiry
+      SENSEX: {wing: 500, lot_size: 20, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}  # agreed 25 Nov 2026: like NIFTY, the next weekly, always 7+ days out (was Fri-Mon, 3-6 days)
   cash_swing:
     enabled: true
     primary_tf: day
