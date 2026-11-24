@@ -148,6 +148,37 @@ class BookTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual(res["skipped"].get("still open at the end"), 1)
         self.assertEqual(res["funnel"]["NIFTY"]["entry_days"], 2)
 
+    def test_low_vix_buys_a_debit_spread(self):
+        """Asked 24 Nov 2026: VIX below 11 → bull call / bear put; otherwise bull put / bear call."""
+        from backend.db import get_db
+        from backend.options import store
+        with get_db() as conn:
+            conn.execute("DELETE FROM option_eod")
+        _store(debit_chain("2025-11-19"))
+        cfg = spreads.settings()
+        get = (lambda day, e: store.chain("NIFTY", day, e)), (lambda day: ["2025-11-25"])
+        low = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "STRONG_UP", 10.2)
+        high = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "STRONG_UP", 14.0)
+        side = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "SIDEWAYS", 10.2)
+        self.assertEqual((low["strategy"], high["strategy"], side["strategy"]), ("bull_call", "bull_put", "iron_condor"))
+        self.assertTrue(low["ok"], low["reason"])
+        self.assertEqual(spreads.by_vix("bear_call", 9.0, cfg), "bear_put")
+        self.assertEqual(spreads.by_vix("bear_call", None, cfg), "bear_call")          # unknown VIX → credit
+        self.assertEqual(spreads.by_vix("bear_call", 9.0, {**cfg, "debit_below_vix": None}), "bear_call")
+        alert = spreads.build_alert({**low, "vix": 10.2}, None, "approved")
+        self.assertIn("Bull call spread", alert)
+        self.assertIn("Debit 70.0 pts (you pay)", alert)
+        prompt = spreads.build_prompt({**low, "vix": 10.2})
+        self.assertIn("option debit spread", prompt)
+        self.assertIn('"debit": 70.0', prompt)
+        with mock.patch("backend.options.store.vix_on", return_value=10.0):
+            res = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"])
+            off = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"], debit_below_vix=0)
+        self.assertEqual(res["funnel"]["NIFTY"]["opened"], 1)
+        self.assertIn("bull_call", res["by_strategy"])
+        self.assertNotIn("bull call: credit", " ".join(res["skipped"]))
+        self.assertIsNone(off["options"]["debit_below_vix"])
+
     def test_condor_in_unstable(self):
         with mock.patch.object(spreads, "_regime_on", return_value="UNSTABLE"):
             off = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"])

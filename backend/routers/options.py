@@ -126,6 +126,7 @@ class SpreadBacktestRequest(BaseModel):
     strategies: list[Literal["bull_put", "bear_call", "iron_condor", "bull_call", "bear_put"]] | None = None
     condor_in_unstable: bool = False
     min_credit_ratio_single: float | None = Field(None, ge=0, le=1)
+    debit_below_vix: float | None = Field(None, ge=0, le=100)   # 0 = never use debit spreads
 
 
 @router.get("/spreads")
@@ -150,6 +151,7 @@ def spreads_backtest(req: SpreadBacktestRequest):
     if req.end_date <= req.start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
     result = backtest(req.start_date, req.end_date, req.symbols, req.split_date, strategies=req.strategies,
-                      condor_in_unstable=req.condor_in_unstable, min_credit_ratio_single=req.min_credit_ratio_single)
+                      condor_in_unstable=req.condor_in_unstable, min_credit_ratio_single=req.min_credit_ratio_single,
+                      debit_below_vix=req.debit_below_vix)
     result["trades"] = result["trades"][-300:]
     return result

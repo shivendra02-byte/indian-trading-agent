@@ -93,13 +93,15 @@ def system_rows(today: date) -> list[dict]:
     with get_db() as conn:
         has_spreads = _table_exists(conn, "option_spreads")
     if has_spreads:
-        from backend.options.spreads import pnl as spread_pnl, settings as spread_settings, spreads
+        from backend.options.spreads import is_debit as spreads_is_debit, pnl as spread_pnl, \
+            settings as spread_settings, spreads
         cfg = spread_settings()
         for sp in spreads():
             if sp["decision"] != "approved":
                 continue
             base = {"book": "system", "id": sp["id"], "name": f"{sp['symbol']} {sp['strategy'].replace('_', ' ')}",
-                    "segment": SEGMENT_LABELS["option_spreads"], "direction": "credit", "entry": sp["credit"]}
+                    "segment": SEGMENT_LABELS["option_spreads"], "direction": "debit" if spreads_is_debit(sp["strategy"]) else "credit",
+                    "entry": sp["credit"]}
             if sp["status"] == "closed" and sp["exit_date"] == iso:
                 out.append({**base, "state": "closed", "at": sp["exit_date"], "price": sp["exit_value"],
                             "r": _r(sp["pnl_r"]), "pnl": _r(sp["pnl_inr"]), "note": sp.get("exit_reason")})

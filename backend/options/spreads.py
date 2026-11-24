@@ -47,8 +47,23 @@ REGIME_CHOICES = {"STRONG_UP": ("bull_put", "bull_call"), "STRONG_DOWN": ("bear_
                   "SIDEWAYS": ("iron_condor",), "UNSTABLE": ("iron_condor",)}
 
 
+# credit spread → the debit spread with the same view, used when India VIX is low
+DEBIT_FOR = {"bull_put": "bull_call", "bear_call": "bear_put"}
+NAMES = {"bull_put": "Bull put spread", "bear_call": "Bear call spread", "iron_condor": "Iron condor",
+         "bull_call": "Bull call spread", "bear_put": "Bear put spread"}
+
+
 def is_debit(strategy: str) -> bool:
     return strategy in DEBIT
+
+
+def by_vix(strategy: str, vix: float | None, cfg: dict) -> str:
+    """Asked 24 Nov 2026: in a trend, sell premium (bull put / bear call) when VIX is normal or high,
+    buy it (bull call / bear put) when VIX is below ``debit_below_vix``. Unknown VIX → credit."""
+    limit = cfg.get("debit_below_vix")
+    if strategy in DEBIT_FOR and limit is not None and vix is not None and vix < limit:
+        return DEBIT_FOR[strategy]
+    return strategy
 
 
 def settings() -> dict:
@@ -65,6 +80,7 @@ def settings() -> dict:
         "regime_source": {"SENSEX": "NIFTY"}, "max_loss_pct": 3.0,
         # one-sided credit spreads (bull put / bear call) collect less than a condor; None = min_credit_ratio
         "min_credit_ratio_single": None,
+        "debit_below_vix": 11.0,       # trend spreads: debit below this India VIX, credit at or above it
         # debit spreads: long leg near the money, short leg ``wing`` further out
         "debit": {"long_delta": [0.40, 0.60], "max_debit_ratio": 0.5, "take_profit_pct": 100, "stop_pct": 50},
         "risk_per_trade_pct": cfg.global_.risk.risk_per_trade_pct, "capital": cfg.global_.capital,
@@ -264,7 +280,7 @@ def candidate(symbol: str, day: date, cfg: dict, chain_for: Callable[[str, str],
     expiry = pick_expiry(day, expiries_for(day.isoformat()), rule)
     if not expiry:
         return {**base, "ok": False, "reason": "outside the entry window"}
-    strategy = strategy or cfg["regime_strategy"].get(regime)
+    strategy = strategy or by_vix(cfg["regime_strategy"].get(regime) or "", vix, cfg) or None
     if not strategy:
         return {**base, "ok": False, "reason": f"no spread in a {regime} regime", "expiry": expiry}
     if vix is not None and vix > cfg["max_vix"]:
@@ -315,7 +331,8 @@ def _skip_key(reason: str, strategy: str | None) -> str:
 
 def backtest(start: date, end: date, symbols: list[str] | None = None, split_date: date | None = None,
              cfg: dict | None = None, strategies: list[str] | None = None,
-             condor_in_unstable: bool = False, min_credit_ratio_single: float | None = None) -> dict:
+             condor_in_unstable: bool = False, min_credit_ratio_single: float | None = None,
+             debit_below_vix: float | None = None) -> dict:
     """Replay the rules over stored EOD chains.
 
     Default: the live rules (``regime_strategy``), one spread per index at a time. With
@@ -330,6 +347,8 @@ def backtest(start: date, end: date, symbols: list[str] | None = None, split_dat
     cfg = dict(cfg or settings())
     if min_credit_ratio_single is not None:
         cfg["min_credit_ratio_single"] = min_credit_ratio_single
+    if debit_below_vix is not None:                      # 0 = never switch to debit spreads
+        cfg["debit_below_vix"] = debit_below_vix or None
     symbols = symbols or list(cfg["symbols"])
     compare = bool(strategies)
     chosen = [s for s in (strategies or []) if s in STRATEGIES]
@@ -339,7 +358,7 @@ def backtest(start: date, end: date, symbols: list[str] | None = None, split_dat
             one = cfg["regime_strategy"].get(regime)
             if one is None and condor_in_unstable and regime == "UNSTABLE":
                 one = "iron_condor"
-            return [one] if one else []
+            return [one] if one else []           # the VIX switch is applied per day below
         if regime == "UNSTABLE" and not condor_in_unstable:
             return []
         return [s for s in REGIME_CHOICES.get(regime, ()) if s in chosen]
@@ -381,12 +400,15 @@ def backtest(start: date, end: date, symbols: list[str] | None = None, split_dat
             if not options:
                 key = _skip_key(f"no spread in a {regime} regime", None)
                 skipped[key] = skipped.get(key, 0) + 1
+            vix = store.vix_on(iso)
+            if not compare:
+                options = [by_vix(o, vix, cfg) for o in options]
             for strat in options:
                 if books.get(strat):
                     f["book_busy"] += 1
                     continue
                 c = candidate(symbol, d, cfg, lambda day, e: store.chain(symbol, day, e), lambda day: exps,
-                              regime, store.vix_on(iso), strategy=strat)
+                              regime, vix, strategy=strat)
                 if c["ok"]:
                     books[strat] = {k: c[k] for k in ("symbol", "signal_date", "expiry", "strategy", "legs", "credit",
                                                        "width", "lot_size", "lots", "regime", "vix", "exit_by")}
@@ -398,11 +420,13 @@ def backtest(start: date, end: date, symbols: list[str] | None = None, split_dat
         open_left = sum(1 for sp in books.values() if sp)
         if open_left:
             skipped["still open at the end"] = skipped.get("still open at the end", 0) + open_left
-    shown = [s for s in STRATEGIES if s in chosen] if compare else list(CREDIT)
+    shown = [s for s in STRATEGIES if s in chosen] if compare else \
+        list(CREDIT) + (list(DEBIT) if cfg.get("debit_below_vix") else [])
     out = {"status": "ok", "trades": trades, "skipped": dict(sorted(skipped.items(), key=lambda kv: -kv[1])),
            "funnel": funnel,
            "options": {"strategies": chosen or None, "condor_in_unstable": condor_in_unstable,
                        "min_credit_ratio_single": cfg.get("min_credit_ratio_single"),
+                       "debit_below_vix": cfg.get("debit_below_vix"),
                        "min_credit_ratio": cfg["min_credit_ratio"]},
            "all": _stats(trades),
            "by_symbol": {s: _stats([t for t in trades if t["symbol"] == s]) for s in symbols},
@@ -476,23 +500,43 @@ def build_prompt(sp: dict) -> str:
                                "exit_by")}
     plan["legs"] = sp["legs"]
     cfg = settings()
+    if is_debit(sp["strategy"]):
+        plan["debit"] = plan.pop("credit")
+        d = cfg["debit"]
+        exits = (f"Exits: take profit when the spread is worth +{d['take_profit_pct']}% of the debit, stop when it "
+                 f"has lost {d['stop_pct']}% of the debit, otherwise close on {sp['exit_by']} (day before expiry). "
+                 f"Chosen because India VIX is below {cfg.get('debit_below_vix')}: options are cheap, so it buys "
+                 "the spread instead of selling one.\n")
+        kind = "debit"
+    else:
+        exits = (f"Exits: take profit at {cfg['take_profit_pct']}% of the credit, stop when the spread costs "
+                 f"{cfg['stop_multiple']:g}× the credit, otherwise close on {sp['exit_by']} (day before expiry).\n")
+        kind = "credit"
     return (
-        "You review one index option credit spread for a paper-trading book (advisory only, the user "
+        f"You review one index option {kind} spread for a paper-trading book (advisory only, the user "
         "places orders by hand). The rules already chose it; you can only approve or reject, not change it.\n"
-        f"Exits: take profit at {cfg['take_profit_pct']}% of the credit, stop when the spread costs "
-        f"{cfg['stop_multiple']:g}× the credit, otherwise close on {sp['exit_by']} (day before expiry).\n"
+        + exits +
         f"Plan (closing prices of {sp['signal_date']}):\n{json.dumps(plan, indent=1)}\n"
         'Answer with JSON only: {"decision": "approve" | "reject", "confidence": 0-100, '
         '"reasons": [up to 3 short strings], "risks": [up to 2 short strings]}')
 
 
 def build_alert(sp: dict, panel: dict | None, kind: str) -> str:
-    name = {"bull_put": "Bull put spread", "bear_call": "Bear call spread", "iron_condor": "Iron condor"}[sp["strategy"]]
+    name = NAMES[sp["strategy"]]
+    cfg = settings()
     head = "✅ AI-approved" if kind == "approved" else "⚠️ Rules only (" + kind + ")"
-    lines = [f"{head} — {sp['symbol']} {name} (paper)", f"Expiry {sp['expiry']} · {_legs_text(sp)}",
-             f"Credit {sp['credit']:.1f} pts · width {sp['width']:g} · {sp['lots']} lot(s) × {sp['lot_size']}",
-             f"Take profit ≤ {sp['credit'] * 0.5:.1f} · stop ≥ {sp['credit'] * settings()['stop_multiple']:.1f} · "
-             f"exit by {sp['exit_by']}", f"Regime {sp['regime']} · India VIX {sp['vix'] or '—'}",
+    if is_debit(sp["strategy"]):
+        d = cfg["debit"]
+        target = min(sp["credit"] * (1 + d["take_profit_pct"] / 100), 0.9 * sp["width"])
+        money = f"Debit {sp['credit']:.1f} pts (you pay) · width {sp['width']:g} · {sp['lots']} lot(s) × {sp['lot_size']}"
+        exits = (f"Take profit ≥ {target:.1f} · stop ≤ {sp['credit'] * (1 - d['stop_pct'] / 100):.1f} · "
+                 f"exit by {sp['exit_by']}")
+    else:
+        money = f"Credit {sp['credit']:.1f} pts · width {sp['width']:g} · {sp['lots']} lot(s) × {sp['lot_size']}"
+        exits = (f"Take profit ≤ {sp['credit'] * (1 - cfg['take_profit_pct'] / 100):.1f} · "
+                 f"stop ≥ {sp['credit'] * cfg['stop_multiple']:.1f} · exit by {sp['exit_by']}")
+    lines = [f"{head} — {sp['symbol']} {name} (paper)", f"Expiry {sp['expiry']} · {_legs_text(sp)}", money, exits,
+             f"Regime {sp['regime']} · India VIX {sp['vix'] or '—'}",
              "Prices are today's closes; check them at the open."]
     if panel and panel.get("reasons"):
         lines.append("AI: " + "; ".join(panel["reasons"]))

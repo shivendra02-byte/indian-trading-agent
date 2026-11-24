@@ -143,6 +143,7 @@ export default function OptionSpreadsPage() {
   const [strats, setStrats] = useState<string[]>(LIVE_STRATEGIES);
   const [condorUnstable, setCondorUnstable] = useState(false);
   const [minSingle, setMinSingle] = useState("");
+  const [vixSwitch, setVixSwitch] = useState("11");
 
   const fetchData = useCallback(() => {
     getOptionSpreads()
@@ -186,6 +187,7 @@ export default function OptionSpreadsPage() {
           strategies: compare ? strats : null,
           condor_in_unstable: condorUnstable,
           min_credit_ratio_single: minSingle ? Number(minSingle) / 100 : null,
+          debit_below_vix: vixSwitch === "" ? null : Number(vixSwitch),
         })) as Backtest,
       );
     } catch (e) {
@@ -209,9 +211,9 @@ export default function OptionSpreadsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Option Spreads</h1>
           <p className="text-sm text-muted-foreground">
-            NIFTY / BANKNIFTY / SENSEX credit spreads from the evening option files · short leg at 0.15–0.20 delta · bull put in
-            uptrends, bear call in downtrends, iron condor sideways · take profit 50%, stop at 2× credit, out the day before
-            expiry · AI-reviewed, paper
+            NIFTY / BANKNIFTY / SENSEX spreads from the evening option files · uptrend: bull put (sell), or bull call (buy)
+            when India VIX is below 11 · downtrend: bear call (sell), or bear put (buy) below VIX 11 · iron condor sideways ·
+            out the day before expiry · AI-reviewed, paper
           </p>
         </div>
         <div className="flex gap-2">
@@ -242,7 +244,7 @@ export default function OptionSpreadsPage() {
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr>
-                    {["Index", "Spread", "Signal", "Expiry", "Legs", "Credit", "Lots", "Decision", "Status", "R", "₹"].map((h) => (
+                    {["Index", "Spread", "Signal", "Expiry", "Legs", "Credit / debit", "Lots", "Decision", "Status", "R", "₹"].map((h) => (
                       <th key={h} className="py-1 pr-3 text-left font-normal">{h}</th>
                     ))}
                   </tr>
@@ -264,8 +266,9 @@ export default function OptionSpreadsPage() {
             <FlaskConical className="h-4 w-4" /> Backtest on stored option files
           </CardTitle>
           <CardDescription>
-            Live rules: one spread per index at a time; bull put in a strong uptrend, bear call in a strong downtrend, iron
-            condor sideways. Tick the debit spreads (or untick some) to compare strategies: each then keeps its own book.
+            Live rules: one spread per index at a time. Strong uptrend: bull put, or bull call when India VIX is below the
+            switch level; strong downtrend: bear call, or bear put below it; iron condor sideways. Changing the ticked
+            strategies switches to comparing them instead (each keeps its own book; the VIX switch is then not used).
             1R = the loss at the stop (credit spreads: one credit; debit spreads: half the debit).
           </CardDescription>
         </CardHeader>
@@ -293,6 +296,10 @@ export default function OptionSpreadsPage() {
                 value={minSingle}
                 onChange={(e) => setMinSingle(e.target.value)}
               />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Debit spreads when VIX below (0 = never)</span>
+              <Input type="number" min={0} max={100} step={0.5} value={vixSwitch} onChange={(e) => setVixSwitch(e.target.value)} />
             </label>
             <Button size="sm" disabled={busy !== null || strats.length === 0} onClick={runBacktest}>
               {busy === "bt" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Play className="mr-1 h-4 w-4" />} Run
