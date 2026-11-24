@@ -92,10 +92,14 @@ def ensure_table() -> None:
 
 
 def exists(week_start: date) -> bool:
+    """A full-week report is stored: one built from Saturday 08:00 on. A "this week so far" run
+    made earlier in the week (asked 24 Nov 2026) doesn't count, so Saturday's run still happens
+    and replaces it."""
     ensure_table()
+    full_from = datetime.combine(week_start + timedelta(days=5), RUN_AT).isoformat(sep=" ")
     with get_db() as conn:
-        return conn.execute("SELECT 1 FROM weekly_postmortems WHERE week_start = ?",
-                            (week_start.isoformat(),)).fetchone() is not None
+        return conn.execute("SELECT 1 FROM weekly_postmortems WHERE week_start = ? AND created_at >= ?",
+                            (week_start.isoformat(), full_from)).fetchone() is not None
 
 
 def list_postmortems(limit: int = 52) -> list[dict]:

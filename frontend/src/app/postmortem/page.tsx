@@ -144,7 +144,18 @@ function StatsRows({ rows }: { rows: [string, Stats | null | undefined][] }) {
   );
 }
 
+// Monday..Sunday of the current week, local date (asked 24 Nov 2026: check a week mid-way).
+function currentWeek(): { start: string; end: string } {
+  const d = new Date();
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+  const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+  const iso = (x: Date) =>
+    `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  return { start: iso(monday), end: iso(sunday) };
+}
+
 export default function PostmortemPage() {
+  const [thisWeek] = useState(currentWeek);
   const [weeks, setWeeks] = useState<WeekRow[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [pm, setPm] = useState<Postmortem | null>(null);
@@ -155,27 +166,33 @@ export default function PostmortemPage() {
   const fetchWeek = useCallback((week: string) => {
     getPostmortem(week)
       .then((r) => setPm(r as Postmortem))
-      .catch((e) => toast.error(errorMessage(e, "Could not load that week")))
+      .catch((e) => {
+        setPm(null);
+        const msg = errorMessage(e, "Could not load that week");
+        if (msg.includes("no post-mortem")) toast.message("Not built yet. Press \"Run this week so far\" to see the trades closed so far.");
+        else toast.error(msg);
+      })
       .finally(() => setLoading(false));
   }, []);
 
   const fetchWeeks = useCallback(() => {
     listPostmortems()
       .then((r) => {
-        const list = (r as { weeks: WeekRow[] }).weeks;
+        const stored = (r as { weeks: WeekRow[] }).weeks;
+        const list = stored.some((w) => w.week_start === thisWeek.start)
+          ? stored
+          : [{ week_start: thisWeek.start, week_end: thisWeek.end, created_at: "", ai_status: null, headline: null }, ...stored];
         setWeeks(list);
-        if (list.length) {
-          setSelected(list[0].week_start);
-          fetchWeek(list[0].week_start);
-        } else {
-          setLoading(false);
-        }
+        // open the newest stored report; this week shows once it has been run
+        const first = stored[0]?.week_start ?? list[0].week_start;
+        setSelected(first);
+        fetchWeek(first);
       })
       .catch((e) => {
         toast.error(errorMessage(e, "Could not load post-mortems"));
         setLoading(false);
       });
-  }, [fetchWeek]);
+  }, [fetchWeek, thisWeek]);
 
   useEffect(() => {
     fetchWeeks();
@@ -225,6 +242,7 @@ export default function PostmortemPage() {
               {weeks.map((w) => (
                 <option key={w.week_start} value={w.week_start}>
                   {w.week_start} → {w.week_end}
+                  {w.week_start === thisWeek.start ? (w.created_at ? " · this week so far" : " · this week (not run yet)") : ""}
                   {w.headline?.n ? ` · ${w.headline.n} paper trades, ${w.headline.avg_r}R avg` : ""}
                 </option>
               ))}
@@ -236,7 +254,7 @@ export default function PostmortemPage() {
           </label>
           <Button size="sm" onClick={runNow} disabled={busy}>
             {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Play className="mr-1 h-4 w-4" />}
-            {selected ? "Re-run this week" : "Run for this week"}
+            {selected === thisWeek.start ? (pm ? "Update this week so far" : "Run this week so far") : "Re-run this week"}
           </Button>
         </CardContent>
       </Card>
