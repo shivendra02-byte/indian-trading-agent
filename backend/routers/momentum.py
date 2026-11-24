@@ -29,6 +29,17 @@ def momentum_scan():
     return hourly_run()
 
 
+class SideRequest(BaseModel):
+    enabled: bool | None = None          # None = back to the config default
+
+
+@router.put("/sides/{side}")
+def momentum_side(side: Literal["long", "short"], req: SideRequest):
+    """Switch the long or short side of the momentum book on/off (new entries only)."""
+    from backend.momentum.book import set_side
+    return set_side(side, req.enabled)
+
+
 class BacktestRequest(BaseModel):
     start_date: date
     end_date: date

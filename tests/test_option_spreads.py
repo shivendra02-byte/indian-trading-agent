@@ -112,6 +112,21 @@ class BookTests(IsolatedStateTestCase, unittest.TestCase):
         from backend.journal.panel import evaluations_today
         self.assertEqual(evaluations_today(date.fromisoformat(closed["panel"]["evaluated_at"][:10])), 1)
 
+    def test_run_now_on_a_holiday_uses_the_latest_stored_files(self):
+        """Asked 24 Nov 2026: "Run now" said "no option file for today" on a holiday."""
+        reply = '{"decision": "approve", "confidence": 75, "reasons": ["trend up"], "risks": ["gap"]}'
+        with mock.patch.object(spreads, "_send", return_value="sent"):
+            out = spreads.run_now(today=date(2025, 11, 22), llm_call=lambda p: (reply, "m"))   # Saturday
+        self.assertEqual(out["date"], "2025-11-20")
+        self.assertIn("weekend", out["note"])
+        self.assertNotEqual(out["results"].get("NIFTY"), "no option file for today")
+
+    def test_run_now_without_files(self):
+        from backend.db import get_db
+        with get_db() as conn:
+            conn.execute("DELETE FROM option_eod")
+        self.assertEqual(spreads.run_now(today=date(2025, 11, 22))["status"], "skipped")
+
     def test_paused(self):
         with mock.patch("backend.system_state.is_paused", return_value=True):
             self.assertEqual(spreads.run_eod(date(2025, 11, 19))["reason"], "paused")

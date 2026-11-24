@@ -279,7 +279,7 @@ export const refreshIdeas = () => fetchAPI(`/api/ideas/refresh`, { method: "POST
 // Your own futures trades (system-calculated trailing stop)
 export type MyTradeInput = {
   symbol: string;
-  exchange: "NFO" | "MCX";
+  exchange: "NFO" | "BFO" | "MCX";
   contract?: string;
   direction: "long" | "short";
   lots: number;
@@ -293,7 +293,7 @@ export type MyTradeInput = {
   note?: string;
 };
 export const listMyTrades = () => fetchAPI(`/api/my-trades`);
-export const getMyTradeContracts = (symbol: string, exchange: "NFO" | "MCX") =>
+export const getMyTradeContracts = (symbol: string, exchange: "NFO" | "BFO" | "MCX") =>
   fetchAPI(`/api/my-trades/contracts?symbol=${encodeURIComponent(symbol)}&exchange=${exchange}`);
 export const addMyTrade = (data: MyTradeInput) => fetchAPI(`/api/my-trades`, { method: "POST", body: JSON.stringify(data) });
 export const refreshMyTrades = () => fetchAPI(`/api/my-trades/refresh`, { method: "POST" });
@@ -307,8 +307,11 @@ export const getStoredCandles = (token: number, interval: string, limit: number)
   fetchAPI(`/api/marketdata/candles?token=${token}&interval=${interval}&limit=${limit}`);
 // Momentum book (weekly relative-strength ranking, stock futures, paper)
 export const getMomentum = () => fetchAPI(`/api/momentum/`);
+export const getTodayPnl = () => fetchAPI(`/api/pnl/today`);
 export const runMomentumRank = () => fetchAPI(`/api/momentum/rank`, { method: "POST" });
 export const runMomentumScan = () => fetchAPI(`/api/momentum/scan`, { method: "POST" });
+export const setMomentumSide = (side: "long" | "short", enabled: boolean | null) =>
+  fetchAPI(`/api/momentum/sides/${side}`, { method: "PUT", body: JSON.stringify({ enabled }) });
 export const getMomentumBacktests = () => fetchAPI(`/api/momentum/backtests`);
 export const startMomentumBacktest = (data: {
   start_date: string;

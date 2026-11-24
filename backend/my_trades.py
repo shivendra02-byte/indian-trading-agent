@@ -18,19 +18,22 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backend.db import get_db
 from backend.decision.config import get_config
 
 log = logging.getLogger(__name__)
-EXCHANGES = {"NFO": ("NFO-FUT", "NSE"), "MCX": ("MCX-FUT", "MCX")}     # segment, calendar exchange
+# segment, calendar exchange (BSE keeps NSE hours and holidays; BFO = SENSEX futures, asked 24 Nov 2026)
+EXCHANGES = {"NFO": ("NFO-FUT", "NSE"), "BFO": ("BFO-FUT", "NSE"), "MCX": ("MCX-FUT", "MCX")}
 FAR = 1e12
 COLUMNS = ("symbol", "exchange", "contract", "instrument_token", "expiry", "lot_size", "point_value", "direction",
            "lots", "entry_price", "entry_time", "initial_stop", "target", "interval", "atr_period", "breakeven_at_r",
            "breakeven_lock_r", "trail_start_r", "trail_atr", "note")
 STATE = ("status", "current_stop", "stop_stage", "atr", "last_close", "last_bar_ts", "mfe_r", "open_r",
-         "open_pnl", "hit_time", "hit_price", "exit_price", "exit_time", "realised_r", "realised_pnl", "updated_at")
+         "open_pnl", "hit_time", "hit_price", "exit_price", "exit_time", "realised_r", "realised_pnl", "updated_at",
+         "best_close", "data_note")
+ADDED_COLUMNS = {"best_close": "REAL", "data_note": "TEXT"}     # added 24 Nov 2026
 
 
 def settings():
@@ -52,9 +55,14 @@ def ensure_table() -> None:
                 status TEXT NOT NULL DEFAULT 'open',   -- open / stop_hit / target_hit / closed
                 current_stop REAL, stop_stage TEXT, atr REAL, last_close REAL, last_bar_ts TEXT,
                 mfe_r REAL, open_r REAL, open_pnl REAL, hit_time TEXT, hit_price REAL,
-                exit_price REAL, exit_time TEXT, realised_r REAL, realised_pnl REAL, updated_at TEXT
+                exit_price REAL, exit_time TEXT, realised_r REAL, realised_pnl REAL, updated_at TEXT,
+                best_close REAL, data_note TEXT
             );
         """)
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(my_trades)")}
+        for col, kind in ADDED_COLUMNS.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE my_trades ADD COLUMN {col} {kind}")
 
 
 # --- contracts ---------------------------------------------------------------------------
@@ -83,10 +91,10 @@ def validate(data: dict, contract_rows: list[dict] | None = None) -> dict:
     cfg = settings()
     exchange = data.get("exchange") or "NFO"
     if exchange not in EXCHANGES:
-        raise ValueError("exchange must be NFO or MCX")
+        raise ValueError("exchange must be NFO, BFO or MCX")
     symbol = str(data.get("symbol") or "").strip().upper()
     if not symbol or len(symbol) > 25:
-        raise ValueError("symbol is required, e.g. RELIANCE, NIFTY or GOLDM")
+        raise ValueError("symbol is required, e.g. RELIANCE, NIFTY, SENSEX or GOLDM")
     rows = contract_rows if contract_rows is not None else contracts(symbol, exchange)
     if not rows:
         raise ValueError(f"no unexpired {exchange} futures for {symbol} in the instrument list (log in to Kite first)")
@@ -110,7 +118,7 @@ def validate(data: dict, contract_rows: list[dict] | None = None) -> dict:
     if target is not None and ((target <= entry) if long else (target >= entry)):
         raise ValueError(f"the target must be {'above' if long else 'below'} the entry")
     entry_time = data.get("entry_time") or datetime.now().isoformat(timespec="minutes")
-    datetime.fromisoformat(str(entry_time))
+    check_entry_time(exchange, datetime.fromisoformat(str(entry_time)))
     out = {"symbol": symbol, "exchange": exchange, "contract": row["contract"],
            "instrument_token": row["instrument_token"], "expiry": row["expiry"], "lot_size": row["lot_size"],
            "point_value": row["point_value"], "direction": direction, "lots": lots, "entry_price": entry,
@@ -129,6 +137,24 @@ def validate(data: dict, contract_rows: list[dict] | None = None) -> dict:
     return out
 
 
+def check_entry_time(exchange: str, when: datetime, now: datetime | None = None) -> None:
+    """The entry must fall inside a session of the exchange and not in the future (asked 24 Nov 2026:
+    a GOLDM entry at 09:26 on a day MCX's morning session was shut had nothing to follow)."""
+    from tradingagents.utils.market_calendar import holiday_name, session_windows
+    now = now or datetime.now()
+    if when > now + timedelta(minutes=5):
+        raise ValueError(f"entry time {when:%d %b %H:%M} is in the future")
+    cal = EXCHANGES[exchange][1]
+    windows = session_windows(cal, when.date())
+    if any(start <= when.time() <= end for start, end in windows):
+        return
+    if not windows:
+        why = holiday_name(when.date()) if when.weekday() < 5 else "weekend"
+        raise ValueError(f"{cal} was closed on {when:%a %d %b} ({why or 'holiday'}) — check the entry date")
+    hours = ", ".join(f"{a:%H:%M}–{b:%H:%M}" for a, b in windows)
+    raise ValueError(f"{cal} was not trading at {when:%H:%M} on {when:%d %b} (open {hours}) — check the entry time")
+
+
 # --- the trailing stop ----------------------------------------------------------------------
 
 def follow(trade: dict, bars: list[dict], atr: float | None) -> dict:
@@ -143,6 +169,10 @@ def follow(trade: dict, bars: list[dict], atr: float | None) -> dict:
                     breakeven_at_r=trade["breakeven_at_r"], breakeven_lock_r=trade["breakeven_lock_r"])
     breakeven = entry + s * trade["breakeven_lock_r"] * risk
     mult = trade["lots"] * trade["point_value"]
+    upto = len(bars) if res["status"] == "open" else res["exit_index"] + 1
+    closes = [b["close"] for b in bars[:upto]]
+    best = (max(closes) if s > 0 else min(closes)) if closes else None
+    note = None if bars else "No completed bar after your entry yet — following starts with the next bar"
     last = bars[-1] if bars else None
     if res["status"] == "open":
         current = res["trail_stop"]
@@ -154,22 +184,80 @@ def follow(trade: dict, bars: list[dict], atr: float | None) -> dict:
                 "last_close": close, "last_bar_ts": last["ts"] if last else None, "mfe_r": res["mfe_r"],
                 "open_r": round(s * (close - entry) / risk, 2) if close is not None else None,
                 "open_pnl": round(s * (close - entry) * mult, 0) if close is not None else None,
-                "locked_r": round(s * (current - entry) / risk, 2)}
+                "locked_r": round(s * (current - entry) / risk, 2), "best_close": best, "data_note": note}
     hit_target = res["exit_reason"] == "target"
     return {"status": "target_hit" if hit_target else "stop_hit", "current_stop": None if hit_target else
             round(res["exit_price"], 2), "stop_stage": res["exit_reason"], "atr": atr,
             "last_close": last["close"] if last else None, "last_bar_ts": last["ts"] if last else None,
             "mfe_r": res["mfe_r"], "hit_time": res["exit_ts"], "hit_price": res["exit_price"],
-            "open_r": res["pnl_r"], "open_pnl": round(s * (res["exit_price"] - entry) * mult, 0)}
+            "open_r": res["pnl_r"], "open_pnl": round(s * (res["exit_price"] - entry) * mult, 0),
+            "best_close": best, "data_note": None}
+
+
+def in_session(bars: list[dict], exchange: str) -> list[dict]:
+    """Only bars that start inside a session (a bar stamped after the close, e.g. 15:35 on NSE, is
+    not a trading bar and must not move or hit a stop)."""
+    from datetime import time as dtime
+    from tradingagents.utils.market_calendar import session_windows
+    cal = EXCHANGES.get(exchange, ("", "NSE"))[1]
+    cache: dict = {}
+    out = []
+    for b in bars:
+        day, t = b["ts"][:10], dtime.fromisoformat(b["ts"][11:19])
+        if day not in cache:
+            cache[day] = session_windows(cal, datetime.fromisoformat(day).date())
+        if any(start <= t < end for start, end in cache[day]):
+            out.append(b)
+    return out
+
+
+def fetch_bars(trade: dict, client=None, now: datetime | None = None) -> str | None:
+    """Download the contract's bars from a little before the entry up to now (asked 24 Nov 2026),
+    so a trade added for an earlier session, or on a holiday, is followed straight away.
+    Returns a note for the page when bars could not be fetched, else None."""
+    from backend.brokers.kite import KiteAuthExpired, KiteConfigError, _is_auth_error, get_authenticated_client
+    from backend.marketdata.candles import INTERVALS, completed, save_candles
+    import time as _time
+    now = now or datetime.now()
+    try:
+        client = client or get_authenticated_client()
+    except (KiteConfigError, KiteAuthExpired):
+        return "Log in to Kite to fetch bars"
+    except Exception as exc:     # noqa: BLE001 - kiteconnect not installed etc.
+        return f"Could not reach Kite: {type(exc).__name__}"
+    from backend.marketdata.store import ensure_marketdata_tables
+    ensure_marketdata_tables()
+    interval, cal = trade["interval"], EXCHANGES[trade["exchange"]][1]
+    # enough bars before the entry for the ATR: hourly ~2 sessions, 10-minute ~1 session; weekends/holidays padded
+    pad = timedelta(days=10 if interval == "60minute" else 6)
+    start = datetime.fromisoformat(trade["entry_time"]) - pad
+    chunk = timedelta(days=INTERVALS[interval][1])
+    try:
+        while start < now:
+            stop = min(start + chunk, now)
+            rows = client.historical_data(trade["instrument_token"], start, stop, interval, continuous=False, oi=False)
+            save_candles(trade["instrument_token"], interval, completed(rows or [], interval, cal, now))
+            start = stop
+            if start < now:
+                _time.sleep(0.35)
+    except Exception as exc:     # noqa: BLE001
+        if isinstance(exc, KiteAuthExpired) or _is_auth_error(exc):
+            return "Log in to Kite to fetch bars"
+        log.warning("my-trades bar fetch failed for %s: %s", trade["contract"], exc)
+        return f"Could not fetch bars: {type(exc).__name__}"
+    return None
 
 
 def _bars_and_atr(trade: dict) -> tuple[list[dict], float | None]:
     from backend.marketdata.candles import get_candles
+    from backend.marketdata.store import ensure_marketdata_tables
     from backend.signals.indicators import atr
+    ensure_marketdata_tables()
     all_bars = get_candles(trade["instrument_token"], trade["interval"], limit=2000)
     entry = trade["entry_time"]
     before = [b for b in all_bars if b["ts"] < entry]
-    after = [b for b in all_bars if b["ts"] >= entry]     # bars that start at/after the entry (the entry bar itself is skipped)
+    # bars that start at/after the entry (the entry bar itself is skipped), inside a session
+    after = in_session([b for b in all_bars if b["ts"] >= entry], trade["exchange"])
     values = atr(before, trade["atr_period"]) if len(before) > trade["atr_period"] else []
     return after, (values[-1] if values and values[-1] else None)
 
@@ -199,7 +287,7 @@ def list_trades(limit: int = 300) -> list[dict]:
             (limit,))]
 
 
-def add_trade(data: dict, contract_rows: list[dict] | None = None) -> dict:
+def add_trade(data: dict, contract_rows: list[dict] | None = None, client=None, fetch: bool = True) -> dict:
     ensure_table()
     row = validate(data, contract_rows)
     with get_db() as conn:
@@ -207,8 +295,34 @@ def add_trade(data: dict, contract_rows: list[dict] | None = None) -> dict:
                            [row.get(c) for c in COLUMNS])
         trade_id = cur.lastrowid
     _save(trade_id, {"status": "open", "current_stop": row["initial_stop"], "stop_stage": "initial"})
+    problem = fetch_bars(get_trade(trade_id), client=client) if fetch else None
     update_trades(ids=[trade_id], notify=lambda *a: "skipped")      # no alert for the trade you just entered
+    current = get_trade(trade_id)
+    if problem and current["status"] == "open" and current["last_close"] is None:
+        _save(trade_id, {**{k: current.get(k) for k in STATE}, "data_note": problem})
     return get_trade(trade_id)
+
+
+def recalculate(client=None) -> dict:
+    """The page's Recalculate button: fetch each open trade's bars from Kite, then re-follow.
+    A fetch problem is shown on trades that still have no bars to follow."""
+    ensure_table()
+    with get_db() as conn:
+        trades = [dict(r) for r in conn.execute("SELECT * FROM my_trades WHERE status = 'open'")]
+    problems: dict[int, str] = {}
+    login = None
+    for trade in trades:
+        problem = login or fetch_bars(trade, client=client)
+        if problem:
+            problems[trade["id"]] = problem
+            if problem.startswith("Log in"):
+                login = problem                          # same answer for every trade: don't ask Kite again
+    result = update_trades()
+    for trade_id, problem in problems.items():
+        current = get_trade(trade_id)
+        if current and current["status"] == "open" and current["last_close"] is None:
+            _save(trade_id, {**{k: current.get(k) for k in STATE}, "data_note": problem})
+    return {**result, "fetch_problems": problems}
 
 
 def close_trade(trade_id: int, exit_price: float, exit_time: str | None = None) -> dict:
@@ -250,9 +364,9 @@ def update_trades(exchange: str | None = None, ids: list[int] | None = None, not
         sql = f"SELECT * FROM my_trades WHERE id IN ({', '.join('?' for _ in ids)})"
         args = list(ids)
     elif exchange:
-        cal = {"NSE": "NFO", "MCX": "MCX"}.get(exchange, exchange)
-        sql += " AND exchange = ?"
-        args.append(cal)
+        cal = {"NSE": ("NFO", "BFO"), "MCX": ("MCX",)}.get(exchange, (exchange,))
+        sql += f" AND exchange IN ({', '.join('?' for _ in cal)})"
+        args.extend(cal)
     if interval and not ids:
         sql += " AND interval = ?"
         args.append(interval)

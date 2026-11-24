@@ -7,11 +7,13 @@ needs are kept:
 * NFO options — scanned indices only (NIFTY, BANKNIFTY)
 * NSE cash rows — spot equity for F&O stocks, plus the spot indices
 * MCX futures — the mini contracts in ``MCX_UNDERLYINGS``
+* BFO futures + the BSE spot index — SENSEX (``BFO_INDICES``)
 """
 
 from __future__ import annotations
 
 import csv
+import logging
 import io
 import re
 import urllib.request
@@ -20,10 +22,12 @@ from typing import Any, Iterable
 
 from backend.db import get_db
 from backend.marketdata.store import (
-    INDEX_SPOT_SYMBOLS, INDEX_UNDERLYINGS, MCX_UNDERLYINGS, SCANNED_INDICES,
+    BFO_INDICES, INDEX_SPOT_SYMBOLS, INDEX_UNDERLYINGS, MCX_UNDERLYINGS, SCANNED_INDICES,
     ensure_marketdata_tables,
 )
 from tradingagents.utils.market_calendar import IST, is_trading_day
+
+log = logging.getLogger(__name__)
 
 # A full NFO dump has several hundred futures. Fewer means Kite returned a
 # partial or empty file; keep yesterday's master rather than wiping it.
@@ -48,7 +52,8 @@ def _iso(value: Any) -> str | None:
     return value or None
 
 
-def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict]) -> list[dict]:
+def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict],
+                bfo: Iterable[dict] = (), bse: Iterable[dict] = ()) -> list[dict]:
     """Pick the instrument rows the scanner needs from the raw Kite dumps."""
     nfo = list(nfo)
     futures = [r for r in nfo if r.get("segment") == "NFO-FUT"]
@@ -67,13 +72,26 @@ def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict]) -
         elif r.get("segment") == "INDICES" and r.get("tradingsymbol") in spot_indices:
             selected.append(r)
     selected += [r for r in mcx if r.get("segment") == "MCX-FUT" and r.get("name") in MCX_UNDERLYINGS]
+    selected += [r for r in bfo if r.get("segment") == "BFO-FUT" and r.get("name") in BFO_INDICES]
+    bse_spots = {INDEX_SPOT_SYMBOLS[n] for n in BFO_INDICES}
+    selected += [r for r in bse if r.get("segment") == "INDICES" and r.get("tradingsymbol") in bse_spots]
     return selected
+
+
+def _optional_dump(client, exchange: str) -> list[dict]:
+    """BSE/BFO dumps are extras: if Kite can't send them, keep the NSE/MCX master."""
+    try:
+        return list(client.instruments(exchange))
+    except Exception as exc:   # noqa: BLE001 - never fail the morning refresh for SENSEX
+        log.warning("Kite %s instrument dump failed: %s", exchange, exc)
+        return []
 
 
 def refresh_instruments(client) -> dict:
     """Download today's instrument dump from Kite and replace the master."""
     ensure_marketdata_tables()
-    rows = select_rows(client.instruments("NFO"), client.instruments("NSE"), client.instruments("MCX"))
+    rows = select_rows(client.instruments("NFO"), client.instruments("NSE"), client.instruments("MCX"),
+                       _optional_dump(client, "BFO"), _optional_dump(client, "BSE"))
     today = _today().isoformat()
     with get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -159,7 +177,7 @@ def active_future(name: str, segment: str = "NFO-FUT", today: date | None = None
 
 
 def spot_instrument(name: str) -> dict | None:
-    """NSE spot row for an F&O stock or a scanned index."""
+    """Spot row for an F&O stock or an index (NSE; SENSEX from BSE)."""
     symbol = INDEX_SPOT_SYMBOLS.get(name, name)
     segment = "INDICES" if name in INDEX_SPOT_SYMBOLS else "NSE"
     with get_db() as conn:

@@ -383,6 +383,28 @@ def _send(text: str) -> str:
         return f"not sent: {type(exc).__name__}"
 
 
+def run_now(today: date | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
+    """The page's "Run now" (asked 24 Nov 2026): run on the latest day that has stored option files.
+    Today's files only exist after the evening download (holidays have none), so before that this
+    re-runs the latest evening — safe to repeat: candidates are unique per index and day, and only
+    new ones go to the AI."""
+    from backend.options import store
+    today = today or date.today()
+    days = [d for d in (store.latest_date(sym) for sym in settings()["symbols"]) if d and d <= today.isoformat()]
+    if not days:
+        return {"status": "skipped", "reason": "no option files stored yet — download them on the Options data page"}
+    latest = date.fromisoformat(max(days))
+    out = run_eod(latest, llm_call=llm_call)
+    if latest != today:
+        from tradingagents.utils.market_calendar import holiday_name, is_trading_day
+        why = ("market holiday" if today.weekday() < 5 and not is_trading_day(today) else
+               "weekend" if today.weekday() >= 5 else "today's files arrive after the evening download (~19:00)")
+        name = holiday_name(today)
+        out["note"] = (f"No option file for today ({why}{': ' + name if name and why == 'market holiday' else ''}); "
+                       f"ran on the latest stored files, {latest:%a %d %b}.")
+    return out
+
+
 def run_eod(day: date | None = None, llm_call: Callable[[str], tuple[str, str]] | None = None) -> dict:
     """After the day's option files are stored: follow open spreads, then today's candidates."""
     from backend.journal import panel as journal_panel

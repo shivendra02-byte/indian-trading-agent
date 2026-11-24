@@ -30,9 +30,40 @@ def settings() -> dict:
     except KeyError:
         return {**rules.defaults(), "enabled": False}
     out = {**rules.defaults(), **(inst.model_extra or {}), "enabled": inst.enabled}
+    out.update({f"{side}_enabled": on for side, on in side_overrides().items()})
     out.setdefault("risk_per_trade_pct", cfg.global_.risk.risk_per_trade_pct)
     out.setdefault("capital", cfg.global_.capital)
     return out
+
+
+SIDE_SETTING = "momentum_side_switches"
+
+
+def side_overrides() -> dict:
+    """Long/short switches set on the /momentum page (asked 24 Nov 2026); they override the
+    YAML defaults ``long_enabled`` / ``short_enabled`` until reset."""
+    from backend.db import get_setting
+    try:
+        raw = json.loads(get_setting(SIDE_SETTING) or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return {s: bool(raw[s]) for s in SIDES if isinstance(raw, dict) and s in raw}
+
+
+def set_side(side: str, enabled: bool | None) -> dict:
+    """Switch one side on/off; ``None`` goes back to the YAML default. Open positions are
+    still followed to their exit either way."""
+    from backend.db import set_setting
+    if side not in SIDES:
+        raise ValueError(f"side must be one of {SIDES}")
+    current = side_overrides()
+    if enabled is None:
+        current.pop(side, None)
+    else:
+        current[side] = bool(enabled)
+    set_setting(SIDE_SETTING, json.dumps(current) if current else None)
+    cfg = settings()
+    return {"long_enabled": cfg["long_enabled"], "short_enabled": cfg["short_enabled"], "overrides": current}
 
 
 def ensure_tables() -> None:
@@ -339,6 +370,7 @@ def status() -> dict:
     rs = [p["pnl_r"] for p in closed if p["pnl_r"] is not None]
     return {
         "enabled": cfg["enabled"], "long_enabled": cfg["long_enabled"], "short_enabled": cfg["short_enabled"],
+        "side_overrides": side_overrides(),
         "settings": {k: cfg[k] for k in ("top_n", "buffer_n", "max_positions_per_side", "stop_atr", "trail_atr",
                                          "max_hold_days", "lookbacks_days", "skip_days", "min_turnover_cr")},
         "week": week, "long_group": [r for r in rows if r["side"] == "long"],

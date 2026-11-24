@@ -135,9 +135,9 @@ def spreads_status():
 
 @router.post("/spreads/run")
 def spreads_run():
-    """Follow open spreads and build today's candidates from the stored option files."""
-    from backend.options.spreads import run_eod
-    return run_eod()
+    """Follow open spreads and build candidates from the latest stored option files."""
+    from backend.options.spreads import run_now
+    return run_now()
 
 
 @router.post("/spreads/backtest")
