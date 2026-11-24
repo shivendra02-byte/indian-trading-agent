@@ -63,6 +63,42 @@ class PureTests(unittest.TestCase):
         self.assertIsNone(spreads.value(legs, {(25500, "PE"): 20}))
 
 
+def debit_chain(day, near_px=120.0, far_px=50.0):
+    """A chain with a near-the-money call (delta 0.50) for bull call spreads."""
+    return chain(day) + [row(day, 25900, "CE", near_px, 0.50), row(day, 26100, "CE", far_px, 0.30)]
+
+
+class DebitSpreadTests(unittest.TestCase):
+    """Bull call / bear put debit spreads (asked 24 Nov 2026)."""
+    def setUp(self):
+        self.cfg = spreads.settings()
+
+    def test_bull_call_build_size_exits(self):
+        bc, why = spreads.build(debit_chain("2025-11-19"), "bull_call", RULE, self.cfg)
+        self.assertTrue(bc, why)
+        self.assertEqual([(l["strike"], l["side"]) for l in bc["legs"]], [(25900, "long"), (26100, "short")])
+        self.assertEqual(bc["credit"], 70.0)                     # the debit paid
+        sp = {**bc, "lot_size": 65, "lots": 1}
+        self.assertEqual(spreads.value(bc["legs"], {(25900, "CE"): 200.0, (26100, "CE"): 60.0}, debit=True), 140.0)
+        self.assertEqual(spreads.exit_check(sp, 140.0, "2025-11-20", "2025-11-24", self.cfg), "take_profit")  # +100%
+        self.assertEqual(spreads.exit_check(sp, 35.0, "2025-11-20", "2025-11-24", self.cfg), "stop")         # −50%
+        self.assertIsNone(spreads.exit_check(sp, 80.0, "2025-11-20", "2025-11-24", self.cfg))
+        self.assertEqual(spreads.pnl(sp, 35.0, self.cfg)["pnl_r"], -1.0)     # 1R = half the debit
+        self.assertEqual(spreads.pnl(sp, 140.0, self.cfg)["pnl_r"], 2.0)
+        cfg = {**self.cfg, "capital": 1_000_000, "risk_per_trade_pct": 1.0, "max_loss_pct": 3.0}
+        self.assertEqual(spreads.size(70, 200, 65, cfg, "bull_call"), (4, ""))   # 1R ₹2,275/lot; worst ₹4,550/lot
+
+    def test_debit_too_expensive(self):
+        built, why = spreads.build(debit_chain("2025-11-19", 160, 40), "bull_call", RULE, self.cfg)
+        self.assertIsNone(built)
+        self.assertIn("debit", why)
+
+    def test_one_sided_credit_minimum(self):
+        cfg = {**self.cfg, "min_credit_ratio_single": 0.10}
+        built, why = spreads.build(chain("2025-11-19", 30, 10), "bull_put", RULE, cfg)   # credit 20 = 10% of 200
+        self.assertTrue(built, why)
+
+
 def _store(rows):
     from backend.db import get_db
     from backend.options.store import ensure_option_tables
@@ -95,6 +131,62 @@ class BookTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual((t["strategy"], t["exit_reason"], t["exit_date"]), ("bull_put", "take_profit", "2025-11-20"))
         self.assertAlmostEqual(t["pnl_r"], 18 / 33, places=3)
         self.assertEqual(res["by_strategy"]["bull_put"]["trades"], 1)
+
+    def test_compare_strategies_keeps_a_book_each(self):
+        from backend.db import get_db
+        with get_db() as conn:
+            conn.execute("DELETE FROM option_eod")
+        day2 = chain("2025-11-20", 20, 5) + [row("2025-11-20", 25900, "CE", 260, 0.80),
+                                             row("2025-11-20", 26100, "CE", 120, 0.55)]
+        _store(debit_chain("2025-11-19") + day2)
+        res = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"],
+                               strategies=["bull_put", "bull_call", "iron_condor"])
+        got = sorted((t["strategy"], t["exit_reason"]) for t in res["trades"])
+        self.assertEqual(got, [("bull_call", "take_profit"), ("bull_put", "take_profit")])   # no condor in STRONG_UP
+        self.assertEqual(set(res["by_strategy"]), {"bull_put", "iron_condor", "bull_call"})
+        self.assertEqual(res["funnel"]["NIFTY"]["opened"], 3)            # a new bull call the day the first closed
+        self.assertEqual(res["skipped"].get("still open at the end"), 1)
+        self.assertEqual(res["funnel"]["NIFTY"]["entry_days"], 2)
+
+    def test_low_vix_buys_a_debit_spread(self):
+        """Asked 24 Nov 2026: VIX below 11 → bull call / bear put; otherwise bull put / bear call."""
+        from backend.db import get_db
+        from backend.options import store
+        with get_db() as conn:
+            conn.execute("DELETE FROM option_eod")
+        _store(debit_chain("2025-11-19"))
+        cfg = spreads.settings()
+        get = (lambda day, e: store.chain("NIFTY", day, e)), (lambda day: ["2025-11-25"])
+        low = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "STRONG_UP", 10.2)
+        high = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "STRONG_UP", 14.0)
+        side = spreads.candidate("NIFTY", date(2025, 11, 19), cfg, *get, "SIDEWAYS", 10.2)
+        self.assertEqual((low["strategy"], high["strategy"], side["strategy"]), ("bull_call", "bull_put", "iron_condor"))
+        self.assertTrue(low["ok"], low["reason"])
+        self.assertEqual(spreads.by_vix("bear_call", 9.0, cfg), "bear_put")
+        self.assertEqual(spreads.by_vix("bear_call", None, cfg), "bear_call")          # unknown VIX → credit
+        self.assertEqual(spreads.by_vix("bear_call", 9.0, {**cfg, "debit_below_vix": None}), "bear_call")
+        alert = spreads.build_alert({**low, "vix": 10.2}, None, "approved")
+        self.assertIn("Bull call spread", alert)
+        self.assertIn("Debit 70.0 pts (you pay)", alert)
+        prompt = spreads.build_prompt({**low, "vix": 10.2})
+        self.assertIn("option debit spread", prompt)
+        self.assertIn('"debit": 70.0', prompt)
+        with mock.patch("backend.options.store.vix_on", return_value=10.0):
+            res = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"])
+            off = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"], debit_below_vix=0)
+        self.assertEqual(res["funnel"]["NIFTY"]["opened"], 1)
+        self.assertIn("bull_call", res["by_strategy"])
+        self.assertNotIn("bull call: credit", " ".join(res["skipped"]))
+        self.assertIsNone(off["options"]["debit_below_vix"])
+
+    def test_condor_in_unstable(self):
+        with mock.patch.object(spreads, "_regime_on", return_value="UNSTABLE"):
+            off = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"])
+            on = spreads.backtest(date(2025, 11, 17), date(2025, 11, 21), ["NIFTY"], condor_in_unstable=True)
+        self.assertEqual(off["trades"], [])
+        self.assertIn("no spread in a UNSTABLE regime", off["skipped"])
+        self.assertEqual(on["funnel"]["NIFTY"]["opened"], 1)          # a condor opened (still open at the end)
+        self.assertEqual(on["skipped"].get("still open at the end"), 1)
 
     def test_live_run_reviews_and_follows(self):
         reply = '{"decision": "approve", "confidence": 75, "reasons": ["trend up"], "risks": ["gap"]}'

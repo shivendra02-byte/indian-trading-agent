@@ -52,11 +52,21 @@ type Backtest = {
   by_exit: Record<string, Stats>;
   by_year: Record<string, Stats>;
   by_period?: Record<string, Stats>;
+  by_regime?: Record<string, Stats>;
   skipped: Record<string, number>;
+  funnel?: Record<string, { trading_days: number; no_option_file: number; entry_days: number; opened: number; book_busy: number }>;
   limitations: string[];
 };
 
-const NAME: Record<string, string> = { bull_put: "Bull put", bear_call: "Bear call", iron_condor: "Iron condor" };
+const NAME: Record<string, string> = {
+  bull_put: "Bull put (credit)",
+  bear_call: "Bear call (credit)",
+  iron_condor: "Iron condor",
+  bull_call: "Bull call (debit)",
+  bear_put: "Bear put (debit)",
+};
+const ALL_STRATEGIES = ["iron_condor", "bull_put", "bear_call", "bull_call", "bear_put"];
+const LIVE_STRATEGIES = ["iron_condor", "bull_put", "bear_call"];
 const v = (x: number | null | undefined, d = 2) => (x === null || x === undefined ? "—" : x.toFixed(d));
 const tone = (x: number | null | undefined) =>
   x === null || x === undefined ? "" : x > 0 ? "text-green-600" : x < 0 ? "text-red-600" : "";
@@ -129,6 +139,11 @@ export default function OptionSpreadsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [bt, setBt] = useState<Backtest | null>(null);
   const [form, setForm] = useState({ start_date: "2024-06-01", end_date: "2026-11-20", split_date: "2025-12-01" });
+  // compare strategies (asked 24 Nov 2026); the live rules are the three credit strategies
+  const [strats, setStrats] = useState<string[]>(LIVE_STRATEGIES);
+  const [condorUnstable, setCondorUnstable] = useState(false);
+  const [minSingle, setMinSingle] = useState("");
+  const [vixSwitch, setVixSwitch] = useState("11");
 
   const fetchData = useCallback(() => {
     getOptionSpreads()
@@ -164,7 +179,17 @@ export default function OptionSpreadsPage() {
   const runBacktest = async () => {
     setBusy("bt");
     try {
-      setBt((await backtestOptionSpreads({ ...form, split_date: form.split_date || null })) as Backtest);
+      const compare = strats.length !== LIVE_STRATEGIES.length || strats.some((x) => !LIVE_STRATEGIES.includes(x));
+      setBt(
+        (await backtestOptionSpreads({
+          ...form,
+          split_date: form.split_date || null,
+          strategies: compare ? strats : null,
+          condor_in_unstable: condorUnstable,
+          min_credit_ratio_single: minSingle ? Number(minSingle) / 100 : null,
+          debit_below_vix: vixSwitch === "" ? null : Number(vixSwitch),
+        })) as Backtest,
+      );
     } catch (e) {
       toast.error(errorMessage(e, "Backtest failed"));
     } finally {
@@ -186,9 +211,9 @@ export default function OptionSpreadsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Option Spreads</h1>
           <p className="text-sm text-muted-foreground">
-            NIFTY / BANKNIFTY / SENSEX credit spreads from the evening option files · short leg at 0.15–0.20 delta · bull put in
-            uptrends, bear call in downtrends, iron condor sideways · take profit 50%, stop at 2× credit, out the day before
-            expiry · AI-reviewed, paper
+            NIFTY / BANKNIFTY / SENSEX spreads from the evening option files · uptrend: bull put (sell), or bull call (buy)
+            when India VIX is below 11 · downtrend: bear call (sell), or bear put (buy) below VIX 11 · iron condor sideways ·
+            out the day before expiry · AI-reviewed, paper
           </p>
         </div>
         <div className="flex gap-2">
@@ -219,7 +244,7 @@ export default function OptionSpreadsPage() {
               <table className="w-full text-xs">
                 <thead className="text-muted-foreground">
                   <tr>
-                    {["Index", "Spread", "Signal", "Expiry", "Legs", "Credit", "Lots", "Decision", "Status", "R", "₹"].map((h) => (
+                    {["Index", "Spread", "Signal", "Expiry", "Legs", "Credit / debit", "Lots", "Decision", "Status", "R", "₹"].map((h) => (
                       <th key={h} className="py-1 pr-3 text-left font-normal">{h}</th>
                     ))}
                   </tr>
@@ -240,7 +265,12 @@ export default function OptionSpreadsPage() {
           <CardTitle className="flex items-center gap-2 text-base">
             <FlaskConical className="h-4 w-4" /> Backtest on stored option files
           </CardTitle>
-          <CardDescription>Same rules, one spread per index at a time. 1R = one credit (the loss at the stop).</CardDescription>
+          <CardDescription>
+            Live rules: one spread per index at a time. Strong uptrend: bull put, or bull call when India VIX is below the
+            switch level; strong downtrend: bear call, or bear put below it; iron condor sideways. Changing the ticked
+            strategies switches to comparing them instead (each keeps its own book; the VIX switch is then not used).
+            1R = the loss at the stop (credit spreads: one credit; debit spreads: half the debit).
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-3 text-sm">
@@ -256,25 +286,70 @@ export default function OptionSpreadsPage() {
               <span className="text-xs text-muted-foreground">Train/test split</span>
               <Input type="date" value={form.split_date} onChange={(e) => setForm({ ...form, split_date: e.target.value })} />
             </label>
-            <Button size="sm" disabled={busy !== null} onClick={runBacktest}>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Min credit, bull put / bear call (% of width)</span>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                placeholder="same as condor (15)"
+                value={minSingle}
+                onChange={(e) => setMinSingle(e.target.value)}
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">Debit spreads when VIX below (0 = never)</span>
+              <Input type="number" min={0} max={100} step={0.5} value={vixSwitch} onChange={(e) => setVixSwitch(e.target.value)} />
+            </label>
+            <Button size="sm" disabled={busy !== null || strats.length === 0} onClick={runBacktest}>
               {busy === "bt" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Play className="mr-1 h-4 w-4" />} Run
             </Button>
           </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            {ALL_STRATEGIES.map((k) => (
+              <label key={k} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={strats.includes(k)}
+                  onChange={(e) => setStrats(e.target.checked ? [...strats, k] : strats.filter((x) => x !== k))}
+                />
+                {NAME[k]}
+              </label>
+            ))}
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={condorUnstable} onChange={(e) => setCondorUnstable(e.target.checked)} />
+              Iron condor also in choppy (UNSTABLE) markets
+            </label>
+          </div>
           {bt && (
             <>
+              {bt.funnel && (
+                <p className="text-xs text-muted-foreground">
+                  Why so few trades:{" "}
+                  {Object.entries(bt.funnel)
+                    .map(
+                      ([sym, f]) =>
+                        `${sym}: ${f.trading_days} trading days, ${f.no_option_file} without an option file, ` +
+                        `${f.entry_days} in the entry window, ${f.opened} opened` +
+                        (f.book_busy ? `, ${f.book_busy} skipped (spread already open)` : ""),
+                    )
+                    .join(" · ")}
+                </p>
+              )}
               <StatsTable
                 rows={[
                   ["All", bt.all],
                   ...Object.entries(bt.by_period ?? {}).map(([k, s]) => [k, s] as [string, Stats]),
                   ...Object.entries(bt.by_symbol).map(([k, s]) => [k, s] as [string, Stats]),
                   ...Object.entries(bt.by_strategy).map(([k, s]) => [NAME[k] ?? k, s] as [string, Stats]),
+                  ...Object.entries(bt.by_regime ?? {}).map(([k, s]) => [`regime: ${k}`, s] as [string, Stats]),
                   ...Object.entries(bt.by_exit).map(([k, s]) => [`exit: ${k.replace("_", " ")}`, s] as [string, Stats]),
                   ...Object.entries(bt.by_year).map(([k, s]) => [k, s] as [string, Stats]),
                 ]}
               />
               {Object.keys(bt.skipped).length > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  Days skipped: {Object.entries(bt.skipped).slice(0, 6).map(([k, n]) => `${k} (${n})`).join(" · ")}
+                  Skipped: {Object.entries(bt.skipped).slice(0, 10).map(([k, n]) => `${k} (${n})`).join(" · ")}
                 </p>
               )}
               <ul className="list-disc pl-5 text-xs text-muted-foreground">
