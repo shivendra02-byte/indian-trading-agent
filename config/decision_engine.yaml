@@ -293,6 +293,21 @@ instruments:
     max_vix: 25.0                  # no new spread above this India VIX
     min_credit_ratio_single: null  # bull put / bear call minimum credit (fraction of width); null = min_credit_ratio
     debit_below_vix: 11            # asked 24 Nov 2026: in a strong trend, India VIX below this → buy a debit spread (bull call / bear put); at or above → sell a credit spread (bull put / bear call); null = credit only
+    research:                      # /option-spreads research runs (asked 24 Nov 2026) — backtest only, never changes live rules
+      min_trades: 10               # a strategy × index × regime cell needs this many train trades to be eligible
+      min_profit_factor: 1.1
+      min_consistency: 0.5         # share of quarters with a positive total
+      shrink_trades: 20            # expectancy × n / (n + 20) before ranking (small samples count for less)
+      drawdown_weight: 0.5         # score − 0.5 × max drawdown (R) per trade
+      costs:                       # model only — check current rates
+        slippage_points_per_leg: {NIFTY: 0.5, BANKNIFTY: 1.0, SENSEX: 1.0}   # each order, each side
+        brokerage_per_order: 20.0
+        stt_sell_pct: [{from: "2024-10-01", pct: 0.1}, {from: "2026-04-01", pct: 0.15}]   # options, on sell premium
+        stt_sell_pct_before: 0.0625
+        exchange_pct: {NSE: 0.03503, BSE: 0.0325}   # on premium turnover
+        gst_pct: 18.0              # on brokerage + exchange + SEBI
+        stamp_buy_pct: 0.003
+        sebi_per_crore: 10.0
     debit:                         # bull call / bear put debit spreads
       long_delta: [0.40, 0.60]     # bought leg near the money; sold leg `wing` points further out
       max_debit_ratio: 0.5         # pay at most half the width, so the most you can make >= the most you can lose

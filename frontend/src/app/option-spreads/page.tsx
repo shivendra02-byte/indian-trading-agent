@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FlaskConical, Loader2, Play, RefreshCw } from "lucide-react";
+import { Download, FlaskConical, Loader2, Play, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { backtestOptionSpreads, getOptionSpreads, runOptionSpreads } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/utils";
+import { SpreadResearch } from "@/components/spreads/SpreadResearch";
 
 type Leg = { type: "CE" | "PE"; strike: number; side: "short" | "long"; price: number; delta?: number };
 type Spread = {
@@ -56,7 +57,25 @@ type Backtest = {
   skipped: Record<string, number>;
   funnel?: Record<string, { trading_days: number; no_option_file: number; entry_days: number; opened: number; book_busy: number }>;
   limitations: string[];
+  trades?: Record<string, unknown>[];
 };
+
+// Trade-level CSV of the backtest on screen (asked 24 Nov 2026), built in the browser.
+const CSV_COLS = ["symbol", "strategy", "regime", "vix", "signal_date", "expiry", "exit_date", "exit_reason", "credit",
+  "width", "lot_size", "lots", "exit_value", "pnl_points", "pnl_r", "pnl_inr"];
+function downloadTradesCsv(trades: Record<string, unknown>[]) {
+  const cell = (v: unknown) => {
+    const t = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const lines = [CSV_COLS.join(","), ...trades.map((t) => CSV_COLS.map((c) => cell(t[c])).join(","))];
+  const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "spread-backtest-trades.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 const NAME: Record<string, string> = {
   bull_put: "Bull put (credit)",
@@ -323,6 +342,11 @@ export default function OptionSpreadsPage() {
           </div>
           {bt && (
             <>
+              {bt.trades && bt.trades.length > 0 && (
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => downloadTradesCsv(bt.trades ?? [])}>
+                  <Download className="mr-1 h-3 w-3" /> Download trades (CSV)
+                </Button>
+              )}
               {bt.funnel && (
                 <p className="text-xs text-muted-foreground">
                   Why so few trades:{" "}
@@ -361,6 +385,9 @@ export default function OptionSpreadsPage() {
           )}
         </CardContent>
       </Card>
+      <SpreadResearch
+        defaults={{ start_date: form.start_date, end_date: form.end_date, split_date: form.split_date || "2025-12-01", minSingle: minSingle || "10" }}
+      />
     </div>
   );
 }
