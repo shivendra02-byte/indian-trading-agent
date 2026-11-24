@@ -219,6 +219,28 @@ class TodayPnlTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual(out["total"]["realised_pnl"], 10_300.0)
         self.assertEqual(out["total"]["ended_today"], 3)
 
+    def test_taken_and_rules_only_trades(self):
+        """Asked 24 Nov 2026: Monday's ORB trades were alerted "rules only" (AI error) and taken."""
+        from backend.journal.store import list_records, set_user_action
+        from backend.pnl_today import today_summary
+        self._journal("RELIANCE", "shortlisted", "closed", exit_ts=f"{self.DAY}T15:15:00", exit_price=101.5,
+                      pnl_r=0.75, pnl_rupees=3_700.0, fill_price=100.0, qty=5,
+                      panel={"alert": "sent", "status": "error"})
+        self._journal("LT", "shortlisted", "closed", exit_ts=f"{self.DAY}T15:15:00", exit_price=101.0,
+                      pnl_r=0.5, pnl_rupees=2_400.0, fill_price=100.0, qty=5, panel={"alert": "not sent"})
+        rel = list_records("symbol = 'RELIANCE'")[0]
+        set_user_action(rel["id"], "taken", fill_price=100.5, exit_price=102.5, note="Reached a support")
+        out = today_summary(datetime.fromisoformat(self.DAY).date())
+        mine = out["mine"]["rows"]
+        self.assertEqual([r["name"] for r in mine], ["RELIANCE"])
+        self.assertEqual(mine[0]["r"], 1.0)                               # (102.5 - 100.5) / 2
+        self.assertEqual(mine[0]["pnl"], 2.0 * 5 * 500)                   # 5 lots x 500 per point
+        system = out["system"]["rows"]
+        self.assertEqual([r["name"] for r in system], ["RELIANCE"])       # LT was never alerted
+        self.assertEqual(system[0]["alert"], "rules only")
+        self.assertTrue(system[0]["taken"])
+        self.assertEqual(out["total"]["realised_pnl"], 5_000.0)           # counted once, as yours
+
     def test_api(self):
         from tests._support import fresh_test_client, login
         with fresh_test_client() as client:
@@ -226,6 +248,21 @@ class TodayPnlTests(IsolatedStateTestCase, unittest.TestCase):
             r = client.get("/api/pnl/today?day=2026-11-25")
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(r.json()["total"]["total_pnl"], 0.0)
+
+
+class PostmortemSoFarTests(IsolatedStateTestCase, unittest.TestCase):
+    def test_mid_week_run_does_not_block_saturdays_report(self):
+        from datetime import date
+        from backend.db import get_db
+        from backend.journal import postmortem
+        week = date(2026, 11, 23)
+        postmortem.run_weekly_postmortem(week, with_ai=False)
+        with get_db() as conn:
+            conn.execute("UPDATE weekly_postmortems SET created_at = '2026-11-24 11:50:00'")
+        self.assertFalse(postmortem.exists(week))
+        with get_db() as conn:
+            conn.execute("UPDATE weekly_postmortems SET created_at = '2026-11-28 08:01:00'")
+        self.assertTrue(postmortem.exists(week))
 
 
 if __name__ == "__main__":

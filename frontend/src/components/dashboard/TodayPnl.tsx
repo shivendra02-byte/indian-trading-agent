@@ -23,6 +23,8 @@ type Row = {
   r: number | null;
   pnl: number | null;
   note?: string | null;
+  alert?: "AI approved" | "rules only";
+  taken?: boolean;
 };
 type Book = {
   rows: Row[];
@@ -97,7 +99,9 @@ function BookBlock({ title, book, href }: { title: string; book: Book; href: str
                   <div className="font-medium">{r.name}</div>
                   <div className="text-muted-foreground">
                     {r.segment}
-                    {r.setup ? ` · ${r.setup.replace(/_/g, " ")}` : ""} ·{" "}
+                    {r.setup ? ` · ${r.setup.replace(/_/g, " ")}` : ""}
+                    {r.alert ? ` · ${r.alert}` : ""}
+                    {r.taken ? " · you took it" : ""} ·{" "}
                     <span className={r.direction === "short" ? "text-red-600" : r.direction === "long" ? "text-emerald-600" : ""}>
                       {r.direction}
                     </span>
@@ -158,8 +162,8 @@ export function TodayPnl() {
               {data && <span className={`ml-1 ${tone(data.total.total_pnl)}`}>{rupees(data.total.total_pnl)}</span>}
             </CardTitle>
             <CardDescription>
-              Your futures trades and the system&apos;s AI-approved paper trades. A trade moves to realised as soon as it
-              ends{data ? ` · updated ${data.as_of.slice(11, 16)}` : ""}.
+              Yours = My futures trades + journal trades you marked Taken. System = paper trades you were alerted on
+              (AI-approved or rules only). A trade moves to realised as soon as it ends{data ? ` · updated ${data.as_of.slice(11, 16)}` : ""}.
             </CardDescription>
           </div>
           <Button size="sm" variant="ghost" onClick={reload} disabled={loading} aria-label="Refresh today's P&L">
@@ -171,7 +175,7 @@ export function TodayPnl() {
         {error && <p className="text-sm text-red-600">{error}</p>}
         {data && (
           <div className="grid gap-6 md:grid-cols-2">
-            <BookBlock title="My futures trades" book={data.mine} href="/my-trades" />
+            <BookBlock title="Your trades" book={data.mine} href="/my-trades" />
             <BookBlock title="System paper trades" book={data.system} href="/journal" />
           </div>
         )}
@@ -180,7 +184,8 @@ export function TodayPnl() {
             Total today: realised <b className={tone(data.total.realised_pnl)}>{rupees(data.total.realised_pnl)}</b>{" "}
             ({rr(data.total.realised_r)}) · open <b className={tone(data.total.unrealised_pnl)}>{rupees(data.total.unrealised_pnl)}</b>{" "}
             ({rr(data.total.unrealised_r)}). Stop/target hits on your trades count at the hit price until you enter your
-            exit. System ₹ is after charges once closed.
+            exit. System ₹ is after charges once closed. A trade you took counts once in the total, as yours (your
+            fill and exit, the rules&apos; lot size, no charges).
           </p>
         )}
       </CardContent>
