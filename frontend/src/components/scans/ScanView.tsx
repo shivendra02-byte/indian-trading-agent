@@ -283,7 +283,7 @@ export function ScanView({ title, subtitle, load: loadScan, run: runScan, emptyT
             </Card>
           )}
           <p className="text-xs text-muted-foreground">
-            Shortlisted setups go to the AI panel once it is connected (Phase 4). Nothing here is an order.
+            The top shortlisted setup of each scan goes to the AI panel; approved ones are sent to Telegram and tracked as paper trades in the Trade Journal. Nothing here is an order.
           </p>
         </>
       )}

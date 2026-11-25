@@ -201,6 +201,11 @@ def _instruments(group: str, today: date) -> list[dict]:
     return out
 
 
+def _min_daily_bars() -> int:
+    from backend.marketdata.jobs import _min_daily_bars as need
+    return need()
+
+
 def run_hourly_scan(group: str, now: datetime | None = None, client=None, force: bool = False) -> dict:
     if group not in GROUPS:
         raise ValueError(group)
@@ -254,6 +259,15 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     instruments = [i for i in _instruments(group, now.date()) if _inst(i["segment"]).enabled]
     if not instruments:
         return _finish_run(run_id, "blocked", {"reason": "no active contracts (instrument master missing)"})
+    repaired = None
+    if exchange == MCX and any(len(get_candles(i["contract"]["instrument_token"], "day", limit=300))
+                               < _min_daily_bars() for i in instruments):
+        # 24 Nov 2026: short continuous daily history blocked every MCX contract — download it again
+        try:
+            from backend.marketdata.jobs import repair_continuous_job
+            repaired = repair_continuous_job(client, exchanges=(MCX,))
+        except Exception as exc:
+            repaired = {"status": "error", "reason": type(exc).__name__}
 
     rows: list[dict] = []
     for inst in instruments:
@@ -285,7 +299,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             regime = regime_nse
         else:
             daily = get_candles(contract["instrument_token"], "day", limit=300)
-            problem = None if len(daily) >= 200 else f"only {len(daily)} daily bars"
+            need = _min_daily_bars()
+            problem = None if len(daily) >= need else \
+                f"only {len(daily)} daily bars of {contract.get('tradingsymbol') or sym} (need {need}; " \
+                f"Kite's continuous daily history came back short)"
             if not problem and (now.date() - date.fromisoformat(daily[-1]["ts"][:10])).days > 4:
                 problem = f"stale daily bars (last {daily[-1]['ts'][:10]})"
             regime = current_regime(daily) if not problem else None
@@ -395,7 +412,7 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     from backend.journal.panel import review_after_scan
     panel = review_after_scan(now)    # AI review + Telegram alerts for the new shortlist
     return _finish_run(run_id, "ok", {
-        "ai_panel": panel,
+        "ai_panel": panel, "daily_repair": repaired,
         "signal_bar": bar_start.isoformat(timespec="minutes"), "regime": regime_nse,
         "instruments": len(instruments), "valid_setups": sum(1 for r in rows if r.get("valid")),
         "above_60": len(ranked), "shortlisted": [r["symbol"] for r in shortlist],
