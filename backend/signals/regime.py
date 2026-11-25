@@ -12,6 +12,11 @@ Thresholds come from config/decision_engine.yaml (global.regime); defaults:
 The current label becomes UNSTABLE if the label changed 3+ times in the last 10 days.
 A move between STRONG_x and MODERATE_x is not a change (same direction, ADX hovering at 25).
 ``adx_moderate_min: null`` switches the moderate tier off (those days stay UNSTABLE).
+
+``current_regime(bars, high_vol_trend=True)`` (MCX, agreed 25 Nov 2026): a HIGH_VOL day whose
+close and EMAs are aligned (close < EMA20 < EMA50, or the mirror) counts as part of that trend
+for the instability check, and the result carries ``trend`` = "down" / "up" so a falling market
+whose volatility jumped isn't read as a regime flip.
 """
 
 from __future__ import annotations
@@ -118,18 +123,44 @@ def regime_at(labels: Sequence[str | None], i: int) -> str:
     return UNSTABLE if changes >= cfg.instability_changes else recent[-1]
 
 
-def current_regime(bars: Sequence[dict]) -> dict:
+def high_vol_trends(bars: Sequence[dict]) -> list[str | None]:
+    """Per bar: "up" / "down" when close, EMA20 and EMA50 are aligned, else None."""
+    st = get_config().strategy("pullback")
+    closes = [b["close"] for b in bars]
+    e20, e50 = ema(closes, st.ema_fast), ema(closes, st.ema_slow)
+    out: list[str | None] = []
+    for c, f, sl in zip(closes, e20, e50):
+        if f is None or sl is None:
+            out.append(None)
+        elif c > f > sl:
+            out.append("up")
+        elif c < f < sl:
+            out.append("down")
+        else:
+            out.append(None)
+    return out
+
+
+def current_regime(bars: Sequence[dict], high_vol_trend: bool = False) -> dict:
     """Regime for the last bar, with the instability check. Fails closed (UNSTABLE)
-    when there isn't enough history."""
+    when there isn't enough history. ``high_vol_trend``: see the module docstring."""
     cfg = _cfg()
     if len(bars) < cfg.min_daily_bars:
         return {"regime": UNSTABLE, "reason": f"only {len(bars)} daily bars (need {cfg.min_daily_bars})"}
     labels = label_series(bars)
-    recent = [l for l in labels[-cfg.instability_window:] if l is not None]
-    if not recent:
+    n = cfg.instability_window
+    trends = high_vol_trends(bars) if high_vol_trend else [None] * len(bars)
+    pairs = [(l, t) for l, t in zip(labels[-n:], trends[-n:]) if l is not None]
+    if not pairs:
         return {"regime": UNSTABLE, "reason": "indicators not ready"}
-    changes = _changes(recent)
+    recent = [l for l, _ in pairs]
+    families = [t if (l == HIGH_VOL and t) else l for l, t in pairs]
+    changes = _changes(families)
+    out_trend = (pairs[-1][1] if recent[-1] == HIGH_VOL else direction(recent[-1])) if high_vol_trend else None
     if changes >= cfg.instability_changes:
         return {"regime": UNSTABLE, "reason": f"regime changed {changes} times in {cfg.instability_window} days",
                 "raw": recent[-1]}
-    return {"regime": recent[-1], "reason": "", "raw": recent[-1]}
+    out = {"regime": recent[-1], "reason": "", "raw": recent[-1]}
+    if high_vol_trend:
+        out["trend"] = out_trend
+    return out
