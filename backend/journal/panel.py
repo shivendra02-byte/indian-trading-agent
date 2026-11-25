@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 APPROVED = "approved"
 REJECTED = "rejected_panel"
-CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "cash_reversal", "vcp")
 def _setup_label(rec: dict) -> str:
     """Alert wording; a breakout short reads "breakdown" (25 Nov 2026)."""
     if rec.get("setup") == "breakout" and rec.get("direction") == "short":
@@ -51,9 +51,11 @@ def _setup_label(rec: dict) -> str:
 
 
 SETUP_LABEL = {"mcx_trend": "trend pullback (4H trend, 2H pullback, 1H trigger)",
-               "trend_pullback": "trend pullback (4H trend, 2H pullback, 1H trigger)"}   # alert wording (25 Nov 2026)
+               "trend_pullback": "trend pullback (4H trend, 2H pullback, 1H trigger)",
+               "reversal": "trend reversal (stretch, exhaustion, structure break)", "vcp": "VCP breakout"}   # alert wording (25 Nov 2026)
 SEGMENT_LABEL = {"stock_futures": "Stock futures", "index_futures": "Index futures", "mcx": "MCX",
-                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe Wave"}
+                 "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe Wave",
+                 "cash_reversal": "Cash reversal", "vcp": "VCP"}
 
 
 # --- limits ------------------------------------------------------------------------------

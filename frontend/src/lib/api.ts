@@ -300,7 +300,13 @@ export const refreshMyTrades = () => fetchAPI(`/api/my-trades/refresh`, { method
 export const closeMyTrade = (id: number, exit_price: number) =>
   fetchAPI(`/api/my-trades/${id}/close`, { method: "POST", body: JSON.stringify({ exit_price }) });
 export const deleteMyTrade = (id: number) => fetchAPI(`/api/my-trades/${id}`, { method: "DELETE" });
-// Wolfe Wave scan (cash, long only) + stored candles for pattern charts
+// Trend reversal (cash, replaces Wolfe) and Minervini VCP scans, both shadow; exit warnings
+export const getReversalScan = () => fetchAPI(`/api/scans/reversal`);
+export const runReversalScan = () => fetchAPI(`/api/scans/reversal/run`, { method: "POST" });
+export const getVcpScan = () => fetchAPI(`/api/scans/vcp`);
+export const runVcpScan = () => fetchAPI(`/api/scans/vcp/run`, { method: "POST" });
+export const getExitWarnings = () => fetchAPI(`/api/exit-warnings`);
+// Wolfe Wave scan (cash, long only; retired 25 Nov 2026) + stored candles for pattern charts
 export const getWolfeScan = () => fetchAPI(`/api/scans/wolfe`);
 export const runWolfeScan = () => fetchAPI(`/api/scans/wolfe/run`, { method: "POST" });
 export const getStoredCandles = (token: number, interval: string, limit: number) =>

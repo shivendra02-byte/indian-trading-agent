@@ -46,7 +46,8 @@ class QuotaTests(IsolatedStateTestCase, unittest.TestCase):
                          ("13:15", 1))
         self.assertEqual(g.limits.max_ai_evaluations_day, 8)
         self.assertEqual(sorted(g.shadow_strategies),
-                         ["cup_handle", "momentum", "nifty_options", "orb", "trend_pullback", "wolfe"])
+                         ["cash_reversal", "cup_handle", "momentum", "nifty_options", "orb", "reversal",
+                          "trend_pullback", "vcp", "wolfe"])
 
     def test_only_top_score_of_a_scan_is_reviewed(self):
         from backend.journal.panel import review_pending

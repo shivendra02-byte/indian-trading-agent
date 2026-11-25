@@ -95,7 +95,7 @@ global:
     reviews_per_day:               # agreed 23 Nov 2026: each book has its own share of the daily reviews
       futures: 3                   # stock + index futures (hourly scans)
       mcx: 2                       # 25 Nov 2026: 1 → 2 (gold and silver often signal on the same bar)
-      cash: 2                      # cash swing (cup & handle / Wolfe are shadow)
+      cash: 2                      # cash swing (cup & handle, reversal and VCP are shadow)
       option_spreads: 1
     top_per_scan: 1                # only the top-scoring shortlisted trade of each scan goes to the AI
     top_per_scan_books: {mcx: 2}   # 25 Nov 2026: MCX sends its best 2 per scan
@@ -108,6 +108,9 @@ global:
     - momentum
     - nifty_options                # NIFTY option buying: shadow until it shows an edge
     - trend_pullback               # NSE futures 4H → 2H → 1H trend pullback (25 Nov 2026), shadow until compared
+    - reversal                     # trend reversal (stretch → exhaustion → structure break) on futures/MCX + cash (25 Nov 2026)
+    - cash_reversal                # the cash reversal book (replaces Wolfe Wave)
+    - vcp                          # Minervini VCP breakouts (cash), shadow until backtested
   my_trades:                       # your own futures trades: trailing stop worked out by the system (asked 23 Nov 2026)
     interval: 60minute             # bars the stop is trailed on (60minute | 10minute)
     atr_period: 14
@@ -186,6 +189,29 @@ global:
     recent_days: 7                 # each daily update also fills gaps in the last 7 trading days
     max_history_days: 800
     request_pause_seconds: 1.0
+  stage_analysis:                  # Weinstein / Minervini stages on daily bars (agreed 25 Nov 2026)
+    sma_fast: 50
+    sma_mid: 150
+    sma_slow: 200
+    slope_days: 21                 # SMA200 change over ~1 month ...
+    flat_slope_pct: 0.5            # ... within ±0.5% = flat
+    trend_days: 84                 # a flat SMA200 after this earlier rise = Stage 3, after a fall = Stage 1
+    year_days: 250                 # 52-week high / low
+    template_rising_days: 21       # trend template: SMA200 rising for at least a month
+    template_above_low_pct: 25     # ... at least 25% above the 52-week low (Minervini 25–30%; not yet tuned for Indian large caps)
+    template_below_high_pct: 25    # ... within 25% of the 52-week high
+    top_warnings:                  # Minervini top signals for longs you hold: stored daily, information only
+      enabled: true
+      alert: false                 # Telegram off until the warnings are studied (shadow)
+      climax_window: 5             # largest 1-day gain of the last 120 days within the last 5 days ...
+      climax_lookback: 120
+      climax_extension_pct: 25     # ... with the close 25%+ above the 50-day SMA
+      churn_volume_lookback: 60    # churning: highest volume of 60 days at a new high, close in the bottom 30% of the range
+      churn_close_max: 0.3
+      break_volume_mult: 1.5       # close below the 50-day SMA on 1.5x average volume
+      volume_avg_days: 50
+      distribution_window: 25      # heavy-volume down days outnumber up days by 3+ in 25 sessions
+      distribution_excess: 3
   selection:                       # strict: technical checks reject; scored: two-stage (see config/experiments/two_stage.yaml)
     mode: strict
     htf_against_penalty: 20
@@ -222,6 +248,35 @@ instruments:
       cap_stop_atr: 3.0
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
       long_regimes: [STRONG_UP, HIGH_VOL]
+    reversal: &reversal_intraday   # trend reversal on 1H bars of the contract, SHADOW (agreed 25 Nov 2026, replaces Wolfe)
+      enabled: true
+      context_ema: 200             # the extreme came below (above) the 1H 200 EMA
+      mean_ema: 20                 # stretch is measured from this EMA; also the first objective (recorded)
+      z_lookback: 20
+      z_stretch: 2.5               # a close at least 2.5 SD beyond the 20 EMA ...
+      stretch_bars: 10             # ... within the last 10 bars
+      rsi_period: 14
+      swing_bars: 2                # confirmed 5-bar swings only (no repainting)
+      div_min_apart: 5             # divergence: earlier swing 5–40 bars before the extreme ...
+      div_max_apart: 40
+      rsi_oversold: 30             # ... whose RSI was oversold (overbought for tops)
+      rsi_overbought: 70
+      min_rsi_gap: 2.0
+      sfp_lookback: 50             # swing failure: took out a swing of the last 50 bars and closed back inside
+      volume_lookback: 20
+      effort_volume_mult: 1.5      # Wyckoff effort vs result: extreme-bar volume 1.5x average (scored)
+      adx_period: 14
+      adx_strong: 30               # no trade while ADX >= 30 and still rising
+      trigger_bars: 8              # the trigger must come within 8 bars of the extreme
+      trigger: candle_high         # first close beyond the reversal bar's high/low (swing_high = the last swing before it)
+      trigger_ema: 9               # ... and beyond the 9 EMA
+      stop_buffer_atr: 0.5         # stop beyond the extreme + 0.5 ATR (at least 1 ATR, max 3 ATR)
+      min_stop_atr: 1.0
+      max_stop_atr: 3.0
+      target_r: 2.0                # then breakeven at 1R and the 2 ATR trail (instrument exit)
+      long_stages: [1, 2]          # daily stage: no longs in Stage 3/4 (no falling knives) ...
+      short_stages: [3, 4]         # ... no shorts in Stage 1/2
+      require_stage: true
   index_futures:
     event_block: false             # agreed 25 Nov 2026: RBI/Budget in the 3-day hold no longer blocks the NSE scan (named in the alert)
     enabled: true
@@ -248,6 +303,7 @@ instruments:
       cap_stop_atr: 3.0
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
       long_regimes: [STRONG_UP, HIGH_VOL]
+    reversal: *reversal_intraday
   mcx:
     enabled: true
     primary_tf: 60minute
@@ -287,6 +343,7 @@ instruments:
       cap_stop_atr: 3.0            # stop above the pullback high wider than this → placed at 3 ATR from the entry
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # HIGH_VOL only with the daily trend down
       long_regimes: [STRONG_UP, HIGH_VOL]                     # no longs in a moderate uptrend (agreed 24 Nov 2026)
+    reversal: *reversal_intraday     # each commodity's own daily stage (continuous daily bars)
   index_options:                   # NIFTY / BANKNIFTY — built in a later step
     enabled: false
     primary_tf: 10minute
@@ -450,8 +507,8 @@ instruments:
     rs_lookback_days: 126          # must outperform NIFTY over ~6 months
     max_position_value: 200000     # proposed: own book, to be confirmed
     max_open_positions: 3          # proposed: own book, to be confirmed
-  wolfe:                           # bullish Wolfe Wave — cash, long only, own book (agreed 23 Nov 2026)
-    enabled: true
+  wolfe:                           # bullish Wolfe Wave — RETIRED 25 Nov 2026 (replaced by cash_reversal); kept for old records and backtests
+    enabled: false
     primary_tf: day
     directions: [long]
     shortlist_per_scan: 2
@@ -481,6 +538,80 @@ instruments:
       breakeven_lock_r: 0.0
       trail_start_r: 1.0
       trail_atr: 2.0
+  cash_reversal:                   # trend reversal on daily bars — cash, long only, own book, SHADOW (agreed 25 Nov 2026, replaces Wolfe)
+    enabled: true
+    primary_tf: day
+    directions: [long]
+    shortlist_per_scan: 2
+    hold_trading_days: 20          # window for the event checks; no time exit (see time_stop)
+    time_stop: false               # exit = target, stop or trailing stop
+    max_hold_trading_days: 120     # safety exit only
+    min_primary_bars: 250          # 200 EMA context + the daily stage need a year of bars
+    entry_window: ["09:15", "15:15"]   # buy limit at the signal close, next session
+    event_block_days: 5            # results/RBI/Budget checked for the first days of the hold
+    min_turnover_cr: 50
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+    max_position_value: 200000
+    max_open_positions: 3
+    context_ema: 50                # daily bars: below the 50 EMA (a 200 EMA would contradict the Stage 1/2 filter); rest as the 1H version
+    mean_ema: 20
+    z_lookback: 20
+    z_stretch: 2.5
+    stretch_bars: 10
+    rsi_period: 14
+    swing_bars: 2
+    div_min_apart: 5
+    div_max_apart: 40
+    rsi_oversold: 30
+    rsi_overbought: 70
+    min_rsi_gap: 2.0
+    sfp_lookback: 50
+    volume_lookback: 20
+    effort_volume_mult: 1.5
+    adx_period: 14
+    adx_strong: 30
+    trigger_bars: 8
+    trigger: candle_high
+    trigger_ema: 9
+    stop_buffer_atr: 0.5
+    min_stop_atr: 1.0
+    max_stop_atr: 3.0
+    max_stop_pct: 8                # cash: never more than 8% below the entry
+    target_r: 2.0
+    long_stages: [1, 2]            # a daily bottom only in Stage 1 (basing) or Stage 2 (pullback in an advance)
+    short_stages: [3, 4]
+    require_stage: true
+  vcp:                             # Minervini volatility contraction pattern — cash, long only, own book, SHADOW (agreed 25 Nov 2026)
+    enabled: true
+    primary_tf: day
+    directions: [long]
+    shortlist_per_scan: 2
+    hold_trading_days: 20
+    time_stop: false
+    max_hold_trading_days: 120
+    min_primary_bars: 260          # trend template needs the 200-day SMA rising for a month
+    entry_window: ["09:15", "15:15"]
+    event_block_days: 5
+    min_turnover_cr: 50
+    exit_management: {mode: breakeven_trail, breakeven_at_r: 1.0, breakeven_lock_r: 0.0, trail_start_r: 1.0, trail_atr: 2.0}
+    max_position_value: 200000
+    max_open_positions: 3
+    swing_bars: 2
+    base_min_days: 15              # base: highest swing high of the last 65 days, at least 15 days old
+    base_max_days: 65
+    min_contractions: 2
+    max_first_depth_pct: 35        # first pullback at most 35% ...
+    contraction_ratio: 0.8         # ... each one at most 0.8x the one before ...
+    max_last_depth_pct: 10         # ... the last at most 10%
+    require_dryup: true
+    dryup_ratio: 0.8               # last contraction's volume <= 0.8x the 50-day average before the base
+    volume_avg_days: 50
+    breakout_volume_ratio: 1.5     # first close above the pivot on 1.5x average volume ...
+    max_extended_pct: 5            # ... at most 5% above it
+    stop_buffer_atr: 0.25          # stop under the last contraction low ...
+    max_stop_pct: 8                # ... at most 8%
+    target_pct: 20                 # Minervini/O'Neil: 20-25%; at least min_rr
+    min_rr: 2.0
   momentum:                        # momentum book on NSE stock futures (asked 23 Nov 2026) — paper, rules only, own book
     enabled: true
     long_enabled: true             # the long and short sides switch on separately

@@ -28,7 +28,7 @@ def _risk_per_trade() -> float:
     return g.capital * g.risk.risk_per_trade_pct / 100
 
 
-CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")   # delivery trades: next-day hourly entry, then daily bars
+CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "cash_reversal", "vcp")   # delivery trades: next-day hourly entry, then daily bars
 
 
 def _cash_max_value(segment: str = "cash_swing") -> float:

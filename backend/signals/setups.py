@@ -43,7 +43,8 @@ SHORTLIST_SCORE = 60
 
 
 SETUP_NAMES = {"mcx_trend": "trend pullback", "trend_pullback": "trend pullback (shadow)", "range_reversal": "range reversal", "mean_reversion": "mean reversion",
-               "fib_pullback": "fib pullback", "choch_flip": "CHoCH flip"}
+               "fib_pullback": "fib pullback", "choch_flip": "CHoCH flip", "reversal": "reversal (shadow)",
+               "vcp": "VCP (shadow)"}
 
 
 def setup_display(setup: str | None, direction: str | None = None) -> str:

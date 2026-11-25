@@ -82,6 +82,57 @@ def wolfe_run():
     return run_scan(force=True)
 
 
+@router.get("/api/scans/reversal")
+def reversal_latest():
+    """Latest cash reversal scan (daily, shadow) — replaces the Wolfe Wave scan."""
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.reversal import CASH_SEGMENT
+    return latest_run(segment=CASH_SEGMENT) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/reversal/run")
+def reversal_run():
+    """Run the cash reversal scan now on the latest completed daily bars."""
+    from backend.signals.reversal import run_scan
+    return run_scan(force=True)
+
+
+@router.get("/api/scans/vcp")
+def vcp_latest():
+    """Latest Minervini VCP scan (daily, cash, shadow)."""
+    from backend.signals.cash_swing import latest_run
+    from backend.signals.vcp import SEGMENT
+    return latest_run(segment=SEGMENT) or {"status": "none", "candidates": []}
+
+
+@router.post("/api/scans/vcp/run")
+def vcp_run():
+    """Run the VCP scan now on the latest completed daily bars."""
+    from backend.signals.vcp import run_scan
+    return run_scan(force=True)
+
+
+@router.get("/api/stage")
+def stage_of(token: int):
+    """Weinstein / Minervini stage and trend template of an instrument's stored daily bars."""
+    from backend.marketdata.candles import get_candles
+    from backend.signals.stage import classify
+    return classify(get_candles(token, "day", limit=400))
+
+
+@router.get("/api/exit-warnings")
+def exit_warnings(limit: int = 100):
+    """Minervini top signals found on longs you hold (information only)."""
+    from backend.signals.exit_warnings import list_warnings
+    return {"warnings": list_warnings(limit=max(1, min(limit, 500)))}
+
+
+@router.post("/api/exit-warnings/run")
+def exit_warnings_run():
+    from backend.signals.exit_warnings import run
+    return run()
+
+
 @router.get("/api/scans/nifty-options")
 def nifty_options_latest():
     """Latest 5-minute NIFTY option-buying scan and today's signals with their outcome."""

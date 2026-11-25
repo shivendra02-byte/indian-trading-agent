@@ -294,12 +294,17 @@ class MarketDataScheduler:
                     except Exception as exc:  # never let it stop the scheduler
                         cup = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
                     self.last_results["scan:cup_handle"] = {"at": now.isoformat(timespec="seconds"), **_brief(cup)}
-                    try:
-                        from backend.signals.wolfe import run_scan as run_wolfe_scan
-                        wolfe = run_wolfe_scan(now=now)
-                    except Exception as exc:  # never let it stop the scheduler
-                        wolfe = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
-                    self.last_results["scan:wolfe"] = {"at": now.isoformat(timespec="seconds"), **_brief(wolfe)}
+                    # 25 Nov 2026: the reversal and VCP scans (shadow) replace the Wolfe Wave scan;
+                    # then Minervini top-signal exit warnings for the longs you hold.
+                    for name, module, fn in (("scan:cash_reversal", "backend.signals.reversal", "run_scan"),
+                                             ("scan:vcp", "backend.signals.vcp", "run_scan"),
+                                             ("exit_warnings", "backend.signals.exit_warnings", "run")):
+                        try:
+                            import importlib
+                            res = getattr(importlib.import_module(module), fn)(now=now)
+                        except Exception as exc:  # never let it stop the scheduler
+                            res = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                        self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(res)}
                     self._divergence("nse", now)
                     self._momentum("daily", now)
             else:

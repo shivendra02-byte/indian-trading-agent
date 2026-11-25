@@ -15,5 +15,7 @@ export function setupName(setup: string | null | undefined, direction?: string |
   if (!setup) return "";
   if (setup === "breakout" && direction === "short") return "breakdown";
   if (setup === "mcx_trend" || setup === "trend_pullback") return "trend pullback";
+  if (setup === "vcp") return "VCP breakout";
+  if (setup === "reversal") return direction === "short" ? "top reversal" : "bottom reversal";
   return setup.replace(/_/g, " ");
 }
