@@ -247,6 +247,7 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     daily_expected = expected_last_daily_bar(now) if exchange == NSE else None
 
     regime_nse = None
+    market_note = None
     nifty_daily: list[dict] = []
     if exchange == NSE:
         nifty = spot_instrument("NIFTY")
@@ -259,8 +260,12 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             return _finish_run(run_id, "blocked", {"reason": "event calendar not verified for the holding window"})
         if market["events"]:
             names = ", ".join(f"{e['event']} {e['date']}" for e in market["events"])
-            return _finish_run(run_id, "blocked", {"reason": f"event inside the holding window: {names}",
-                                                   "tracking": tracked})
+            # 25 Nov 2026: like cash swing, NSE futures no longer stop for RBI/Budget inside the hold
+            # (instruments.<x>.event_block: false); the event is named on every candidate instead.
+            if any(_x(seg, "event_block", True) for seg in ("stock_futures", "index_futures")):
+                return _finish_run(run_id, "blocked", {"reason": f"event inside the holding window: {names}",
+                                                       "tracking": tracked})
+            market_note = f"{names} inside the holding window"
         regime_nse = current_regime(nifty_daily)
 
     instruments = [i for i in _instruments(group, now.date()) if _inst(i["segment"]).enabled]
@@ -362,9 +367,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                 hourly, confirmations.get("2h") or bars_for_timeframe(token, "2h", exchange), htf_bars, own,
                 must_not_oppose.get("day"), directions=tuple(icfg.directions), oi=oi, cfg=trend_cfg,
                 min_primary_bars=icfg.min_primary_bars, setup_name=trend_cfg.get("setup_name", mcx_trend.SETUP))
-        if results_note:
+        note = "; ".join(n for n in ((market_note if exchange == NSE else None), results_note) if n)
+        if note:
             for c in candidates:
-                c["event_note"] = results_note
+                c["event_note"] = note
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
