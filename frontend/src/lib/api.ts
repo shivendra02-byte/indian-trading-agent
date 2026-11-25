@@ -325,6 +325,8 @@ export const deleteMomentumBacktest = (id: number) => fetchAPI(`/api/momentum/ba
 export const getOptionSpreads = () => fetchAPI(`/api/options/spreads`);
 export const runOptionSpreads = () => fetchAPI(`/api/options/spreads/run`, { method: "POST" });
 export const getSpreadAlignment = () => fetchAPI(`/api/options/spreads/alignment`);
+export const getSpreadScans = (day?: string) =>
+  fetchAPI(`/api/options/spreads/scans${day ? `?day=${encodeURIComponent(day)}` : ""}`);
 export const backtestOptionSpreads = (data: {
   start_date: string;
   end_date: string;

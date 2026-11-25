@@ -46,6 +46,9 @@ def settings() -> dict:
         "shortlist": inst.shortlist_per_scan,
         "entry_window": extra.get("entry_window", ["09:30", "11:00"]),
         "min_bars": inst.min_primary_bars,
+        # 25 Nov 2026: false = an RBI/Budget date inside the hold no longer blocks the scan; it is
+        # named on every candidate (AI prompt + alert) instead.
+        "event_block": bool(extra.get("event_block", True)),
     }
 
 
@@ -134,7 +137,7 @@ def _save(run_id: int, signal_date: str, rows: list[dict], segment: str = SEGMEN
                  json.dumps(r["factors"]) if r.get("factors") else None, r.get("entry"), r.get("stop"),
                  r.get("target"), r.get("rr"), r.get("regime"), int(bool(r.get("shortlisted"))),
                  json.dumps({k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend",
-                                                     "rs_vs_nifty_pct", "risk_mult", "turnover_cr", "pattern",
+                                                     "rs_vs_nifty_pct", "risk_mult", "turnover_cr", "pattern", "event_note",
                                                      "penalties", "tradingsymbol", "lots", "oi_change_pct",
                                                      "or_high", "or_low", "stop_type", "range_atr", "token")}))
                 for r in rows
@@ -176,7 +179,7 @@ def _journal_row(r: dict, signal_date: date, first: date, last: date, fill_until
         "entry_date": first.isoformat(), "fill_until": f"{first.isoformat()}T{fill_until}",
         "time_stop_date": last.isoformat(),
         "extra": {k: r.get(k) for k in ("stop_atr", "next_level", "vol_ratio", "htf_trend", "rs_vs_nifty_pct",
-                                         "risk_mult", "turnover_cr", "confirmations")},
+                                         "risk_mult", "turnover_cr", "confirmations", "event_note")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }
 
@@ -225,9 +228,12 @@ def run_scan(now: datetime | None = None, force: bool = False,
     market = events.market_events_between(first, last, kinds=("RBI", "BUDGET"))
     if not market["verified"]:
         return _finish_run(run_id, "blocked", {"reason": "event calendar not verified for the holding window"})
+    event_note = None
     if market["events"]:
         names = ", ".join(f"{e['event']} {e['date']}" for e in market["events"])
-        return _finish_run(run_id, "blocked", {"reason": f"event inside the holding window: {names}"})
+        if cfg["event_block"]:
+            return _finish_run(run_id, "blocked", {"reason": f"event inside the holding window: {names}"})
+        event_note = f"{names} inside the holding window"
     regime = current_regime(nifty_bars)
 
     universe = fno_universe(today)
@@ -287,6 +293,9 @@ def run_scan(now: datetime | None = None, force: bool = False,
             selected = bool(r.get("shortlisted"))
             r["stages"] = [*r["stages"], stage("ai_panel", "pending" if selected else "not_sent"),
                            stage("final_approval", "pending" if selected else "not_applicable")]
+    if event_note:
+        for r in rows:
+            r["event_note"] = event_note
     _save(run_id, signal_date.isoformat(), rows)
     journal_add([_journal_row(r, signal_date, first, exit_by, cfg["entry_window"][1])
                  for r in rows if r.get("trackable")])

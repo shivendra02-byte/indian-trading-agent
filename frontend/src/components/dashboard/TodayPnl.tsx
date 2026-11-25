@@ -7,6 +7,7 @@ import { getTodayPnl } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { setupName } from "@/lib/utils";
 
 // GET /api/pnl/today (backend/pnl_today.py)
 type Row = {
@@ -101,7 +102,7 @@ function BookBlock({ title, book, href }: { title: string; book: Book; href: str
                   <div className="font-medium">{r.name}</div>
                   <div className="text-muted-foreground">
                     {r.segment}
-                    {r.setup ? ` · ${r.setup.replace(/_/g, " ")}` : ""}
+                    {r.setup ? ` · ${setupName(r.setup, r.direction)}` : ""}
                     {r.alert ? ` · ${r.alert}` : ""}
                     {r.taken ? " · you took it" : ""} ·{" "}
                     <span className={r.direction === "short" ? "text-red-600" : r.direction === "long" ? "text-emerald-600" : ""}>

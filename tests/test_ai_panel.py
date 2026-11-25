@@ -72,14 +72,14 @@ class PanelTests(IsolatedStateTestCase, unittest.TestCase):
 
     def test_daily_ai_limit_then_rules_only_alert(self):
         from backend.journal.panel import review_pending
-        for i in range(8):   # separate scans, book shares lifted: the total cap (7) is what stops
+        for i in range(9):   # separate scans, book shares lifted: the total cap (8 since 25 Nov 2026) is what stops
             self.add(f"S{i}", score=90 - i, signal_ts=f"2026-11-23T09:{15 + i:02d}:00")
         with mock.patch("backend.journal.panel.limit_block", return_value=None), \
                 mock.patch("backend.journal.panel.book_share_now", return_value=None):
             out = review_pending(NOW, llm_call=approve())
-        self.assertEqual(len(out["approved"]), 7)
-        self.assertEqual(out["not_sent"], [{"symbol": "S7", "reason": "daily AI limit reached (7)"}])
-        self.assertEqual(self.rec("S7")["decision"], "shortlisted")
+        self.assertEqual(len(out["approved"]), 8)
+        self.assertEqual(out["not_sent"], [{"symbol": "S8", "reason": "daily AI limit reached (8)"}])
+        self.assertEqual(self.rec("S8")["decision"], "shortlisted")
         self.assertIn("rules only, AI limit reached", self.sent[-1])
 
     def test_portfolio_limits_stop_new_approvals(self):

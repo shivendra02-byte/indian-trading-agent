@@ -146,6 +146,18 @@ def spreads_alignment():
     return alignment()
 
 
+@router.get("/spreads/scans")
+def spreads_scans(day: str | None = None):
+    """Every intraday spread scan of a day and its outcome per index (newest first)."""
+    from datetime import date as _date
+    from backend.options.spreads import scan_log
+    try:
+        d = _date.fromisoformat(day) if day else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
+    return {"day": (d or _date.today()).isoformat(), "scans": scan_log(d)}
+
+
 @router.post("/spreads/run")
 def spreads_run():
     """Intraday mode: run the multi-timeframe scan now (market hours, Kite login). Evening mode:

@@ -73,6 +73,8 @@ const SETUP_LABEL: Record<string, string> = {
   mean_reversion: "Mean reversion (band)",
   cup_handle: "Cup and handle",
   orb: "Opening range breakout",
+  mcx_trend: "Trend pullback (4H → 2H → 1H)",
+  trend_pullback: "Trend pullback (4H → 2H → 1H, shadow)",
 };
 const FACTOR_LABEL: [string, string, number][] = [
   ["htf_trend", "Higher-timeframe trend", 25],
@@ -114,7 +116,9 @@ function SetupCard({ c }: { c: Candidate }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           {c.symbol}
-          <Badge variant="outline">{SETUP_LABEL[c.setup ?? ""] ?? c.setup}</Badge>
+          <Badge variant="outline">
+            {c.setup === "breakout" && c.direction === "short" ? "Volume breakdown" : (SETUP_LABEL[c.setup ?? ""] ?? c.setup)}
+          </Badge>
           {c.shortlisted ? <Badge className="bg-green-600 text-white">Shortlisted for AI</Badge> : null}
           <span className="ml-auto text-lg font-bold">{c.score?.toFixed(0)}</span>
         </CardTitle>

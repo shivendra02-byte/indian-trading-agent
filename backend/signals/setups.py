@@ -42,8 +42,16 @@ _FACTOR_MAX = {"htf_trend": 25, "setup_quality": 25, "volume_oi": 15, "rr_stop":
 SHORTLIST_SCORE = 60
 
 
-SETUP_NAMES = {"mcx_trend": "trend pullback", "range_reversal": "range reversal", "mean_reversion": "mean reversion",
+SETUP_NAMES = {"mcx_trend": "trend pullback", "trend_pullback": "trend pullback (shadow)", "range_reversal": "range reversal", "mean_reversion": "mean reversion",
                "fib_pullback": "fib pullback", "choch_flip": "CHoCH flip"}
+
+
+def setup_display(setup: str | None, direction: str | None = None) -> str:
+    """How a setup is named to the user (25 Nov 2026: a breakout short is a "breakdown").
+    Only the label changes; the stored setup stays ``breakout``."""
+    if setup == "breakout" and direction == "short":
+        return "breakdown"
+    return SETUP_NAMES.get(setup or "", setup or "")
 
 
 def labelled_reasons(candidates) -> str:
@@ -55,7 +63,7 @@ def labelled_reasons(candidates) -> str:
         if not r:
             continue
         if c.get("direction") and c.get("setup"):
-            r = f"{c['direction']} {SETUP_NAMES.get(c['setup'], c['setup'])}: {r}"
+            r = f"{c['direction']} {setup_display(c['setup'], c['direction'])}: {r}"
         out.add(r)
     return "; ".join(sorted(out))
 

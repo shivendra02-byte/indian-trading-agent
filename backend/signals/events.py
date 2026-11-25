@@ -163,6 +163,20 @@ def refresh_results(symbols: list[str], fetch: Callable[[str], date | None] | No
     return {"checked": checked}
 
 
+def results_note(symbol: str, first: date, last: date) -> str | None:
+    """A short note for alerts when the results check is off (NSE futures, 25 Nov 2026):
+    the next results date if known, flagged when it falls inside the holding window."""
+    ensure_results_table()
+    with get_db() as conn:
+        row = conn.execute("SELECT next_date FROM results_dates WHERE symbol = ?", (symbol,)).fetchone()
+    if not row or not row["next_date"]:
+        return "next results date not known"
+    nd = date.fromisoformat(row["next_date"])
+    if first <= nd <= last:
+        return f"results on {nd.isoformat()} inside the holding window — gap risk"
+    return f"next results {nd.isoformat()}"
+
+
 def results_clear(symbol: str, first: date, last: date, today: date | None = None) -> tuple[bool, str]:
     """True if the symbol verifiably has no results in [first, last]."""
     ensure_results_table()

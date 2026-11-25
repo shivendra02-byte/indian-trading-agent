@@ -40,11 +40,13 @@ class QuotaTests(IsolatedStateTestCase, unittest.TestCase):
     def test_config_values(self):
         from backend.decision.config import get_config
         g = get_config().global_
-        self.assertEqual(g.ai_panel.reviews_per_day, {"futures": 3, "mcx": 1, "cash": 2, "option_spreads": 1})
+        self.assertEqual(g.ai_panel.reviews_per_day, {"futures": 3, "mcx": 2, "cash": 2, "option_spreads": 1})
+        self.assertEqual(g.ai_panel.top_per_scan_books, {"mcx": 2})
         self.assertEqual((g.ai_panel.reserved_after["futures"].after, g.ai_panel.reserved_after["futures"].reviews),
                          ("13:15", 1))
-        self.assertEqual(g.limits.max_ai_evaluations_day, 7)
-        self.assertEqual(sorted(g.shadow_strategies), ["cup_handle", "momentum", "nifty_options", "orb", "wolfe"])
+        self.assertEqual(g.limits.max_ai_evaluations_day, 8)
+        self.assertEqual(sorted(g.shadow_strategies),
+                         ["cup_handle", "momentum", "nifty_options", "orb", "trend_pullback", "wolfe"])
 
     def test_only_top_score_of_a_scan_is_reviewed(self):
         from backend.journal.panel import review_pending
@@ -78,12 +80,26 @@ class QuotaTests(IsolatedStateTestCase, unittest.TestCase):
         from backend.journal.panel import review_pending, usage_today
         self.add("G1", "2026-11-23T17:00:00", segment="mcx")
         self.add("G2", "2026-11-23T18:00:00", segment="mcx")
+        self.add("G3", "2026-11-23T19:00:00", segment="mcx")
         self.add("C1", "2026-11-23", segment="cash_swing")
-        out = review_pending(datetime(2026, 11, 23, 18, 5), llm_call=approve)
-        self.assertEqual(sorted(out["approved"]), ["C1", "G1"])
-        self.assertIn("mcx AI reviews used (1/day)", self.rec("G2")["panel"]["skipped"])
+        out = review_pending(datetime(2026, 11, 23, 19, 5), llm_call=approve)
+        self.assertEqual(sorted(out["approved"]), ["C1", "G1", "G2"])            # MCX share 2 since 25 Nov 2026
+        self.assertIn("mcx AI reviews used (2/day)", self.rec("G3")["panel"]["skipped"])
         u = usage_today(datetime(2026, 11, 23).date())
-        self.assertEqual((u["ai_books"]["mcx"]["used"], u["ai_books"]["cash"]["used"]), (1, 1))
+        self.assertEqual((u["ai_books"]["mcx"]["used"], u["ai_books"]["cash"]["used"]), (2, 1))
+
+    def test_mcx_sends_two_per_scan(self):
+        """25 Nov 2026: gold and silver signalled on the same bar; only silver was reviewed."""
+        from backend.journal.panel import review_pending
+        self.add("SILVERM", "2026-11-23T11:00:00", score=89, segment="mcx")
+        self.add("GOLDM", "2026-11-23T11:00:00", score=84, segment="mcx")
+        self.add("CRUDEOILM", "2026-11-23T11:00:00", score=70, segment="mcx")
+        self.add("AAA", "2026-11-23T11:00:00", score=80)
+        self.add("BBB", "2026-11-23T11:00:00", score=75)            # futures keep 1 per scan
+        out = review_pending(datetime(2026, 11, 23, 11, 5), llm_call=approve)
+        self.assertEqual(sorted(out["approved"]), ["AAA", "GOLDM", "SILVERM"])
+        self.assertIn("lower score than SILVERM", self.rec("CRUDEOILM")["panel"]["skipped"])
+        self.assertIn("lower score than AAA", self.rec("BBB")["panel"]["skipped"])
 
     def test_shadow_strategies_not_reviewed_or_alerted(self):
         from backend.journal.panel import review_pending

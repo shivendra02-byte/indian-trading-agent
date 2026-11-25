@@ -225,6 +225,46 @@ class LiveBookTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertIn("bid-ask", res["results"]["NIFTY"])
         self.assertEqual(spreads.spreads("open"), [])
 
+    def test_rbi_before_expiry_opens_at_half_size(self):
+        """25 Nov 2026: NIFTY signals were all dropped as 'event before expiry: RBI policy 2026-12-04'."""
+        cfg = spreads.settings()
+        self.assertEqual(cfg["event_size_mult"], 0.5)
+        sent = []
+        with mock.patch.object(spreads, "_blocked", return_value="event before expiry: RBI policy 2026-12-04"), \
+                mock.patch.object(spreads, "_send", side_effect=lambda text: sent.append(text) or "sent"):
+            res = spreads.scan_intraday(self.NOW, client=object(), llm_call=self.llm)
+        self.assertIn("NIFTY", res["new"], res)
+        self.assertIn("RBI policy 2026-12-04 before expiry — 0.5× size", res["results"]["NIFTY"])
+        sp = [x for x in spreads.spreads("open") if x["symbol"] == "NIFTY"][0]
+        self.assertIn("RBI policy 2026-12-04", sp["event_note"])
+        full, _ = spreads.size(sp["credit"], sp["width"], sp["lot_size"], cfg, sp["strategy"])
+        half, _ = spreads.size(sp["credit"], sp["width"], sp["lot_size"],
+                               {**cfg, "risk_per_trade_pct": cfg["risk_per_trade_pct"] / 2,
+                                "max_loss_pct": cfg["max_loss_pct"] / 2}, sp["strategy"])
+        self.assertEqual(sp["lots"], half)
+        self.assertLess(sp["lots"], full)
+        self.assertIn("Event risk: RBI policy 2026-12-04", self.prompt)
+        self.assertTrue(any("RBI policy 2026-12-04" in t for t in sent))
+
+    def test_unverified_calendar_still_blocks(self):
+        with mock.patch.object(spreads, "_blocked", return_value="event calendar not verified to expiry"):
+            res = spreads.scan_intraday(self.NOW, client=object(), llm_call=self.llm)
+        self.assertEqual(res["results"]["NIFTY"], "event calendar not verified to expiry")
+        self.assertEqual(spreads.spreads("open"), [])
+
+    def test_every_scan_is_logged(self):
+        self.fire = False
+        spreads.scan_intraday(self.NOW, client=object(), llm_call=self.llm)
+        self.fire = True
+        spreads.scan_intraday(self.NOW + timedelta(minutes=15), client=object(), llm_call=self.llm, manual=True)
+        log = spreads.scan_log(self.NOW.date())
+        nifty = [r for r in log if r["symbol"] == "NIFTY"]
+        self.assertEqual(len(nifty), 2)
+        self.assertEqual(nifty[0]["signal"], 1)                       # newest first
+        self.assertIn("shortlisted", nifty[0]["result"])
+        self.assertEqual(nifty[1]["result"], "waiting for the 15m trigger")
+        self.assertEqual(spreads.scan_log(date(2026, 11, 24)), [])
+
     def test_no_signal_records_nothing(self):
         self.fire = False
         res = spreads.scan_intraday(self.NOW, client=object(), llm_call=self.llm)

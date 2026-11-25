@@ -33,7 +33,7 @@ from backend.signals.cash_swing import (
     _finish_run, _save, _start_run, data_quality, ensure_scan_tables, expected_last_daily_bar,
 )
 from backend.signals.regime import current_regime
-from backend.signals.selection import choose_shortlist
+from backend.signals.selection import choose_shortlist, open_positions
 from backend.signals.setups import _relative_strength_points, evaluate, htf_trend, labelled_reasons, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
@@ -317,11 +317,15 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
         if problem:
             reject(f"daily data: {problem}")
             continue
+        results_note = None
         if seg == "stock_futures":
-            ok, why = events.results_clear(sym, hold[0], hold[-1], now.date())
-            if not ok:
-                reject(why)
-                continue
+            if _x(seg, "results_check", True):
+                ok, why = events.results_clear(sym, hold[0], hold[-1], now.date())
+                if not ok:
+                    reject(why)
+                    continue
+            else:   # 25 Nov 2026: no results check for futures; the date is shown in the alert instead
+                results_note = events.results_note(sym, hold[0], hold[-1])
         if seg == "mcx":
             blocked, why = events.mcx_event_block(sym, signal_end)
             if blocked:
@@ -349,12 +353,18 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                               min_primary_bars=icfg.min_primary_bars,
                               stock_regime=current_regime(daily)["regime"] if daily else None,
                               breakdown_shorts=breakdown_shorts(seg))
-        trend_cfg = mcx_trend.config_for(icfg.model_extra) if seg == "mcx" else None
-        if trend_cfg:   # 4H trend → 2H pullback → 1H trigger (agreed 25 Nov 2026)
+        trend_cfg = mcx_trend.config_for(icfg.model_extra)
+        if trend_cfg:   # 4H trend → 2H pullback → 1H trigger (MCX live; NSE futures shadow — 25 Nov 2026)
+            # MCX: the commodity's own regime (as above). NSE: the stock / index's own daily regime.
+            own = regime if seg == "mcx" else (current_regime(daily, high_vol_trend=True) if daily else
+                                                 {"regime": "UNSTABLE"})
             candidates += mcx_trend.candidates(
-                hourly, confirmations.get("2h") or bars_for_timeframe(token, "2h", exchange), htf_bars, regime,
+                hourly, confirmations.get("2h") or bars_for_timeframe(token, "2h", exchange), htf_bars, own,
                 must_not_oppose.get("day"), directions=tuple(icfg.directions), oi=oi, cfg=trend_cfg,
-                min_primary_bars=icfg.min_primary_bars)
+                min_primary_bars=icfg.min_primary_bars, setup_name=trend_cfg.get("setup_name", mcx_trend.SETUP))
+        if results_note:
+            for c in candidates:
+                c["event_note"] = results_note
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
@@ -411,7 +421,16 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
     ranked = sorted((r for r in rows if r.get("valid") and r.get("trackable") and r["score"] >= min_score()),
                     key=lambda r: r["score"], reverse=True)
     shortlist_n = _inst(lead).shortlist_per_scan
-    shortlist = choose_shortlist(ranked, shortlist_n, lambda r: r["segment"])
+    # 25 Nov 2026: shadow setups (the NSE trend pullback) are ranked on their own, so they never take a
+    # live slot, and only live records count as open positions for the live ranking.
+    g = get_config().global_
+    shadow = [r for r in ranked if g.is_shadow(r["segment"], r.get("setup"))]
+    live = [r for r in ranked if not g.is_shadow(r["segment"], r.get("setup"))]
+    seg_of = lambda r: r["segment"]   # noqa: E731
+    busy = (open_positions({r["segment"] for r in live}, live_only=True)
+            if g.limits.one_open_trade_per_instrument else set())
+    shortlist = choose_shortlist(live, shortlist_n, seg_of, busy=busy)
+    choose_shortlist(shadow, None, seg_of)
     for r in rows:
         if r.get("trackable"):
             selected = bool(r.get("shortlisted"))
@@ -464,7 +483,7 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "entry_date": day.isoformat(), "fill_until": fill_until.isoformat(timespec="seconds"),
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
-                                         "spread_pct", "stop_atr", "stop_type", "pullback_touch", "lot_risk_pct", "size_note", "next_level", "vol_ratio", "htf_trend",
+                                         "spread_pct", "stop_atr", "stop_type", "pullback_touch", "lot_risk_pct", "size_note", "event_note", "next_level", "vol_ratio", "htf_trend",
                                          "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }

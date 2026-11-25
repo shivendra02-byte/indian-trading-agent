@@ -7,7 +7,7 @@ import { getJournal, getJournalUsage, getLearningReport, markJournalAction, runA
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, setupName } from "@/lib/utils";
 
 type Stats = {
   n: number;
@@ -372,7 +372,7 @@ export default function JournalPage() {
                     <tr key={r.id} className="border-t">
                       <td className="px-2 py-1">{r.signal_date}</td>
                       <td className="px-2 py-1 font-medium">{r.symbol}</td>
-                      <td className="px-2 py-1">{r.setup} {r.direction === "short" ? "↓" : "↑"}</td>
+                      <td className="px-2 py-1">{setupName(r.setup, r.direction)} {r.direction === "short" ? "↓" : "↑"}</td>
                       <td className="px-2 py-1">{r.regime}</td>
                       <td className="px-2 py-1">{r.score?.toFixed(0)}</td>
                       <td className="px-2 py-1" title={panelText(r)}>

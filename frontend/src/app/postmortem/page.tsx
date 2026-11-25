@@ -8,7 +8,7 @@ import { getPostmortem, listPostmortems, runPostmortem } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, setupName } from "@/lib/utils";
 import { OutcomeSummaryTable, type OutcomeSummary } from "@/components/scans/OutcomeSummaryTable";
 
 type Stats = {
@@ -390,7 +390,7 @@ export default function PostmortemPage() {
               )}
               {s.open_at_week_end.length > 0 && (
                 <p className="text-muted-foreground">
-                  Still open: {s.open_at_week_end.map((o) => `${o.symbol} ${o.setup} ${o.direction}`).join(", ")}
+                  Still open: {s.open_at_week_end.map((o) => `${o.symbol} ${setupName(o.setup, o.direction)} ${o.direction}`).join(", ")}
                 </p>
               )}
             </CardContent>
@@ -429,7 +429,7 @@ export default function PostmortemPage() {
                     <tr key={t.id} className="border-t">
                       <td className="px-2 py-1">{t.exit_ts?.slice(0, 16).replace("T", " ")}</td>
                       <td className="px-2 py-1 font-medium">{t.symbol}</td>
-                      <td className="px-2 py-1">{t.setup} {t.direction === "short" ? "↓" : "↑"}</td>
+                      <td className="px-2 py-1">{setupName(t.setup, t.direction)} {t.direction === "short" ? "↓" : "↑"}</td>
                       <td className="px-2 py-1">{t.book}</td>
                       <td className="px-2 py-1">{t.regime ?? "—"}</td>
                       <td className="px-2 py-1">{t.exit_reason}</td>

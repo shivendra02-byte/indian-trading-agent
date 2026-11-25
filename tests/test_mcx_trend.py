@@ -108,7 +108,11 @@ class TrendPullbackTests(unittest.TestCase):
         extra = get_config().instrument("mcx").model_extra
         self.assertTrue(mcx_trend.config_for(extra)["enabled"])
         self.assertTrue(extra["regime_high_vol_trend"])
-        self.assertIsNone(mcx_trend.config_for(get_config().instrument("stock_futures").model_extra))
+        nse = mcx_trend.config_for(get_config().instrument("stock_futures").model_extra)   # shadow since 25 Nov 2026
+        self.assertEqual(nse["setup_name"], "trend_pullback")
+        self.assertTrue(get_config().global_.is_shadow("stock_futures", "trend_pullback"))
+        self.assertFalse(get_config().global_.is_shadow("mcx", "mcx_trend"))
+        self.assertIsNone(mcx_trend.config_for(get_config().instrument("cash_swing").model_extra))
 
 
 def silver_nov_2026():

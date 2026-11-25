@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, FlaskConical, Loader2, Play, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { backtestOptionSpreads, getOptionSpreads, getSpreadAlignment, runOptionSpreads } from "@/lib/api";
+import { backtestOptionSpreads, getOptionSpreads, getSpreadAlignment, getSpreadScans, runOptionSpreads } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -165,6 +165,39 @@ function TfCell({ label, st }: { label: string; st: TfState }) {
   );
 }
 
+type ScanRow = { at: string; bar: string | null; symbol: string; result: string; signal: number; regime: string | null; manual: number };
+
+// Every intraday spread scan today and why each index did or didn't get a spread (asked 25 Nov 2026).
+function ScanLogCard({ rows }: { rows: ScanRow[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Scan log today</CardTitle>
+      </CardHeader>
+      <CardContent className="max-h-80 overflow-auto text-xs">
+        <table className="w-full">
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={`${r.at}-${r.symbol}-${i}`} className="border-b last:border-0">
+                <td className="py-1 pr-3 text-muted-foreground">
+                  {r.at.slice(11, 16)}
+                  {r.manual ? " (Run now)" : ""}
+                </td>
+                <td className="pr-3 font-medium">{r.symbol}</td>
+                <td className="pr-3 text-muted-foreground">{r.regime ?? ""}</td>
+                <td className={r.signal ? "font-medium" : "text-muted-foreground"}>
+                  {r.signal ? "signal → " : ""}
+                  {r.result}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AlignmentCard({ a }: { a: AlignmentResponse }) {
   return (
     <Card>
@@ -233,6 +266,7 @@ function SpreadRow({ s }: { s: Spread }) {
 export default function OptionSpreadsPage() {
   const [data, setData] = useState<Status | null>(null);
   const [align, setAlign] = useState<AlignmentResponse | null>(null);
+  const [scans, setScans] = useState<ScanRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [bt, setBt] = useState<Backtest | null>(null);
@@ -251,6 +285,9 @@ export default function OptionSpreadsPage() {
     getSpreadAlignment()
       .then((res) => setAlign(res as AlignmentResponse))
       .catch(() => setAlign(null));
+    getSpreadScans()
+      .then((res) => setScans((res as { scans: ScanRow[] }).scans))
+      .catch(() => setScans([]));
   }, []);
 
   useEffect(() => {
@@ -329,6 +366,7 @@ export default function OptionSpreadsPage() {
       </div>
 
       {align && align.mode === "intraday" && <AlignmentCard a={align} />}
+      {scans.length > 0 && <ScanLogCard rows={scans} />}
 
       {data && (
         <Card>

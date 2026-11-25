@@ -180,6 +180,8 @@ class AiPanelCfg(_Strict):
     # shortlisted trade is reviewed; the rest are journaled as not_sent and shadow-tracked.
     reviews_per_day: dict[Literal["futures", "mcx", "cash", "option_spreads"], int] = {}
     top_per_scan: int = Field(default=1, ge=1, le=20)
+    # Per-book override of top_per_scan (25 Nov 2026: MCX 2 — gold and silver often signal together).
+    top_per_scan_books: dict[Literal["futures", "mcx", "cash", "option_spreads"], int] = {}
     # Part of a book's share kept for later in the day: e.g. futures {after: "13:15", reviews: 1}
     # → before 13:15 only (share − 1) reviews can be used, so the afternoon scans still get one.
     reserved_after: dict[Literal["futures", "mcx", "cash", "option_spreads"], "ReserveCfg"] = {}
@@ -345,7 +347,7 @@ class GlobalCfg(_Strict):
     # Strategies still scanned and journal-tracked but never sent to the AI and never alerted
     # (agreed 23 Nov 2026). Names: a journal segment, "orb" (setup), "momentum" or "option_spreads".
     shadow_strategies: list[Literal["cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
-                                    "index_futures", "mcx", "option_spreads", "nifty_options"]] = []
+                                    "index_futures", "mcx", "option_spreads", "nifty_options", "trend_pullback"]] = []
 
     def is_shadow(self, segment: str, setup: str | None = None) -> bool:
         names = set(self.shadow_strategies)

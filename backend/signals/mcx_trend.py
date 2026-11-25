@@ -195,13 +195,15 @@ def check(d: str, regime: dict, daily_trend: float | None, h4: Sequence[dict], h
 
 def candidates(hourly: Sequence[dict], h2: Sequence[dict], h4: Sequence[dict], regime: dict,
                daily_trend: float | None, *, directions=("long", "short"), oi: dict | None = None,
-               cfg: dict | None = None, min_primary_bars: int = 60) -> list[dict]:
-    """Rows in the same shape as ``setups.evaluate()`` for the hourly scan / journal."""
+               cfg: dict | None = None, min_primary_bars: int = 60, setup_name: str = SETUP) -> list[dict]:
+    """Rows in the same shape as ``setups.evaluate()`` for the hourly scan / journal. ``setup_name``
+    labels the rows (NSE futures use "trend_pullback", a shadow setup — 25 Nov 2026); the
+    stop/target/score parameters always come from ``strategies.mcx_trend``."""
     conf = get_config()
     cfg = {**DEFAULTS, **(cfg or {})}
     out = []
     if len(hourly) < min_primary_bars:
-        return [{"setup": SETUP, "direction": None, "valid": False, "trackable": False,
+        return [{"setup": setup_name, "direction": None, "valid": False, "trackable": False,
                  "reject_reason": f"only {len(hourly)} bars (need {min_primary_bars})",
                  "stages": [stage("setup", "fail", f"only {len(hourly)} bars")]}]
     base_ctx = _context(hourly, SETUP)
@@ -209,7 +211,7 @@ def candidates(hourly: Sequence[dict], h2: Sequence[dict], h4: Sequence[dict], r
         s = _s(d)
         res = check(d, regime, daily_trend, h4, h2, hourly, cfg)
         stages = [stage(x["stage"], x["decision"], x["reason"]) for x in res["stages"]]
-        cand = {"setup": SETUP, "direction": d, "valid": False, "trackable": False, "regime": regime.get("regime"),
+        cand = {"setup": setup_name, "direction": d, "valid": False, "trackable": False, "regime": regime.get("regime"),
                 "regime_trend": regime.get("trend"), "htf_trend": None, "vol_ratio": round(base_ctx["vol_ratio"], 2),
                 "stages": stages, "rule_version": conf.rule_version}
         out.append(cand)
