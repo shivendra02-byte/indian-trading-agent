@@ -206,6 +206,17 @@ class StopAlertsCfg(_Strict):
     min_move_r: float = Field(default=0.25, gt=0, le=5)
 
 
+class LiveFeedCfg(_Strict):
+    """Live prices from Kite's WebSocket feed (asked 24 Nov 2026): last traded price of the
+    contracts of open trades, kept in memory only, used for the live P&L on the Today page.
+    Never closes or moves a trade — stops, targets and trailing still run on completed bars."""
+    enabled: bool = True
+    max_age_seconds: int = Field(default=120, ge=5, le=3600)       # older live prices fall back to the last bar close
+    refresh_tokens_seconds: int = Field(default=30, ge=5, le=600)  # how often the open-trade list is re-read
+    max_instruments: int = Field(default=500, ge=1, le=3000)       # Kite allows 3000 per connection
+    pnl_refresh_seconds: int = Field(default=5, ge=1, le=120)      # Today card polling while the feed is live
+
+
 class OptionDataCfg(_Strict):
     """End-of-day option data (exchange bhavcopy files) for the option spread
     strategy: download, implied volatility and Greeks. Data only — no signals."""
@@ -321,6 +332,7 @@ class GlobalCfg(_Strict):
     ai_panel: AiPanelCfg = AiPanelCfg()
     my_trades: MyTradesCfg = MyTradesCfg()
     stop_alerts: StopAlertsCfg = StopAlertsCfg()
+    live_feed: LiveFeedCfg = LiveFeedCfg()
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()
