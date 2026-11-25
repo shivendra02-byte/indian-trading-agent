@@ -17,6 +17,28 @@ type Pattern = {
   handle_days: number;
   handle_depth_pct: number;
 };
+type ReversalPattern = {
+  kind: "reversal";
+  extreme: number;
+  extreme_ts: string;
+  z: number;
+  divergence: { first_price: number; first_rsi: number; rsi: number } | null;
+  sfp: { swing_price: number } | null;
+  effort: number | null;
+  trigger_level: number;
+  mean_level: number | null;
+  daily_stage: string | null;
+};
+type VcpPattern = {
+  kind: "vcp";
+  pivot: number;
+  contractions: { high: number; low: number; depth_pct: number }[];
+  base_days: number;
+  dryup_ratio: number | null;
+  breakout_volume: number;
+  daily_stage: string | null;
+};
+type AnyPattern = Pattern | WolfePattern | ReversalPattern | VcpPattern;
 type Candidate = {
   id: number;
   symbol: string;
@@ -40,7 +62,7 @@ type Candidate = {
     tradingsymbol?: string;
     lots?: number;
     oi_change_pct?: number | null;
-    pattern?: Pattern | WolfePattern | null;
+    pattern?: AnyPattern | null;
     token?: number | null;
     or_high?: number | null;
     or_low?: number | null;
@@ -75,6 +97,8 @@ const SETUP_LABEL: Record<string, string> = {
   orb: "Opening range breakout",
   mcx_trend: "Trend pullback (4H → 2H → 1H)",
   trend_pullback: "Trend pullback (4H → 2H → 1H, shadow)",
+  reversal: "Trend reversal (shadow)",
+  vcp: "VCP breakout (shadow)",
 };
 const FACTOR_LABEL: [string, string, number][] = [
   ["htf_trend", "Higher-timeframe trend", 25],
@@ -100,10 +124,45 @@ const FACTOR_LABEL: [string, string, number][] = [
   ["sweet_zone", "Point 5 in sweet zone", 15],
   ["convergence", "Lines converge", 15],
   ["rsi_divergence", "RSI divergence at 5", 20],
+  // trend reversal
+  ["stretch", "Stretch (z-score)", 20],
+  ["exhaustion", "Divergence / swing failure", 25],
+  ["effort", "Volume at the extreme", 15],
+  ["daily_stage", "Daily stage", 20],
+  ["adx", "ADX turning", 10],
+  ["trigger_bar", "Trigger bar", 10],
+  // VCP
+  ["contractions", "Contractions", 20],
+  ["tightness", "Last contraction tight", 20],
+  ["dryup", "Volume dry-up", 20],
+  ["near_high", "Near the 52-week high", 20],
 ];
 
-function isWolfe(p: Pattern | WolfePattern | null | undefined): p is WolfePattern {
+function isWolfe(p: AnyPattern | null | undefined): p is WolfePattern {
   return !!p && "points" in p;
+}
+
+function isReversal(p: AnyPattern | null | undefined): p is ReversalPattern {
+  return !!p && "kind" in p && p.kind === "reversal";
+}
+
+function isVcp(p: AnyPattern | null | undefined): p is VcpPattern {
+  return !!p && "kind" in p && p.kind === "vcp";
+}
+
+function patternText(p: AnyPattern): string {
+  if (isWolfe(p)) {
+    return `Points ${p.points.map((q) => q.price).join(" → ")} · span ${p.span_bars} bars · symmetry ${p.time_ratio} · point 5 ${p.overshoot_atr} ATR below 1–3 line${p.rsi_divergence ? " · RSI divergence" : ""} · `;
+  }
+  if (isReversal(p)) {
+    const evidence = [p.divergence ? `RSI divergence (${p.divergence.first_rsi} → ${p.divergence.rsi})` : "",
+      p.sfp ? `swing failure of ${p.sfp.swing_price}` : ""].filter(Boolean).join(" + ");
+    return `Extreme ${p.extreme} · z ${p.z} · ${evidence} · trigger ${p.trigger_level}${p.mean_level !== null ? ` · mean ${p.mean_level}` : ""}${p.daily_stage ? ` · ${p.daily_stage}` : ""} · `;
+  }
+  if (isVcp(p)) {
+    return `Pivot ${p.pivot} · ${p.contractions.map((x) => `${x.depth_pct}%`).join(" → ")} over ${p.base_days} d${p.dryup_ratio !== null ? ` · dry-up ${p.dryup_ratio}×` : ""} · `;
+  }
+  return `Pivot ${p.pivot} · cup ${p.cup_weeks} wk, ${p.cup_depth_pct}% deep · handle ${p.handle_days} d, ${p.handle_depth_pct}% deep · `;
 }
 
 function pct(a: number, b: number) {
@@ -150,10 +209,8 @@ function SetupCard({ c }: { c: Candidate }) {
           {c.extra.or_high !== undefined && c.extra.or_high !== null
             ? `Opening range ${c.extra.or_low}–${c.extra.or_high} · stop at ${c.extra.stop_type === "midpoint" ? "range midpoint" : "other side"} · `
             : ""}
-          {isWolfe(c.extra.pattern)
-            ? `Points ${c.extra.pattern.points.map((q) => q.price).join(" → ")} · span ${c.extra.pattern.span_bars} bars · symmetry ${c.extra.pattern.time_ratio} · point 5 ${c.extra.pattern.overshoot_atr} ATR below 1–3 line${c.extra.pattern.rsi_divergence ? " · RSI divergence" : ""}`
-            : c.extra.pattern
-            ? `Pivot ${c.extra.pattern.pivot} · cup ${c.extra.pattern.cup_weeks} wk, ${c.extra.pattern.cup_depth_pct}% deep · handle ${c.extra.pattern.handle_days} d, ${c.extra.pattern.handle_depth_pct}% deep · `
+          {c.extra.pattern
+            ? patternText(c.extra.pattern)
             : c.extra.stop_atr !== undefined && c.extra.stop_atr !== null ? `Stop ${c.extra.stop_atr} ATR · ` : ""}
           {c.extra.vol_ratio !== undefined && c.extra.vol_ratio !== null ? `volume ${c.extra.vol_ratio}×` : ""}
           {c.extra.penalties ? ` · penalties −${Object.values(c.extra.penalties).reduce((a, b) => a + b, 0)}` : ""}

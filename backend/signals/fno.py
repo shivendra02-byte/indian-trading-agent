@@ -28,7 +28,7 @@ from backend.journal.tracker import track_open_records
 from backend.marketdata.candles import bars_for_timeframe, get_candles
 from backend.marketdata.instruments import active_future, ban_status, fno_universe, spot_instrument
 from backend.marketdata.store import MCX_UNDERLYINGS, SCANNED_INDICES
-from backend.signals import events, mcx_trend
+from backend.signals import events, mcx_trend, reversal
 from backend.signals.cash_swing import (
     _finish_run, _save, _start_run, data_quality, ensure_scan_tables, expected_last_daily_bar,
 )
@@ -367,6 +367,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                 hourly, confirmations.get("2h") or bars_for_timeframe(token, "2h", exchange), htf_bars, own,
                 must_not_oppose.get("day"), directions=tuple(icfg.directions), oi=oi, cfg=trend_cfg,
                 min_primary_bars=icfg.min_primary_bars, setup_name=trend_cfg.get("setup_name", mcx_trend.SETUP))
+        rev_cfg = reversal.config_for(icfg.model_extra)
+        if rev_cfg:   # stretch → exhaustion → 1H structure break, daily-stage filtered (shadow, 25 Nov 2026)
+            own = regime["regime"] if regime else None
+            candidates += reversal.candidates(hourly, daily, rev_cfg, directions=tuple(icfg.directions), regime=own)
         note = "; ".join(n for n in ((market_note if exchange == NSE else None), results_note) if n)
         if note:
             for c in candidates:
@@ -490,6 +494,6 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
                                          "spread_pct", "stop_atr", "stop_type", "pullback_touch", "lot_risk_pct", "size_note", "event_note", "next_level", "vol_ratio", "htf_trend",
-                                         "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
+                                         "rs_vs_nifty_pct", "risk_mult", "confirmations", "context", "pattern", "daily_stage")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }

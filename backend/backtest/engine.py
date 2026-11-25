@@ -26,7 +26,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Callable
 
 from backend.db import get_db
-from backend.decision.config import available_rule_sets, exit_rule_for, get_config, use_config
+from backend.decision.config import available_rule_sets, exit_rule_for, get_config, instrument_or_live, use_config
 from backend.journal.learning import stats
 from backend.journal.simulate import simulate
 from backend.marketdata.candles import get_candles, resample_hours, resample_weekly
@@ -37,8 +37,8 @@ from backend.signals.regime import current_regime, label_series, regime_at
 from backend.signals.setups import _relative_strength_points, evaluate
 from tradingagents.utils.market_calendar import NSE, is_trading_day
 
-SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "stock_futures_proxy", "orb_proxy", "index_futures_proxy",
-            "nifty_options_proxy")
+SEGMENTS = ("cash_swing", "cup_handle", "wolfe", "cash_reversal", "vcp", "stock_futures_proxy", "orb_proxy",
+            "index_futures_proxy", "nifty_options_proxy")
 _COMMON = [
     "Portfolio limits are not applied: every candidate is counted on its own.",
     "Only RBI and Budget dates are checked for market-wide events.",
@@ -61,6 +61,17 @@ LIMITATIONS = {
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         "Exit: this book's own exit_management (breakeven, then ATR trail), not the global one.",
+        *_COMMON],
+    "cash_reversal": [
+        _SURVIVORSHIP,
+        "No historical company results dates, so the results filter is not applied.",
+        "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
+        "Daily stage from the stock's own stored daily bars, point in time.",
+        *_COMMON],
+    "vcp": [
+        _SURVIVORSHIP,
+        "No historical company results dates, so the results filter is not applied.",
+        "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         *_COMMON],
     "stock_futures_proxy": [
         _SURVIVORSHIP,
@@ -699,6 +710,93 @@ def run_wolfe(start: date, end: date, symbols: list[dict], nifty: list[dict],
     return trades
 
 
+def _run_daily_pattern(segment: str, settings: dict, find: Callable[[list[dict], int], list[dict]],
+                       pattern_keys: tuple[str, ...], start: date, end: date, symbols: list[dict],
+                       nifty: list[dict], progress: Callable[[str], None], daily_only: bool) -> list[dict]:
+    """Daily cash pattern books (reversal, VCP): signals from ``find(daily, first_index)``, buy limit
+    at the signal close next session (hourly bars where stored, else the daily bar), then daily
+    bars with the book's own exit; safety exit after ``max_hold_trading_days``."""
+    cfg = get_config()
+    min_score = cfg.global_.scoring.min_shortlist_score
+    entry_end = settings["entry_window"][1]
+    inst = settings["inst"]
+    nifty_index = [b["ts"][:10] for b in nifty]
+    blocked_cache: dict = {}
+    trades = []
+    for n, stock in enumerate(symbols, 1):
+        daily = get_candles(stock["spot_token"], "day", limit=5000)
+        hourly = [] if daily_only else get_candles(stock["spot_token"], "60minute", limit=20000)
+        h_index = [b["ts"] for b in hourly]
+        first_i = next((i for i, b in enumerate(daily) if b["ts"][:10] >= start.isoformat()), len(daily))
+        for c in find(daily, max(first_i, settings["min_bars"])):
+            i = c["s"] + 1
+            iso = daily[c["s"]]["ts"][:10]
+            if iso > end.isoformat():
+                break
+            if avg_turnover(daily[max(0, i - 60):i]) < settings["min_turnover"]:
+                continue
+            d = date.fromisoformat(iso)
+            window = _next_days(d, settings["hold_days"])
+            if _market_blocked(window[0], window[min(settings["event_block_days"], len(window)) - 1], blocked_cache):
+                continue
+            k = bisect.bisect_right(nifty_index, iso)
+            c["regime"] = current_regime(nifty[max(0, k - 300):k])["regime"] if k else None
+            entry_day = window[0].isoformat()
+            lo = bisect.bisect_left(h_index, entry_day)
+            hi = bisect.bisect_left(h_index, window[1].isoformat()) if len(window) > 1 else len(hourly)
+            fwd_hourly = hourly[lo:hi]
+            exit_by = window[-1] if inst.time_stop else _next_days(d, inst.max_hold_trading_days)[-1]
+            fwd_daily = [{**b, "eod": True} for b in daily[i:] if entry_day < b["ts"][:10] <= exit_by.isoformat()]
+            if fwd_hourly and fwd_hourly[0]["ts"][:10] == entry_day:
+                path, data, fill_until = mark_eod(fwd_hourly) + fwd_daily, "hourly", f"{entry_day}T{entry_end}"
+            else:
+                entry_bar = [{**b, "eod": True} for b in daily[i:i + 1] if b["ts"][:10] == entry_day]
+                if not entry_bar:
+                    continue
+                path, data, fill_until = entry_bar + fwd_daily, "daily_only", f"{entry_day}T23:59:59"
+            outcome = _simulate(c, path, fill_until, exit_by, segment=segment)
+            rec = _record(c, stock["symbol"], iso, _decision(c, min_score), outcome)
+            pattern = c.get("pattern") or {}
+            rec.update(data=data, untested=None, pattern={k2: pattern.get(k2) for k2 in pattern_keys})
+            trades.append(rec)
+        progress(f"{n}/{len(symbols)} stocks")
+    mark_shortlist(trades, settings["shortlist"])
+    return trades
+
+
+def run_cash_reversal(start: date, end: date, symbols: list[dict], nifty: list[dict],
+                      progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+                      funnel: Funnel | None = None) -> list[dict]:
+    """Cash trend reversals on daily bars (the Wolfe Wave replacement), daily stage point in time."""
+    from backend.signals import reversal
+    from backend.signals import stage as stage_mod
+    from backend.signals.indicators import sma
+
+    rc = reversal.cash_settings()
+    sa = get_config().global_.stage_analysis
+
+    def find(daily: list[dict], first: int) -> list[dict]:
+        closes = [b["close"] for b in daily]
+        smas = (sma(closes, sa.sma_fast), sma(closes, sa.sma_mid), sma(closes, sa.sma_slow))
+        return reversal.find_all(daily, rc["params"], lambda t: stage_mod.classify(daily, sa, t, smas),
+                                 directions=rc["directions"], start=first)
+
+    return _run_daily_pattern("cash_reversal", rc, find, ("z", "divergence", "sfp", "effort", "daily_stage"),
+                              start, end, symbols, nifty, progress, daily_only)
+
+
+def run_vcp(start: date, end: date, symbols: list[dict], nifty: list[dict],
+            progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
+            funnel: Funnel | None = None) -> list[dict]:
+    """Minervini VCP breakouts on daily bars (trend template + contractions, point in time)."""
+    from backend.signals import vcp
+
+    vc = vcp.settings()
+    return _run_daily_pattern("vcp", vc, lambda daily, first: vcp.find_all(daily, vc, start=first),
+                              ("pivot", "base_days", "dryup_ratio", "breakout_volume"),
+                              start, end, symbols, nifty, progress, daily_only)
+
+
 def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
             progress: Callable[[str], None] = lambda m: None, daily_only: bool = False,
             funnel: Funnel | None = None) -> list[dict]:
@@ -868,6 +966,7 @@ _SHORTLIST = {
     "cash_swing": ("cash_swing", "ts"), "stock_futures_proxy": ("stock_futures", "ts"),
     "index_futures_proxy": ("index_futures", "ts"), "orb_proxy": ("stock_futures", "day"),
     "cup_handle": ("cup_handle", "ts"), "wolfe": ("wolfe", "ts"),
+    "cash_reversal": ("cash_reversal", "ts"), "vcp": ("vcp", "ts"),
     "nifty_options_proxy": ("nifty_options", "ts"),
 }
 OPEN_FOREVER = "9999-12-31"
@@ -1095,6 +1194,7 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             if not symbols:
                 raise RuntimeError("no instruments to test; run the history download first")
             runner = {"cash_swing": run_cash_swing, "cup_handle": run_cup_handle, "wolfe": run_wolfe, "orb_proxy": run_orb,
+                      "cash_reversal": run_cash_reversal, "vcp": run_vcp,
                       "stock_futures_proxy": run_futures_proxy, "index_futures_proxy": run_index_futures,
                       "nifty_options_proxy": run_nifty_options}[segment]
             funnel = Funnel()
@@ -1105,7 +1205,7 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             if cfg.global_.limits.one_open_trade_per_instrument:
                 block_name, scan_key = _SHORTLIST[segment]
                 per_scan = (cup_handle_settings()["shortlist"] if segment == "cup_handle"
-                            else cfg.instrument(block_name).shortlist_per_scan)
+                            else instrument_or_live(block_name).shortlist_per_scan)
                 stacking = apply_position_books(trades, per_scan, scan_key)
             summary = summarize(trades, segment, split_date.isoformat() if split_date else None)
             summary.update({"symbols": len(symbols), "rule_version": get_config().rule_version,

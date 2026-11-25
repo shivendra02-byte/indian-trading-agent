@@ -31,6 +31,7 @@ from backend.db import get_db
 
 SEGMENT_LABELS = {"stock_futures": "Stock futures", "index_futures": "Index futures", "mcx": "MCX",
                   "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe wave",
+                  "cash_reversal": "Cash reversal", "vcp": "VCP",
                   "nifty_options": "NIFTY options", "option_spreads": "Option spreads"}
 
 
@@ -123,7 +124,7 @@ def _qty(rec: dict) -> tuple[float, float]:
     fill = rec.get("fill_price") or rec["entry"]
     risk = abs(fill - rec["stop"])
     if rec.get("qty"):
-        per_point = 1.0 if rec["segment"] in ("cash_swing", "cup_handle", "wolfe") else \
+        per_point = 1.0 if rec["segment"] in ("cash_swing", "cup_handle", "wolfe", "cash_reversal", "vcp") else \
             float((rec.get("extra") or {}).get("value_per_point") or 1)
         return rec["qty"], per_point
     return _size(rec, fill, risk) if risk else (0, 1.0)

@@ -203,7 +203,7 @@ class AiPanelCfg(_Strict):
 
 
 SHADOW_NAMES = ("cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
-                "index_futures", "mcx", "option_spreads")
+                "index_futures", "mcx", "option_spreads", "cash_reversal", "vcp", "reversal")
 
 
 class StopAlertsCfg(_Strict):
@@ -268,6 +268,46 @@ class DivergenceCfg(_Strict):
     include_mcx: bool = True
     notify_telegram: bool = True
     max_alerts_per_message: int = Field(default=25, ge=1, le=100)
+
+
+class TopWarningsCfg(_Strict):
+    """Minervini's top signals as exit warnings for longs you hold (agreed 25 Nov 2026).
+    Stored for every held long; Telegram only when ``alert`` is on (off until studied)."""
+    enabled: bool = True
+    alert: bool = False
+    climax_window: int = Field(default=5, ge=1, le=20)          # the climax bar must be this recent
+    climax_lookback: int = Field(default=120, ge=20, le=400)    # largest 1-day gain of this many bars
+    climax_extension_pct: float = Field(default=25, ge=0, le=200)   # close at least this far above the 50 SMA
+    churn_volume_lookback: int = Field(default=60, ge=10, le=250)  # churning: highest volume of these bars...
+    churn_close_max: float = Field(default=0.3, ge=0, le=1)     # ...closing in the bottom 30% of the day's range
+    break_volume_mult: float = Field(default=1.5, ge=1, le=10)  # close below the 50 SMA on this × average volume
+    volume_avg_days: int = Field(default=50, ge=5, le=250)
+    distribution_window: int = Field(default=25, ge=5, le=100)  # heavy down days outnumber heavy up days by...
+    distribution_excess: int = Field(default=3, ge=1, le=20)    # ...at least this many
+
+
+class StageCfg(_Strict):
+    """Weinstein / Minervini stage analysis on daily bars (agreed 25 Nov 2026): Stage 1 basing,
+    2 advancing, 3 topping, 4 declining, from the 200-day SMA slope and the price around it,
+    plus Minervini's trend template. Used as the higher-timeframe filter of the reversal setup
+    and by the VCP scan."""
+    sma_fast: int = Field(default=50, ge=5, le=250)
+    sma_mid: int = Field(default=150, ge=10, le=300)
+    sma_slow: int = Field(default=200, ge=20, le=400)
+    slope_days: int = Field(default=21, ge=5, le=126)           # SMA200 change measured over ~1 month
+    flat_slope_pct: float = Field(default=0.5, ge=0, le=10)     # |change| below this % = flat
+    trend_days: int = Field(default=84, ge=10, le=250)          # earlier slope window that says where a flat 200 came from
+    year_days: int = Field(default=250, ge=100, le=300)         # 52-week high / low
+    template_rising_days: int = Field(default=21, ge=0, le=250) # Minervini: SMA200 rising for >= 1 month
+    template_above_low_pct: float = Field(default=25, ge=0, le=300)
+    template_below_high_pct: float = Field(default=25, ge=0, le=100)
+    top_warnings: TopWarningsCfg = TopWarningsCfg()
+
+    @model_validator(mode="after")
+    def _order(self):
+        if not self.sma_fast < self.sma_mid < self.sma_slow:
+            raise ValueError("stage_analysis needs sma_fast < sma_mid < sma_slow")
+        return self
 
 
 class ChartPatternsCfg(_Strict):
@@ -344,10 +384,12 @@ class GlobalCfg(_Strict):
     option_data: OptionDataCfg = OptionDataCfg()
     divergence: DivergenceCfg = DivergenceCfg()
     chart_patterns: ChartPatternsCfg = ChartPatternsCfg()
+    stage_analysis: StageCfg = StageCfg()
     # Strategies still scanned and journal-tracked but never sent to the AI and never alerted
     # (agreed 23 Nov 2026). Names: a journal segment, "orb" (setup), "momentum" or "option_spreads".
     shadow_strategies: list[Literal["cup_handle", "wolfe", "orb", "momentum", "cash_swing", "stock_futures",
-                                    "index_futures", "mcx", "option_spreads", "nifty_options", "trend_pullback"]] = []
+                                    "index_futures", "mcx", "option_spreads", "nifty_options", "trend_pullback",
+                                    "cash_reversal", "vcp", "reversal"]] = []
 
     def is_shadow(self, segment: str, setup: str | None = None) -> bool:
         names = set(self.shadow_strategies)
@@ -492,8 +534,17 @@ def lots_within_risk(segment: str, lot_risk: float) -> tuple[int, str | None]:
 
 def exit_rule_for(segment: str | None) -> dict:
     """The real exit for a journal segment / instrument: its own ``instruments.<x>.exit_management``
-    or ``global.exit_management``. One implementation: ``DecisionConfig.exit_rule``."""
-    return get_config().exit_rule(segment)
+    or ``global.exit_management``. One implementation: ``DecisionConfig.exit_rule``. A book added
+    after an experiment rule set was written (reversal, VCP) keeps its live exit there."""
+    cfg = get_config()
+    if segment and segment not in cfg.instruments and segment in LIVE_ONLY_BOOKS:
+        inst = instrument_or_live(segment)
+        if inst.exit_management:
+            return inst.exit_management.model_dump()
+    return cfg.exit_rule(segment)
+
+
+LIVE_ONLY_BOOKS = ("cash_reversal", "vcp")
 
 
 def get_config() -> DecisionConfig:
@@ -501,3 +552,14 @@ def get_config() -> DecisionConfig:
     path = _override.get() or config_path()
     with _lock:
         return _load(str(path), path.stat().st_mtime)
+
+
+def instrument_or_live(name: str) -> InstrumentCfg:
+    """``instruments.<name>`` of the current rule set, or of the live config when an older
+    experiment rule set has no such block (books added after it was written, e.g. VCP)."""
+    cfg = get_config()
+    if name in cfg.instruments:
+        return cfg.instruments[name]
+    path = config_path()
+    with _lock:
+        return _load(str(path), path.stat().st_mtime).instrument(name)

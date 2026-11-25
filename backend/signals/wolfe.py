@@ -35,7 +35,7 @@ from backend.signals.setups import stage
 
 SEGMENT = "wolfe"
 SETUP = "wolfe_wave"
-CASH_BOOKS = ("cash_swing", "cup_handle", "wolfe")   # one stock is never held in two cash books at once
+from backend.signals.daily_cash_scan import CASH_BOOKS  # noqa: E402  one stock is never held in two cash books at once
 
 
 def settings() -> dict:

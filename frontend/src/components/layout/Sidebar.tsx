@@ -60,7 +60,8 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
       { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
-      { href: "/wolfe-scan", label: "Wolfe Wave", icon: Waves, hint: "5-point wedge reversals, AI-reviewed" },
+      { href: "/reversal-scan", label: "Reversals", icon: Waves, hint: "Stretch → exhaustion → structure break (shadow)" },
+      { href: "/vcp-scan", label: "VCP", icon: Award, hint: "Minervini volatility contraction breakouts (shadow)" },
     ],
   },
   {
