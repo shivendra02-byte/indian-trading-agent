@@ -122,6 +122,9 @@ def settings() -> dict:
         "debit_below_iv_pct": None,    # intraday credit/debit switch on the ATM IV percentile
         "iv_lookback": 252,            # stored days the percentile compares with
         "iv_min_history": 60,          # fewer → fall back to debit_below_vix
+        # RBI/Budget before expiry (25 Nov 2026): None = no spread; a number = open it at that share of the
+        # normal risk (0.5 = half size) with the event named in the AI prompt and the alert. Live intraday only.
+        "event_size_mult": None,
         "risk_per_trade_pct": cfg.global_.risk.risk_per_trade_pct, "capital": cfg.global_.capital,
     }
     try:
@@ -518,7 +521,39 @@ def ensure_table() -> None:
 
 # intraday entries (24 Nov 2026): when and why, and the 1H close that invalidates the trade
 INTRADAY_COLUMNS = (("mode", "TEXT"), ("signal_ts", "TEXT"), ("setup", "TEXT"), ("direction", "TEXT"),
-                    ("invalid", "TEXT"), ("iv_pct", "REAL"), ("spot", "REAL"), ("last_check_at", "TEXT"))
+                    ("invalid", "TEXT"), ("iv_pct", "REAL"), ("spot", "REAL"), ("last_check_at", "TEXT"),
+                    ("event_note", "TEXT"))
+
+
+def _log_scan(now: datetime, manual: bool, results: dict, signals: dict) -> None:
+    """Every intraday spread scan's outcome per index (asked 25 Nov 2026: the reasons were lost)."""
+    try:
+        with get_db() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS spread_scans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, bar TEXT, symbol TEXT NOT NULL,
+                result TEXT, signal INTEGER NOT NULL DEFAULT 0, regime TEXT, manual INTEGER NOT NULL DEFAULT 0)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spread_scans_at ON spread_scans(at)")
+            for symbol, result in results.items():
+                ev = signals.get(symbol) or {}
+                sig = ev.get("signal") or {}
+                conn.execute("INSERT INTO spread_scans (at, bar, symbol, result, signal, regime, manual) "
+                             "VALUES (?,?,?,?,?,?,?)",
+                             (now.isoformat(timespec="seconds"), sig.get("signal_ts"), symbol, str(result)[:300],
+                              1 if sig else 0, ev.get("regime"), 1 if manual else 0))
+    except Exception:   # the log must never stop a scan
+        pass
+
+
+def scan_log(day: date | None = None) -> list[dict]:
+    """The day's intraday spread scans, newest first."""
+    day = day or date.today()
+    with get_db() as conn:
+        have = conn.execute("SELECT name FROM sqlite_master WHERE name = 'spread_scans'").fetchone()
+        if not have:
+            return []
+        rows = conn.execute("SELECT at, bar, symbol, result, signal, regime, manual FROM spread_scans "
+                            "WHERE substr(at, 1, 10) = ? ORDER BY at DESC, symbol", (day.isoformat(),)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def evaluations_today(today: date) -> int:
@@ -580,6 +615,9 @@ def build_prompt(sp: dict) -> str:
         priced = f"live bid/ask mid prices at {sp.get('signal_ts')}"
     else:
         priced = f"closing prices of {sp['signal_date']}"
+    if sp.get("event_note"):
+        exits += (f"Event risk: {sp['event_note']}. The rules allow it at reduced size; weigh the gap risk "
+                  "through the short strike.\n")
     return (
         f"You review one index option {kind} spread for a paper-trading book (advisory only, the user "
         "places orders by hand). The rules already chose it; you can only approve or reject, not change it.\n"
@@ -607,6 +645,8 @@ def build_alert(sp: dict, panel: dict | None, kind: str) -> str:
     if intraday:
         exits = exits.replace(f"exit by {sp['exit_by']}", f"exit at the 15:15 1H close on {sp['exit_by']}")
     lines = [f"{head} — {sp['symbol']} {name} (paper)", f"Expiry {sp['expiry']} · {_legs_text(sp)}", money, exits]
+    if sp.get("event_note"):
+        lines.append(f"⚠️ {sp['event_note']}")
     if intraday:
         inv = sp.get("invalid")
         inv_text = (f"1H close outside {inv['below']:.0f}–{inv['above']:.0f}" if isinstance(inv, dict) else
@@ -998,7 +1038,13 @@ def scan_intraday(now: datetime | None = None, client=None, llm_call=None, manua
             results[symbol] = "outside the entry window (days to expiry / weekday)"
             continue
         blocked = _blocked(day, expiry)
-        if blocked:
+        event_note, size_cfg = None, cfg
+        if blocked and blocked.startswith("event before expiry") and cfg.get("event_size_mult"):
+            mult = float(cfg["event_size_mult"])
+            event_note = f"{blocked[len('event before expiry: '):]} before expiry — {mult:g}× size"
+            size_cfg = {**cfg, "risk_per_trade_pct": cfg["risk_per_trade_pct"] * mult,
+                        "max_loss_pct": cfg["max_loss_pct"] * mult}
+        elif blocked:
             results[symbol] = blocked
             continue
         if client is None:
@@ -1006,7 +1052,10 @@ def scan_intraday(now: datetime | None = None, client=None, llm_call=None, manua
                 from backend.brokers.kite import get_authenticated_client
                 client = get_authenticated_client()
             except Exception as exc:
-                return {"status": "error", "reason": f"Kite: {type(exc).__name__}: {exc}"[:200], "results": results}
+                reason = f"Kite: {type(exc).__name__}: {exc}"[:200]
+                results[symbol] = reason
+                _log_scan(now, manual, results, signals)
+                return {"status": "error", "reason": reason, "results": results}
         try:
             chain, spot, vix_live = live_chain(client, symbol, expiry, day, cfg)
         except Exception as exc:
@@ -1025,33 +1074,36 @@ def scan_intraday(now: datetime | None = None, client=None, llm_call=None, manua
             results[symbol] = f"India VIX {vix:.1f} > {cfg['max_vix']:g}"
             continue
         base = {"symbol": symbol, "signal_date": iso, "regime": regime, "vix": round(vix, 2) if vix else None}
-        c = _finish(base, chain, strategy, rule, cfg, expiry)
+        c = _finish(base, chain, strategy, rule, size_cfg, expiry)
         if not c["ok"]:
-            results[symbol] = c["reason"]
+            results[symbol] = c["reason"] + (f" ({event_note})" if event_note else "")
             continue
         why = legs_liquid(c["legs"], chain, cfg)
         if why:
             results[symbol] = why
             continue
         c.update({"mode": "intraday", "signal_ts": sig["signal_ts"], "setup": sig["kind"],
-                  "direction": sig["direction"], "invalid": sig["invalid"], "iv_pct": iv_pct, "spot": spot})
+                  "direction": sig["direction"], "invalid": sig["invalid"], "iv_pct": iv_pct, "spot": spot,
+                  "event_note": event_note})
         with get_db() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO option_spreads (symbol, signal_date, expiry, strategy, legs, credit, width, "
                 "lot_size, lots, regime, vix, exit_by, mode, signal_ts, setup, direction, invalid, iv_pct, spot, "
-                "last_check_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "last_check_at, event_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (symbol, iso, c["expiry"], c["strategy"], json.dumps(c["legs"]), c["credit"], c["width"],
                  c["lot_size"], c["lots"], c["regime"], c["vix"], c["exit_by"], "intraday", c["signal_ts"],
                  c["setup"], c["direction"], json.dumps(c["invalid"]), iv_pct, spot,
-                 now.isoformat(timespec="seconds")))
+                 now.isoformat(timespec="seconds"), event_note))
             if not cur.rowcount:
                 results[symbol] = "already recorded today (same expiry and strategy)"
                 continue
             c["id"] = cur.lastrowid
         new.append(c)
-        results[symbol] = f"{c['strategy']} shortlisted ({sig['kind'].replace('_', ' ')})"
+        results[symbol] = f"{c['strategy']} shortlisted ({sig['kind'].replace('_', ' ')})" + \
+            (f" — {event_note}" if event_note else "")
         open_now.append({**c, "decision": "shortlisted"})
     reviews = _review_new(new, day, llm_call)
+    _log_scan(now, manual, results, signals)
     return {"status": "ok", "at": now.isoformat(timespec="minutes"), "results": results,
             "new": [c["symbol"] for c in new], "reviews": reviews,
             "alignment": {k: {kk: v.get(kk) for kk in ("regime", "bias", "h4", "h1", "m15", "reason")}

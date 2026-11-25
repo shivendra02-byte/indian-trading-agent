@@ -22,18 +22,22 @@ POSITION_DECISIONS = ("shortlisted", "approved")
 LIVE_STATUSES = ("pending", "open")
 
 
-def open_positions(segments: Iterable[str]) -> set[tuple[str, str]]:
-    """(segment, symbol) pairs with a shortlisted/approved record still pending or open."""
+def open_positions(segments: Iterable[str], live_only: bool = False) -> set[tuple[str, str]]:
+    """(segment, symbol) pairs with a shortlisted/approved record still pending or open.
+    ``live_only`` (25 Nov 2026): ignore records of shadow strategies/setups (e.g. ORB, the NSE
+    trend pullback) — they are only tracked and must not block a live setup on the same symbol."""
     segments = tuple(segments)
     if not segments:
         return set()
     ensure_journal_table()
-    q = (f"SELECT DISTINCT segment, symbol FROM trade_journal WHERE segment IN ({', '.join('?' * len(segments))}) "
+    q = (f"SELECT DISTINCT segment, symbol, setup FROM trade_journal "
+         f"WHERE segment IN ({', '.join('?' * len(segments))}) "
          f"AND decision IN ({', '.join('?' * len(POSITION_DECISIONS))}) "
          f"AND track_status IN ({', '.join('?' * len(LIVE_STATUSES))})")
     with get_db() as conn:
         rows = conn.execute(q, (*segments, *POSITION_DECISIONS, *LIVE_STATUSES)).fetchall()
-    return {(r[0], r[1]) for r in rows}
+    g = get_config().global_
+    return {(r[0], r[1]) for r in rows if not (live_only and g.is_shadow(r[0], r[2]))}
 
 
 def choose_shortlist(ranked: list[dict], limit: int | None, segment_of: Callable[[dict], str],

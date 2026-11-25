@@ -115,6 +115,48 @@ class HourlyScanTests(IsolatedStateTestCase, unittest.TestCase):
         rows = latest_run(segment="fno_1h")["candidates"]
         self.assertEqual([r["reject_reason"] for r in rows], ["in F&O ban"])
 
+    def test_no_results_check_for_futures_but_the_date_is_noted(self):
+        """25 Nov 2026: ~44 stocks a scan were excluded as 'results date unverified'."""
+        from backend.journal.panel import build_alert
+        from backend.journal.store import list_records
+        self.assertEqual(self.scan()["status"], "ok")
+        brk = [r for r in list_records("segment = 'stock_futures'") if r["setup"] == "breakout"]
+        self.assertEqual(brk[0]["extra"]["event_note"], "next results 2027-01-20")
+        self.assertIn("next results 2027-01-20", build_alert(brk[0], {}, "approved"))
+
+    def test_unknown_results_date_no_longer_excludes(self):
+        from backend.journal.store import list_records
+        with self.db.get_db() as conn:
+            conn.execute("DELETE FROM results_dates")          # previously: "results date not checked" → rejected
+        self.assertEqual(self.scan()["status"], "ok")
+        brk = [r for r in list_records("segment = 'stock_futures'") if r["setup"] == "breakout"]
+        self.assertTrue(brk)
+        self.assertEqual(brk[0]["extra"]["event_note"], "next results date not known")
+
+    def test_trend_pullback_is_a_shadow_setup_ranked_on_its_own(self):
+        from backend.decision.config import get_config
+        from backend.journal.store import list_records
+        self.scan()
+        recs = {(r["setup"], r["direction"]): r for r in list_records("segment = 'stock_futures'")}
+        live = recs[("breakout", "long")]
+        self.assertEqual(live["decision"], "shortlisted")                 # the live slot is not taken by the shadow
+        tp = [r for (setup, _), r in recs.items() if setup == "trend_pullback"]
+        self.assertTrue(tp)
+        self.assertEqual(tp[0]["decision"], "shortlisted")                # tracked in its own (shadow) ranking
+        self.assertTrue(get_config().global_.is_shadow("stock_futures", "trend_pullback"))
+
+    def test_shadow_positions_do_not_block_live_setups(self):
+        """An open shadow ORB / trend-pullback record on STOCK1 must not block a live STOCK1 setup."""
+        from backend.journal.store import add_records, list_records
+        add_records([{"segment": "stock_futures", "symbol": "STOCK1", "instrument_token": 601, "exchange": "NFO",
+                      "signal_date": "2026-11-23", "signal_ts": "2026-11-23T09:55:00", "setup": "orb",
+                      "direction": "long", "decision": "shortlisted", "entry": 1.0, "stop": 0.9, "target": 1.2,
+                      "entry_date": "2026-11-23", "fill_until": "2026-11-23T15:15:00",
+                      "time_stop_date": "2026-11-23", "extra": {}}])
+        self.scan()
+        brk = [r for r in list_records("segment = 'stock_futures'") if r["setup"] == "breakout"][0]
+        self.assertEqual(brk["decision"], "shortlisted")
+
     def test_skips_last_30_minutes_but_still_tracks(self):
         from backend.signals.fno import run_hourly_scan
         late = run_hourly_scan("nse", now=datetime(2026, 11, 23, 15, 20), client=FakeQuoteKite())

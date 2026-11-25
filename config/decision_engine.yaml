@@ -32,7 +32,7 @@ global:
   limits:
     max_new_trades_day: 5
     max_new_trades_week: 15
-    max_ai_evaluations_day: 7      # total cap; per-book shares in ai_panel.reviews_per_day (23 Nov 2026)
+    max_ai_evaluations_day: 8      # total cap; per-book shares in ai_panel.reviews_per_day (7 → 8 on 25 Nov 2026 for MCX)
     one_open_trade_per_instrument: true   # agreed 22 Nov 2026: no stacking signals on an open position
   drawdown:
     daily_loss_pct: 2.0            # stop new trades for the day
@@ -94,10 +94,11 @@ global:
     timeout_seconds: 90
     reviews_per_day:               # agreed 23 Nov 2026: each book has its own share of the daily reviews
       futures: 3                   # stock + index futures (hourly scans)
-      mcx: 1
+      mcx: 2                       # 25 Nov 2026: 1 → 2 (gold and silver often signal on the same bar)
       cash: 2                      # cash swing (cup & handle / Wolfe are shadow)
       option_spreads: 1
     top_per_scan: 1                # only the top-scoring shortlisted trade of each scan goes to the AI
+    top_per_scan_books: {mcx: 2}   # 25 Nov 2026: MCX sends its best 2 per scan
     reserved_after:
       futures: {after: "13:15", reviews: 1}   # the 3rd futures review is kept for scans from 13:15
   shadow_strategies:               # agreed 23 Nov 2026: scanned + journal-tracked, no AI review, no Telegram
@@ -106,6 +107,7 @@ global:
     - orb
     - momentum
     - nifty_options                # NIFTY option buying: shadow until it shows an edge
+    - trend_pullback               # NSE futures 4H → 2H → 1H trend pullback (25 Nov 2026), shadow until compared
   my_trades:                       # your own futures trades: trailing stop worked out by the system (asked 23 Nov 2026)
     interval: 60minute             # bars the stop is trailed on (60minute | 10minute)
     atr_period: 14
@@ -210,6 +212,15 @@ instruments:
     no_entry_last_minutes: 30
     max_spread_pct: 0.1
     min_primary_bars: 60
+    results_check: false           # agreed 25 Nov 2026: no results-date check for futures; the date is shown in the alert
+    trend_pullback:                # agreed 25 Nov 2026: same 4H → 2H → 1H rules as MCX, setup "trend_pullback", SHADOW
+      enabled: true                # (tracked in the journal, no AI review, no alert — global.shadow_strategies)
+      setup_name: trend_pullback
+      structure_bars: 30
+      pullback_bars: 6
+      cap_stop_atr: 3.0
+      short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
+      long_regimes: [STRONG_UP, HIGH_VOL]
   index_futures:
     enabled: true
     primary_tf: 60minute
@@ -227,6 +238,14 @@ instruments:
     no_entry_last_minutes: 30
     max_spread_pct: 0.1
     min_primary_bars: 60
+    trend_pullback:                # agreed 25 Nov 2026: same 4H → 2H → 1H rules as MCX, setup "trend_pullback", SHADOW
+      enabled: true                # (tracked in the journal, no AI review, no alert — global.shadow_strategies)
+      setup_name: trend_pullback
+      structure_bars: 30
+      pullback_bars: 6
+      cap_stop_atr: 3.0
+      short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
+      long_regimes: [STRONG_UP, HIGH_VOL]
   mcx:
     enabled: true
     primary_tf: 60minute
@@ -317,6 +336,7 @@ instruments:
       trail_atr: 2.0
   option_spreads:                  # index option spreads (agreed 22 Nov 2026; intraday entries 24 Nov 2026) — paper, AI-reviewed
     enabled: true
+    event_size_mult: 0.5           # agreed 25 Nov 2026: RBI/Budget before expiry → open at half size (was: no spread)
     short_delta: [0.15, 0.20]      # short leg |delta| band (closest to the middle)
     min_oi: 0                      # open interest of the short leg (contracts)
     min_credit_ratio: 0.15         # credit at least 15% of the width
@@ -372,6 +392,7 @@ instruments:
       BANKNIFTY: {wing: 500, lot_size: 30, weekdays: [0, 1, 2, 3, 4], min_days: 10, max_days: 20}   # monthly, 10-20 days out
       SENSEX: {wing: 500, lot_size: 20, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}  # agreed 25 Nov 2026: like NIFTY, the next weekly, always 7+ days out (was Fri-Mon, 3-6 days)
   cash_swing:
+    event_block: false             # agreed 25 Nov 2026: RBI/Budget in the hold no longer blocks the scan (named in the alert)
     enabled: true
     primary_tf: day
     confirmation_tfs: [4h]         # must not be against the trade

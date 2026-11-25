@@ -184,10 +184,21 @@ class CashSwingScanTests(IsolatedStateTestCase, unittest.TestCase):
         by_symbol = {c["symbol"]: c for c in run["candidates"]}
         self.assertEqual(set(by_symbol), {"STOCK1", "THIN"})
         self.assertIn("turnover", by_symbol["THIN"]["reject_reason"])
-        # 27 Nov: window reaches 4 Dec RBI policy -> whole scan blocked (fail closed).
+        # 27 Nov: window reaches 4 Dec RBI policy. Since 25 Nov 2026 (event_block: false) the scan runs
+        # and names the event on every candidate; with event_block on it would block (fail closed).
         for token, start in ((256265, 20000), (501, 1000), (502, 10)):
             self.save(token, make_bars(uptrend(300, start=start, step=0.005), end=date(2026, 11, 27)))
-        blocked = run_scan(now=datetime(2026, 11, 27, 15, 50), results_fetch=fetch)
+        res = run_scan(now=datetime(2026, 11, 27, 15, 50), results_fetch=fetch)
+        self.assertEqual(res["status"], "ok", res)
+        cands = latest_run("2026-11-27")["candidates"]
+        self.assertTrue(cands)
+        self.assertTrue(all("RBI policy 2026-12-04" in (c.get("event_note") or (c.get("extra") or {}).get("event_note") or "")
+                            for c in cands), cands[0])
+        from unittest import mock
+        from backend.signals import cash_swing
+        real = cash_swing.settings
+        with mock.patch.object(cash_swing, "settings", lambda: {**real(), "event_block": True}):
+            blocked = run_scan(now=datetime(2026, 11, 27, 16, 0), results_fetch=fetch, force=True)
         self.assertEqual(blocked["status"], "blocked")
         self.assertIn("RBI policy", blocked["reason"])
 

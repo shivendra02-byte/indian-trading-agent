@@ -75,5 +75,20 @@ class BreakdownShortTests(unittest.TestCase):
         self.assertIsNone(breakdown_shorts("index_futures"))
 
 
+
+class BreakdownLabelTests(unittest.TestCase):
+    """25 Nov 2026: a breakout short is shown as a "breakdown" (stored setup unchanged)."""
+
+    def test_labels(self):
+        from backend.journal.panel import _setup_label
+        from backend.signals.setups import labelled_reasons, setup_display
+        self.assertEqual(setup_display("breakout", "short"), "breakdown")
+        self.assertEqual(setup_display("breakout", "long"), "breakout")
+        self.assertEqual(_setup_label({"setup": "breakout", "direction": "short"}), "breakdown")
+        text = labelled_reasons([{"setup": "breakout", "direction": "short", "reject_reason": "no close"},
+                                 {"setup": "breakout", "direction": "long", "reject_reason": "no close"}])
+        self.assertEqual(text, "long breakout: no close; short breakdown: no close")
+
+
 if __name__ == "__main__":
     unittest.main()
