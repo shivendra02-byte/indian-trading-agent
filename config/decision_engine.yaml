@@ -249,6 +249,20 @@ instruments:
       enabled: true
       extra_regimes: [HIGH_VOL]    # also allowed here, with the 4H trend fully down (STRONG_DOWN / MODERATE_DOWN already allow them)
       cap_stop_atr: 3.0            # swing stop wider than this → stop placed at 3 ATR from entry instead of rejecting
+    regime_high_vol_trend: true    # agreed 25 Nov 2026: HIGH_VOL with the daily close/EMAs aligned counts as that trend
+    trend_pullback:                # agreed 25 Nov 2026: setup mcx_trend (backend/signals/mcx_trend.py), live with alerts
+      enabled: true
+      ema_fast: 20                 # 2H / 4H / 1H trigger EMAs
+      ema_slow: 50
+      h4_structure: true           # 4H: last confirmed swing high lower than the one before (mirror for longs)
+      pullback_bars: 6             # 2H bars searched for the touch of the 2H EMA20 ...
+      pullback_touch_atr: 0.25     # ... within this many 2H ATR; the pullback high must stay under the last 2H swing high
+      hold_2h_ema_slow: false      # true = also every 2H close below the 2H EMA50 (too tight in a fast fall)
+      trigger_lookback: 3          # 1H close beyond the last 3 bars' low (high for longs), bearish (bullish) candle ...
+      trigger_ema: true            # ... and beyond the 1H EMA20; one signal per pullback
+      cap_stop_atr: 3.0            # stop above the pullback high wider than this → placed at 3 ATR from the entry
+      short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # HIGH_VOL only with the daily trend down
+      long_regimes: [STRONG_UP, HIGH_VOL]                     # no longs in a moderate uptrend (agreed 24 Nov 2026)
   index_options:                   # NIFTY / BANKNIFTY — built in a later step
     enabled: false
     primary_tf: 10minute
@@ -498,6 +512,14 @@ strategies:
     edge_fraction: 0.25            # entries only in the outer 25% of the range
     min_range_atr: 2.0
     requires_regime: SIDEWAYS      # hard: candidates only when the classifier says sideways
+  mcx_trend:                       # MCX trend pullback: 4H trend → 2H pullback → 1H trigger (agreed 25 Nov 2026)
+    ema_fast: 20                   # 1H indicators for the stop/target/score; the 2H/4H EMAs are in instruments.mcx.trend_pullback
+    ema_slow: 50
+    rsi_period: 14
+    volume_multiplier: 0.0         # no volume requirement (recorded and scored only)
+    atr_period: 14
+    min_rr: 2.0
+    lookback: 20
   orb:                             # opening range breakout — intraday, stock futures (agreed 21 Nov 2026)
     ema_fast: 20                   # (unused by ORB; required fields)
     ema_slow: 50

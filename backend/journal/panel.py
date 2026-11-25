@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 APPROVED = "approved"
 REJECTED = "rejected_panel"
 CASH_SEGMENTS = ("cash_swing", "cup_handle", "wolfe")
+SETUP_LABEL = {"mcx_trend": "trend pullback (4H trend, 2H pullback, 1H trigger)"}   # alert wording (25 Nov 2026)
 SEGMENT_LABEL = {"stock_futures": "Stock futures", "index_futures": "Index futures", "mcx": "MCX",
                  "cash_swing": "Cash swing", "cup_handle": "Cup & handle", "wolfe": "Wolfe Wave"}
 
@@ -308,7 +309,7 @@ def build_alert(rec: dict, panel: dict, kind: str) -> str:
     until = (rec.get("fill_until") or "").replace("T", " ")[:16]
     lines = [
         f"<b>{e(title)}</b>",
-        f"<b>{arrow} {e(name)}</b> · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])}",
+        f"<b>{arrow} {e(name)}</b> · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(SETUP_LABEL.get(rec['setup'], rec['setup']))}",
         f"Entry (limit): {rec['entry']} · valid until {e(until)}",
         f"Stop: {rec['stop']} · Target: {rec['target']} · R:R {rec.get('rr')}",
         f"Size: {e(_size_text(rec))} · Score {round(rec.get('score') or 0)} · Regime {e(str(rec.get('regime') or '-'))}",
@@ -356,7 +357,7 @@ def build_stop_move(rec: dict, old_level: float, stop_now: dict) -> str:
     state = {"breakeven": "breakeven", "trailing": "trailing stop"}.get(stop_now["state"], stop_now["state"])
     lines = [
         "<b>Move your stop-loss</b>",
-        f"<b>{e(name)}</b> {arrow} · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])}",
+        f"<b>{e(name)}</b> {arrow} · {e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(SETUP_LABEL.get(rec['setup'], rec['setup']))}",
         f"SL {old_level:g} → <b>{stop_now['level']:g}</b> ({e(state)}) · locks {stop_now['locked_r']:+.2f}R",
     ]
     if stop_now.get("last_close") is not None:
@@ -427,7 +428,7 @@ def limit_notice(day: date, reason: str, rec: dict) -> str | None:
     text = "\n".join([
         "<b>Trade not reviewed: portfolio limit</b>",
         f"{e(reason[:1].upper() + reason[1:])}.",
-        f"{e(name)} ({e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(rec['setup'])} "
+        f"{e(name)} ({e(SEGMENT_LABEL.get(rec['segment'], rec['segment']))} · {e(SETUP_LABEL.get(rec['setup'], rec['setup']))} "
         f"{'↑' if rec['direction'] == 'long' else '↓'}) was shortlisted but blocked.",
         "Other trades blocked for the same reason today are not messaged; see the Trade Journal (not_sent).",
     ])

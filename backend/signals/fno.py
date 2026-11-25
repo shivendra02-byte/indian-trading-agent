@@ -28,7 +28,7 @@ from backend.journal.tracker import track_open_records
 from backend.marketdata.candles import bars_for_timeframe, get_candles
 from backend.marketdata.instruments import active_future, ban_status, fno_universe, spot_instrument
 from backend.marketdata.store import MCX_UNDERLYINGS, SCANNED_INDICES
-from backend.signals import events
+from backend.signals import events, mcx_trend
 from backend.signals.cash_swing import (
     _finish_run, _save, _start_run, data_quality, ensure_scan_tables, expected_last_daily_bar,
 )
@@ -312,7 +312,8 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                 f"Kite's continuous daily history came back short)"
             if not problem and (now.date() - date.fromisoformat(daily[-1]["ts"][:10])).days > 4:
                 problem = f"stale daily bars (last {daily[-1]['ts'][:10]})"
-            regime = current_regime(daily) if not problem else None
+            regime = current_regime(daily, high_vol_trend=bool(_x(seg, "regime_high_vol_trend", False))) \
+                if not problem else None
         if problem:
             reject(f"daily data: {problem}")
             continue
@@ -348,6 +349,12 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                               min_primary_bars=icfg.min_primary_bars,
                               stock_regime=current_regime(daily)["regime"] if daily else None,
                               breakdown_shorts=breakdown_shorts(seg))
+        trend_cfg = mcx_trend.config_for(icfg.model_extra) if seg == "mcx" else None
+        if trend_cfg:   # 4H trend → 2H pullback → 1H trigger (agreed 25 Nov 2026)
+            candidates += mcx_trend.candidates(
+                hourly, confirmations.get("2h") or bars_for_timeframe(token, "2h", exchange), htf_bars, regime,
+                must_not_oppose.get("day"), directions=tuple(icfg.directions), oi=oi, cfg=trend_cfg,
+                min_primary_bars=icfg.min_primary_bars)
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
@@ -452,7 +459,7 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "entry_date": day.isoformat(), "fill_until": fill_until.isoformat(timespec="seconds"),
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
-                                         "spread_pct", "stop_atr", "stop_type", "next_level", "vol_ratio", "htf_trend",
+                                         "spread_pct", "stop_atr", "stop_type", "pullback_touch", "next_level", "vol_ratio", "htf_trend",
                                          "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }
