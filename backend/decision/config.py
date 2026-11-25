@@ -466,6 +466,28 @@ def _load(path: str, mtime: float) -> DecisionConfig:
     return cfg
 
 
+def lots_within_risk(segment: str, lot_risk: float) -> tuple[int, str | None]:
+    """(lots, note) for a futures trade whose one lot risks ``lot_risk`` ₹.
+
+    Lots = ``global.risk.risk_per_trade_pct`` of capital ÷ lot risk. When that is under one lot,
+    an instrument with ``one_lot_max_risk_pct`` (MCX, agreed 25 Nov 2026: 3.5%) still takes 1 lot
+    if that lot risks no more than it — so wide gold / silver stops can be traded without sizing
+    every MCX trade up. The note says how much the single lot risks."""
+    cfg = get_config()
+    g = cfg.global_
+    if lot_risk <= 0:
+        return 0, None
+    lots = int(g.capital * g.risk.risk_per_trade_pct / 100 // lot_risk)
+    if lots >= 1:
+        return lots, None
+    inst = cfg.instruments.get(segment)
+    cap = (inst.model_extra or {}).get("one_lot_max_risk_pct") if inst else None
+    pct = 100 * lot_risk / g.capital
+    if cap is not None and pct <= float(cap) + 1e-9:
+        return 1, f"1 lot risks ₹{lot_risk:,.0f} ({pct:.1f}% of capital, above {g.risk.risk_per_trade_pct:g}%, within the {segment} {float(cap):g}% limit)"
+    return 0, None
+
+
 def exit_rule_for(segment: str | None) -> dict:
     """The real exit for a journal segment / instrument: its own ``instruments.<x>.exit_management``
     or ``global.exit_management``. One implementation: ``DecisionConfig.exit_rule``."""

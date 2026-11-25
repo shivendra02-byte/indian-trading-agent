@@ -167,7 +167,7 @@ class HighVolTrendRegimeTests(unittest.TestCase):
         self.assertEqual(r["trend"], "down")
 
 
-def store_silverm(db, h, daily_end):
+def store_silverm(db, h, daily_end, scale=1.0):
     from backend.marketdata import ensure_marketdata_tables
     from backend.marketdata.candles import save_candles
     ensure_marketdata_tables()
@@ -176,7 +176,7 @@ def store_silverm(db, h, daily_end):
                      (701, "MCX", "MCX-FUT", "SILVERM27FEBFUT", "SILVERM", "FUT", "2027-02-26", 0, 5, 1.0,
                       "2026-11-24"))
     save_candles(701, "60minute", [{**b, "date": b["ts"]} for b in h])
-    daily = make_bars([150000 * 0.998 ** i for i in range(300)], end=date(2026, 10, 1))
+    daily = make_bars([150000 * scale * 0.998 ** i for i in range(300)], end=date(2026, 10, 1))
     daily += make_bars([daily[-1]["close"] * 0.997 ** i for i in range(1, 45)], end=date(2026, 11, 24))
     save_candles(701, "day", [{**b, "date": b["ts"]} for b in daily if b["ts"][:10] <= daily_end])
 
@@ -221,6 +221,29 @@ class ReplayTests(IsolatedStateTestCase, unittest.TestCase):
         store_silverm(self.db, h, "2026-11-24")
         res = replay(date(2026, 10, 20), ["SILVERM"], today=date(2026, 11, 24))
         self.assertGreaterEqual(res["rejects"]["new"]["data: no open interest on the last bar"], 18)   # minus timing-excluded bars
+
+
+    def test_one_lot_rule_and_blocked_book(self):
+        """Prices ×3: a lot risks ~₹18k — blocked at 1% ("before"), 1 lot at the MCX 3.5% rule ("new").
+        Prices ×7: ~₹42k — blocked under both, followed in the blocked book with its result in R."""
+        from backend.mcx_replay import replay
+        store_silverm(self.db, hourly(falling_legs(start=360000.0)), "2026-11-24", scale=3)
+        res = replay(date(2026, 10, 20), ["SILVERM"], today=date(2026, 11, 24))
+        new = [r for r in res["signals"] if r["rule_set"] == "new" and r["setup"] == "mcx_trend"]
+        self.assertTrue(new)
+        taken = [r for r in new if r.get("taken")]
+        self.assertTrue(taken, [r["result"] for r in new])
+        self.assertTrue(all(15_000 < r["lot_risk"] <= 35_000 for r in taken))
+
+    def test_too_big_even_for_the_mcx_limit_is_followed_as_blocked(self):
+        from backend.mcx_replay import replay
+        store_silverm(self.db, hourly(falling_legs(start=840000.0)), "2026-11-24", scale=7)
+        res = replay(date(2026, 10, 20), ["SILVERM"], today=date(2026, 11, 24))
+        new = [r for r in res["signals"] if r["rule_set"] == "new" and r["setup"] == "mcx_trend"]
+        self.assertTrue(new)
+        self.assertFalse([r for r in new if r.get("taken")])
+        self.assertTrue(all(r["result"].startswith("BLOCKED: 1 lot risks") for r in new))
+        self.assertTrue([r for r in new if r.get("blocked_taken") and r.get("blocked_r") is not None])
 
 
 if __name__ == "__main__":

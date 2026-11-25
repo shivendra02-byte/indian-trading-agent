@@ -124,7 +124,21 @@ def _book_segments(segment: str) -> tuple[str, ...]:
     return FNO_BOOK if segment in FNO_BOOK else (segment,)
 
 
-def limit_block(today: date, segment: str = "stock_futures") -> str | None:
+def _record_risk_pct(row) -> float:
+    """% of capital a journal record risks: lots × |entry − stop| × value per point for futures;
+    the default per-trade risk otherwise (cash, or no lot size recorded)."""
+    g = get_config().global_
+    try:
+        extra = json.loads(row["extra"] or "{}") if isinstance(row["extra"], str) else (row["extra"] or {})
+    except (TypeError, ValueError):
+        extra = {}
+    lots, vpp = extra.get("lots"), extra.get("value_per_point")
+    if lots and vpp and row["entry"] is not None and row["stop"] is not None:
+        return 100 * lots * abs(row["entry"] - row["stop"]) * vpp / g.capital
+    return g.risk.risk_per_trade_pct
+
+
+def limit_block(today: date, segment: str = "stock_futures", new_risk_pct: float | None = None) -> str | None:
     """Why no new trade can be approved in ``segment``'s book right now, or None.
     Trades per day/week and the daily loss stop count every book; open positions and
     open risk count the trade's own book (F&O: ``global.risk``; cash swing / cup &
@@ -156,8 +170,14 @@ def limit_block(today: date, segment: str = "stock_futures") -> str | None:
                       (APPROVED, *book))
     if open_now >= max_positions:
         return f"open position limit reached ({open_now}/{max_positions})"
-    if (open_now + 1) * g.risk.risk_per_trade_pct > max_risk + 1e-9:
-        return f"open risk would exceed {max_risk}%"
+    with get_db() as conn:   # actual risk of open positions (an MCX lot may risk up to 3.5%, 25 Nov 2026)
+        rows = conn.execute(f"SELECT entry, stop, extra FROM trade_journal WHERE decision = ? "
+                            f"AND track_status IN ('pending', 'open') AND segment IN ({marks})",
+                            (APPROVED, *book)).fetchall()
+    open_risk = sum(_record_risk_pct(r) for r in rows)
+    new_risk = g.risk.risk_per_trade_pct if new_risk_pct is None else new_risk_pct
+    if open_risk + new_risk > max_risk + 1e-9:
+        return f"open risk would exceed {max_risk}% ({open_risk:.1f}% open + {new_risk:.1f}% new)"
     with get_db() as conn:
         realised = conn.execute("SELECT COALESCE(SUM(pnl_rupees), 0) FROM trade_journal WHERE decision = ? "
                                 "AND track_status = 'closed' AND substr(exit_ts, 1, 10) = ?",
@@ -268,7 +288,8 @@ def parse_reply(text: str) -> dict:
 def _size_text(rec: dict) -> str:
     extra = rec.get("extra") or {}
     if extra.get("lots"):
-        return f"{extra['lots']} lot{'s' if extra['lots'] != 1 else ''}"
+        text = f"{extra['lots']} lot{'s' if extra['lots'] != 1 else ''}"
+        return f"{text} — {extra['size_note']}" if extra.get("size_note") else text
     if rec["segment"] in CASH_SEGMENTS:
         from backend.journal.tracker import _cash_max_value, _risk_per_trade
         risk = abs(rec["entry"] - rec["stop"])
@@ -507,7 +528,7 @@ def review_pending(now: datetime | None = None, llm_call: Callable[[str], tuple[
     out = {"status": "ok", "approved": [], "rejected": [], "not_sent": [], "errors": [], "alerts": []}
     for rec in _select_for_review(pending_records(now, retry_errors), cfg, out):
         evaluated_at = now.isoformat(timespec="seconds")
-        blocked = limit_block(now.date(), rec["segment"])
+        blocked = limit_block(now.date(), rec["segment"], _record_risk_pct(rec))
         if blocked:
             panel = {"evaluated_at": None, "skipped": blocked}
             update_record(rec["id"], {"panel": panel, "panel_decision": "not_sent", "stages": _set_stages(
