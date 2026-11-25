@@ -173,6 +173,17 @@ class ReplayTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertFalse([r for r in res["signals"] if r["rule_set"] == "before" and r["setup"] == "mcx_trend"])
         self.assertTrue(any("result" in r for r in new))
 
+    def test_bars_without_open_interest_are_skipped_like_the_live_scan(self):
+        from backend.mcx_replay import replay
+        from backend.signals.fno import oi_signal
+        h = hourly(falling_legs())
+        for b in h[500:520]:
+            b["oi"] = None
+        self.assertIsNone(oi_signal(h[:510])["change_pct"])
+        store_silverm(self.db, h, "2026-11-24")
+        res = replay(date(2026, 10, 20), ["SILVERM"], today=date(2026, 11, 24))
+        self.assertGreaterEqual(res["rejects"]["new"]["data: no open interest on the last bar"], 18)   # minus timing-excluded bars
+
 
 if __name__ == "__main__":
     unittest.main()

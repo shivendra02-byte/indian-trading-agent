@@ -155,7 +155,7 @@ def hourly_quality(bars: list[dict], expected_start: datetime, exchange: str, ne
 
 def oi_signal(bars: list[dict], n: int = 3) -> dict:
     first, last = bars[-n - 1], bars[-1]
-    oi_change = 100 * (last["oi"] / first["oi"] - 1) if first.get("oi") else None
+    oi_change = 100 * (last["oi"] / first["oi"] - 1) if first.get("oi") and last.get("oi") is not None else None
     return {"change_pct": round(oi_change, 2) if oi_change is not None else None,
             "price_change": last["close"] - first["close"]}
 
