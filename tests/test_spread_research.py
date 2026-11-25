@@ -10,6 +10,15 @@ from backend.options import spread_research as research
 from backend.options import spreads
 from tests._support import IsolatedStateTestCase
 from tests.test_option_spreads import _store
+from tests.test_option_spreads import setUpModule as _pin_eod, tearDownModule as _unpin_eod
+
+
+def setUpModule():
+    _pin_eod()       # end-of-day rules and the NIFTY window these tests were written for
+
+
+def tearDownModule():
+    _unpin_eod()
 
 
 def _row(day, strike, t, price, delta, expiry):

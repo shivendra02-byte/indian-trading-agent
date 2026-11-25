@@ -82,7 +82,7 @@ class SensexFuturesTests(IsolatedStateTestCase, unittest.TestCase):
         from backend.marketdata.instruments import refresh_instruments, spot_instrument
         summary = refresh_instruments(self._kite())
         self.assertEqual(summary["counts"].get("BFO-FUT"), 1)
-        self.assertNotIn("BFO-OPT", summary["counts"])
+        self.assertEqual(summary["counts"].get("BFO-OPT"), 1)        # SENSEX options kept for the intraday spread scan (24 Nov 2026)
         self.assertEqual(spot_instrument("SENSEX")["instrument_token"], 265)
         rows = my_trades.contracts("SENSEX", "BFO")
         self.assertEqual([r["contract"] for r in rows], ["SENSEX26DECFUT"])

@@ -135,12 +135,21 @@ def spreads_status():
     cfg = settings()
     return {"enabled": cfg["enabled"], "settings": {k: cfg[k] for k in (
         "short_delta", "min_credit_ratio", "take_profit_pct", "stop_multiple", "max_vix", "max_open", "symbols",
-        "regime_strategy")}, "open": spreads("open"), "closed": spreads("closed"), "record": record()}
+        "regime_strategy", "mode", "intraday", "debit_below_iv_pct", "debit_below_vix")},
+        "open": spreads("open"), "closed": spreads("closed"), "record": record()}
+
+
+@router.get("/spreads/alignment")
+def spreads_alignment():
+    """Daily · 4H · 1H · 15m state per index for the intraday spread entry (no Kite call)."""
+    from backend.options.spreads import alignment
+    return alignment()
 
 
 @router.post("/spreads/run")
 def spreads_run():
-    """Follow open spreads and build candidates from the latest stored option files."""
+    """Intraday mode: run the multi-timeframe scan now (market hours, Kite login). Evening mode:
+    follow open spreads and build candidates from the latest stored option files."""
     from backend.options.spreads import run_now
     return run_now()
 

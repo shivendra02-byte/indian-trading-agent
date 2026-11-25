@@ -19,6 +19,7 @@ from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
 INTERVALS: dict[str, tuple[timedelta, int]] = {
     "5minute": (timedelta(minutes=5), 90),
     "10minute": (timedelta(minutes=10), 90),
+    "15minute": (timedelta(minutes=15), 90),   # option spreads: 15-minute entry trigger (24 Nov 2026)
     "60minute": (timedelta(hours=1), 365),
     "day": (timedelta(days=1), 1800),
 }

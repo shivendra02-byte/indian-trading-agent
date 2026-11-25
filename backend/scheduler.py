@@ -18,6 +18,10 @@ Jobs:
   (opening range breakout on the most liquid stock futures).
 * ``scan:nse_1h`` / ``scan:mcx_1h`` — after each completed 1h bar has been
   synced (futures and MCX hourly scans; open journal records are tracked too).
+  After the NSE scan, open option spreads are checked on that 1H close.
+* ``candles:NSE:15minute`` then ``scan:spreads`` — option spreads in intraday mode
+  (24 Nov 2026): index 15-minute bars, then the multi-timeframe entry scan, for bars
+  ending inside the spread entry window.
 * ``postmortem:weekly`` — Saturday from 08:00 (Sunday catches up), once a week:
   the weekly post-mortem over the journal. Runs on weekends and while paused
   (it only reads the journal; its AI review is skipped while paused).
@@ -44,7 +48,8 @@ DAILY_BUFFER = timedelta(minutes=10)
 MORNING_REFRESH_AT = time(8, 30)
 MORNING_RETRY = timedelta(minutes=15)
 CASH_SWING_SCAN_AT = time(15, 45)
-BAR_LENGTH = {"5minute": timedelta(minutes=5), "10minute": timedelta(minutes=10), "60minute": timedelta(hours=1)}
+BAR_LENGTH = {"5minute": timedelta(minutes=5), "10minute": timedelta(minutes=10), "15minute": timedelta(minutes=15),
+              "60minute": timedelta(hours=1)}
 # (exchange, interval) pairs the scheduler keeps fresh.
 # ORB: first possible signal bar ends 09:55 (after the 30-minute range); no entry in the last 30 minutes.
 ORB_FIRST_SIGNAL_END = time(9, 55)
@@ -58,6 +63,18 @@ def _nifty_options_on() -> bool:
         return bool(settings()["enabled"])
     except Exception:
         return False
+
+
+def _spreads_intraday() -> dict | None:
+    """Entry window of the intraday option-spread scan, or None when it's off."""
+    try:
+        from backend.options.spreads import intraday_on, settings
+        if not intraday_on():
+            return None
+        ic = settings()["intraday"]
+        return {"first": time.fromisoformat(ic["first_signal"]), "last": time.fromisoformat(ic["last_signal"])}
+    except Exception:
+        return None
 
 
 def scheduler_enabled() -> bool:
@@ -131,6 +148,15 @@ def due_jobs(now: datetime, state: dict) -> list[str]:
             jobs.append("candles:NSE:5minute")
         elif bar5 and state.get("scans_done", {}).get("nifty_opt") != bar5:
             jobs.append("scan:nifty_opt")
+    spreads_win = state.get("spreads_intraday")
+    if spreads_win:   # option spreads: index 15-minute bars, then the multi-timeframe scan
+        bar15 = latest_closed_bar(NSE, "15minute", now)
+        if bar15 and (done.get("candles:NSE:15minute") is None or done["candles:NSE:15minute"] < bar15):
+            jobs.append("candles:NSE:15minute")
+        elif (bar15 and spreads_win["first"] <= bar15.time() <= spreads_win["last"]
+              and state.get("scans_done", {}).get("spreads") != bar15
+              and "candles:NSE:60minute" not in jobs):
+            jobs.append("scan:spreads")
     nse_close = latest_closed_bar(NSE, "day", now)
     day_synced = done.get("candles:NSE:day")
     if (nse_close and now.time() >= CASH_SWING_SCAN_AT and day_synced and day_synced >= nse_close
@@ -192,6 +218,7 @@ class MarketDataScheduler:
             "done": self.done,
             "scans_done": self.scans_done,
             "nifty_options": _nifty_options_on(),
+            "spreads_intraday": _spreads_intraday(),
         }
 
     def tick(self, now: datetime | None = None) -> list[str]:
@@ -233,8 +260,16 @@ class MarketDataScheduler:
                 self.scans_done[key] = latest_closed_bar(exchange, "60minute", now)
                 if key == "nse_1h":
                     self._momentum("hourly", now)
+                    self._spreads_follow(now)
                 if result.get("status") not in ("error", "busy") and result.get("reason") != "paused":
                     self.scan_ok_at[exchange] = now
+            elif job == "scan:spreads":
+                from backend.options.spreads import scan_intraday
+                try:
+                    result = scan_intraday(now=now)
+                except Exception as exc:  # never let it stop the scheduler
+                    result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+                self.scans_done["spreads"] = latest_closed_bar(NSE, "15minute", now)
             elif job == "scan:orb":
                 from backend.signals.orb import run_orb_scan
                 result = run_orb_scan(now=now)
@@ -283,6 +318,15 @@ class MarketDataScheduler:
                 break  # try the rest on the next tick
         self._watchdog(now, state)
         return ran
+
+    def _spreads_follow(self, now: datetime) -> None:
+        """Open option spreads on each NSE 1H close: target / stop / invalidation / exit day."""
+        try:
+            from backend.options.spreads import follow_intraday
+            result = follow_intraday(now=now)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results["options:spreads_1h"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _my_trades(self, exchange: str, interval: str, now: datetime) -> None:
         """Trailing stops of your own futures trades after each synced bar."""

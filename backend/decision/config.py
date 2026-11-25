@@ -23,7 +23,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DEFAULT_PATH = Path(__file__).resolve().parents[2] / "config" / "decision_engine.yaml"
-TIMEFRAMES = ("5minute", "10minute", "30m", "60minute", "1h", "2h", "4h", "day", "week")
+TIMEFRAMES = ("5minute", "10minute", "15minute", "30m", "60minute", "1h", "2h", "4h", "day", "week")
 
 
 class _Strict(BaseModel):
@@ -95,11 +95,17 @@ class GeometryCfg(_Strict):
     swing_fractal_bars: int = Field(ge=1, le=5)
 
 
+Regime = Literal["STRONG_UP", "STRONG_DOWN", "MODERATE_UP", "MODERATE_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"]
+
+
 class RegimeCfg(_Strict):
     high_vol_ratio: float = Field(gt=1)
     adx_period: int = Field(ge=5)
     adx_trend_min: float
     adx_sideways_max: float
+    # EMAs aligned + sloping but ADX in [adx_moderate_min, adx_trend_min) → MODERATE_UP / MODERATE_DOWN
+    # (agreed 24 Nov 2026); None = no moderate tier (those days are UNSTABLE).
+    adx_moderate_min: float | None = None
     ema_slope_bars: int = Field(ge=1)
     instability_changes: int = Field(ge=1)
     instability_window: int = Field(ge=2)
@@ -312,7 +318,7 @@ class SelectionCfg(_Strict):
     # Regimes where the setup × regime permission matrix is hard in both modes:
     # a setup or direction not listed for the regime is never valid (still
     # shadow-tracked for comparison). E.g. [SIDEWAYS] = range setups only there.
-    hard_permission_regimes: list[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"]] = []
+    hard_permission_regimes: list[Regime] = []
 
 
 class GlobalCfg(_Strict):
@@ -324,7 +330,7 @@ class GlobalCfg(_Strict):
     scoring: ScoringCfg
     geometry: GeometryCfg
     regime: RegimeCfg
-    permissions: dict[Literal["STRONG_UP", "STRONG_DOWN", "SIDEWAYS", "HIGH_VOL", "UNSTABLE"],
+    permissions: dict[Regime,
                       dict[Literal["pullback", "breakout", "range_reversal", "mean_reversion", "fib_pullback", "choch_flip"], Permission]]
     trailing_shadow: TrailingCfg
     exit_management: ExitCfg = ExitCfg()

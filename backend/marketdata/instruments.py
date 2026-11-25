@@ -73,6 +73,8 @@ def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict],
             selected.append(r)
     selected += [r for r in mcx if r.get("segment") == "MCX-FUT" and r.get("name") in MCX_UNDERLYINGS]
     selected += [r for r in bfo if r.get("segment") == "BFO-FUT" and r.get("name") in BFO_INDICES]
+    # SENSEX options: the intraday spread scan reads their live quotes (24 Nov 2026)
+    selected += [r for r in bfo if r.get("segment") == "BFO-OPT" and r.get("name") in BFO_INDICES]
     bse_spots = {INDEX_SPOT_SYMBOLS[n] for n in BFO_INDICES}
     selected += [r for r in bse if r.get("segment") == "INDICES" and r.get("tradingsymbol") in bse_spots]
     return selected
@@ -187,15 +189,31 @@ def spot_instrument(name: str) -> dict | None:
     return dict(row) if row else None
 
 
+def option_segment(name: str) -> str:
+    """Kite segment of an index's options: BFO-OPT for SENSEX, NFO-OPT otherwise."""
+    return "BFO-OPT" if name in BFO_INDICES else "NFO-OPT"
+
+
 def option_expiries(name: str, today: date | None = None) -> list[str]:
     today = today or _today()
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT DISTINCT expiry FROM instruments WHERE segment = 'NFO-OPT' AND name = ?
+            """SELECT DISTINCT expiry FROM instruments WHERE segment = ? AND name = ?
                AND expiry >= ? ORDER BY expiry""",
-            (name, today.isoformat()),
+            (option_segment(name), name, today.isoformat()),
         ).fetchall()
     return [r["expiry"] for r in rows]
+
+
+def option_contracts(name: str, expiry: str) -> list[dict]:
+    """Every call/put of one index expiry in today's master (strike, instrument_type CE/PE, tradingsymbol)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM instruments WHERE segment = ? AND name = ? AND expiry = ?
+               AND instrument_type IN ('CE', 'PE') ORDER BY strike""",
+            (option_segment(name), name, expiry),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- F&O ban list --------------------------------------------------------------

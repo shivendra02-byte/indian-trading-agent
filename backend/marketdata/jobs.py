@@ -79,6 +79,13 @@ def build_sync_plan(today: date | None = None) -> list[dict]:
                 add(f"{o['tradingsymbol']} 5m", o, "5minute", NSE, 3)
     except Exception:  # never let it break the main sync plan
         pass
+    try:  # option spreads (intraday): 15-minute bars of the indices whose trend picks the spreads
+        from backend.options.spreads import intraday_on, trend_sources
+        if intraday_on():
+            for name in trend_sources():
+                add(f"{name} 15m", spot_instrument(name), "15minute", NSE, 20)
+    except Exception:  # never let it break the main sync plan
+        pass
     try:  # your own trades: keep their contract's bars current (any expiry, any interval they trail on)
         from backend.my_trades import open_contracts
         have = {(p["token"], p["interval"]) for p in plan}

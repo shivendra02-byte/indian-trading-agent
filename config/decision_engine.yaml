@@ -60,6 +60,7 @@ global:
     adx_period: 14
     adx_trend_min: 25
     adx_sideways_max: 20
+    adx_moderate_min: 20           # agreed 24 Nov 2026: EMAs aligned + sloping with ADX 20-25 → MODERATE_UP / MODERATE_DOWN (was UNSTABLE); null = off
     ema_slope_bars: 10
     instability_changes: 3         # label changes within the window → UNSTABLE
     instability_window: 10
@@ -69,6 +70,10 @@ global:
       pullback: {directions: [long], risk_mult: 1.0, preferred: true}
       breakout: {directions: [long], risk_mult: 1.0, preferred: true}
     STRONG_DOWN:
+      pullback: {directions: [short], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [short], risk_mult: 1.0, preferred: true}
+    MODERATE_UP: {}                # agreed 24 Nov 2026: no futures/cash longs in a moderate uptrend (option spreads only)
+    MODERATE_DOWN:                 # agreed 24 Nov 2026: futures may short a moderate downtrend (cash swing is long-only)
       pullback: {directions: [short], risk_mult: 1.0, preferred: true}
       breakout: {directions: [short], risk_mult: 1.0, preferred: true}
     SIDEWAYS:
@@ -289,7 +294,7 @@ instruments:
       breakeven_lock_r: 0.0
       trail_start_r: 1.0
       trail_atr: 2.0
-  option_spreads:                  # index credit spreads on end-of-day chains (agreed 22 Nov 2026) — paper, AI-reviewed
+  option_spreads:                  # index option spreads (agreed 22 Nov 2026; intraday entries 24 Nov 2026) — paper, AI-reviewed
     enabled: true
     short_delta: [0.15, 0.20]      # short leg |delta| band (closest to the middle)
     min_oi: 0                      # open interest of the short leg (contracts)
@@ -298,6 +303,24 @@ instruments:
     stop_multiple: 2.0             # stop when the spread costs 2x the credit (1R = one credit)
     max_vix: 25.0                  # no new spread above this India VIX
     min_credit_ratio_single: null  # bull put / bear call minimum credit (fraction of width); null = min_credit_ratio
+    mode: intraday                 # agreed 24 Nov 2026 (replaces the evening run): daily regime → 4H confirms → 1H setup → 15m trigger, live chain; exits on 1H closes. eod = the old evening rules
+    intraday:                      # backend/options/spread_mtf.py
+      first_signal: "09:30"        # 15-minute bar ends from which a trigger counts
+      last_signal: "14:45"         # ...and the last one
+      ema_fast: 20                 # EMAs on 4H / 1H / 15m closes
+      ema_slow: 50
+      h4_structure: true           # 4H: last two confirmed swing lows rising (highs falling for bearish)
+      pullback_bars: 6             # 1H setup window: a touch of EMA20 (pullback) or a swing break (breakout)
+      pullback_touch_atr: 0.25     # "touch" = within 0.25 1H ATR of EMA20
+      trigger_lookback: 3          # 15m trigger: first close beyond the last 3 bars' high (low)
+      range_bars: 30               # sideways: 1H range of the previous 30 bars...
+      range_edge_pct: 20           # ...a bar reaching its outer 20% and closing back inside = rejection (iron condor)
+      strike_range_pct: 8          # live chain: strikes within 8% of spot are quoted
+      max_leg_spread_pct: 5.0      # every leg's bid-ask at most 5% of its mid...
+      min_leg_spread_points: 1.0   # ...or 1 point, whichever is larger
+    debit_below_iv_pct: 30         # agreed 24 Nov 2026: in a trend, ATM IV percentile below 30 → debit spread, at/above → credit spread
+    iv_lookback: 252               # stored days the IV percentile compares with
+    iv_min_history: 60             # fewer days of IV history → the India VIX switch below
     debit_below_vix: 11            # asked 24 Nov 2026: in a strong trend, India VIX below this → buy a debit spread (bull call / bear put); at or above → sell a credit spread (bull put / bear call); null = credit only
     research:                      # /option-spreads research runs (asked 24 Nov 2026) — backtest only, never changes live rules
       min_trades: 10               # a strategy × index × regime cell needs this many train trades to be eligible
@@ -324,9 +347,9 @@ instruments:
     regime_strategy: {STRONG_UP: bull_put, STRONG_DOWN: bear_call, SIDEWAYS: iron_condor}   # none in HIGH_VOL / UNSTABLE
     regime_source: {SENSEX: NIFTY} # SENSEX has no stored daily candles
     symbols:                       # weekdays Mon=0; calendar days to expiry; wing in index points
-      NIFTY: {wing: 200, lot_size: 65, weekdays: [2, 3, 4], min_days: 4, max_days: 6}       # Wed-Fri before the Tuesday expiry
+      NIFTY: {wing: 200, lot_size: 65, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}   # agreed 24 Nov 2026: the next weekly, always 7+ days out (was Wed-Fri, 4-6 days)
       BANKNIFTY: {wing: 500, lot_size: 30, weekdays: [0, 1, 2, 3, 4], min_days: 10, max_days: 20}   # monthly, 10-20 days out
-      SENSEX: {wing: 500, lot_size: 20, weekdays: [4, 0], min_days: 3, max_days: 6}         # Fri-Mon before the Thursday expiry
+      SENSEX: {wing: 500, lot_size: 20, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}  # agreed 25 Nov 2026: like NIFTY, the next weekly, always 7+ days out (was Fri-Mon, 3-6 days)
   cash_swing:
     enabled: true
     primary_tf: day
