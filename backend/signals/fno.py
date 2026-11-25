@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from backend.decision.config import get_config
+from backend.decision.config import get_config, lots_within_risk
 from backend.journal.store import add_records as journal_add
 from backend.journal.tracker import track_open_records
 from backend.marketdata.candles import bars_for_timeframe, get_candles
@@ -360,16 +360,21 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             c["stages"] = [eligibility, *c.get("stages", [])]
             if not c.get("trackable"):
                 continue
-            lots = int(risk_per_trade() // (c["risk_per_unit"] * inst["value_per_point"])) if c["risk_per_unit"] else 0
+            lot_risk = c["risk_per_unit"] * inst["value_per_point"]
+            lots, size_note = lots_within_risk(seg, lot_risk)
             if lots < 1:
-                lot_risk = c["risk_per_unit"] * inst["value_per_point"]
+                cap = _x(seg, "one_lot_max_risk_pct", None)
+                limit = f"₹{risk_per_trade():,.0f}" + (f"; 1 lot allowed up to {cap:g}% = ₹{get_config().global_.capital * cap / 100:,.0f}"
+                                                      if cap else "")
                 c.update(trackable=False, valid=False,
-                         reject_reason=f"1 lot risks ₹{lot_risk:,.0f}, more than the per-trade limit "
-                                       f"(₹{risk_per_trade():,.0f})")
+                         reject_reason=f"1 lot risks ₹{lot_risk:,.0f}, more than the per-trade limit ({limit})")
                 c["stages"].append(stage("construction", "fail", c["reject_reason"]))
                 continue
             c["lots"] = lots
-            c["stages"].append(stage("sizing", "pass", lots=lots))
+            c["lot_risk_pct"] = round(100 * lot_risk / get_config().global_.capital, 2)
+            if size_note:
+                c["size_note"] = size_note
+            c["stages"].append(stage("sizing", "pass", lots=lots, **({"note": size_note} if size_note else {})))
             trackable.append(c)
         if trackable:
             for c in trackable:
@@ -459,7 +464,7 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "entry_date": day.isoformat(), "fill_until": fill_until.isoformat(timespec="seconds"),
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
-                                         "spread_pct", "stop_atr", "stop_type", "pullback_touch", "next_level", "vol_ratio", "htf_trend",
+                                         "spread_pct", "stop_atr", "stop_type", "pullback_touch", "lot_risk_pct", "size_note", "next_level", "vol_ratio", "htf_trend",
                                          "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }

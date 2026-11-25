@@ -111,8 +111,9 @@ def _size(rec: dict, fill: float, risk: float) -> tuple[int, float]:
     if rec["segment"] in CASH_SEGMENTS:
         return max(0, math.floor(min(_risk_per_trade() / risk, _cash_max_value(rec["segment"]) / fill))), 1.0
     per_lot = float(extra.get("value_per_point") or 1)
-    lots = max(0, math.floor(_risk_per_trade() / (risk * per_lot)))
-    return lots, per_lot
+    from backend.decision.config import lots_within_risk
+    lots, _ = lots_within_risk(rec["segment"], risk * per_lot)   # MCX: 1 lot up to one_lot_max_risk_pct
+    return max(0, lots), per_lot
 
 
 def track_record(rec: dict) -> dict:

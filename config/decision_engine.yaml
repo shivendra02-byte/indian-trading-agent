@@ -245,6 +245,8 @@ instruments:
     max_spread_pct: 0.1
     min_primary_bars: 60
     value_per_point: {GOLDM: 10, SILVERM: 5, CRUDEOILM: 10, NATGASMINI: 250}
+    one_lot_max_risk_pct: 3.5      # agreed 25 Nov 2026: sizing stays 1%, but when even 1 lot risks more, take 1 lot
+                                   # if it risks ≤ 3.5% (₹35,000) — lets gold/silver trade with wide stops; crude isn't sized up
     breakdown_shorts:              # agreed 25 Nov 2026: short breakdowns below the 20-bar low (gold, silver, crude, gas)
       enabled: true
       extra_regimes: [HIGH_VOL]    # also allowed here, with the 4H trend fully down (STRONG_DOWN / MODERATE_DOWN already allow them)
