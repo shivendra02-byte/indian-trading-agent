@@ -266,6 +266,32 @@ export function ScanView({ title, subtitle, load: loadScan, run: runScan, emptyT
             )}
           </div>
 
+          {rejected.length > 0 && rejected.length <= 8 && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-base">Rejected, by instrument</CardTitle></CardHeader>
+              <CardContent className="space-y-3 text-xs">
+                {rejected.map((c) => {
+                  const parts = (c.reject_reason ?? "unknown").split("; ");
+                  const shorts = parts.filter((r) => r.startsWith("short "));
+                  const longs = parts.filter((r) => r.startsWith("long "));
+                  const other = parts.filter((r) => !r.startsWith("short ") && !r.startsWith("long "));
+                  return (
+                    <div key={c.id}>
+                      <p className="font-medium">
+                        {c.symbol}
+                        {c.regime && <span className="ml-2 text-muted-foreground">{c.regime}</span>}
+                      </p>
+                      {[...shorts, ...longs, ...other].map((r) => (
+                        <p key={r} className={r.startsWith("short ") ? "text-red-600 dark:text-red-400" : r.startsWith("long ") ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}>
+                          {r}
+                        </p>
+                      ))}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
           {rejected.length > 0 && (
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Why the rest were rejected</CardTitle></CardHeader>

@@ -34,7 +34,7 @@ from backend.signals.cash_swing import (
 )
 from backend.signals.regime import current_regime
 from backend.signals.selection import choose_shortlist
-from backend.signals.setups import _relative_strength_points, evaluate, htf_trend, min_score, stage
+from backend.signals.setups import _relative_strength_points, evaluate, htf_trend, labelled_reasons, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, MCX, NSE, session_windows
 
@@ -155,7 +155,7 @@ def hourly_quality(bars: list[dict], expected_start: datetime, exchange: str, ne
 
 def oi_signal(bars: list[dict], n: int = 3) -> dict:
     first, last = bars[-n - 1], bars[-1]
-    oi_change = 100 * (last["oi"] / first["oi"] - 1) if first.get("oi") else None
+    oi_change = 100 * (last["oi"] / first["oi"] - 1) if first.get("oi") and last.get("oi") is not None else None
     return {"change_pct": round(oi_change, 2) if oi_change is not None else None,
             "price_change": last["close"] - first["close"]}
 
@@ -377,7 +377,7 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                              "value_per_point": inst["value_per_point"], "expiry": contract["expiry"],
                              "context": {tf: t for tf, t in must_not_oppose.items()}})
         else:
-            reasons = "; ".join(sorted({c["reject_reason"] for c in candidates if c.get("reject_reason")}))
+            reasons = labelled_reasons(candidates)
             rows.append({**base, "valid": False, "regime": regime["regime"], "reject_reason": reasons,
                          "stages": [eligibility]})
 

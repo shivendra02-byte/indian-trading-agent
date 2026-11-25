@@ -111,6 +111,44 @@ class TrendPullbackTests(unittest.TestCase):
         self.assertIsNone(mcx_trend.config_for(get_config().instrument("stock_futures").model_extra))
 
 
+def silver_nov_2026():
+    """Hourly path shaped like MCX silver in Nov 2026 (×1000): fall from 58 to 48, leg down to 41,
+    small bounce to 42.8, low 40.8, bounce to 44.2 (above the small 2H swing, below the 48 leg
+    start), then roll over to 40.2."""
+    v = [(0, 58), (150, 53.5), (200, 54.5), (300, 48), (345, 41), (352, 42.8), (372, 40.8), (400, 44.2), (430, 40.2)]
+    closes = []
+    for (i0, c0), (i1, c1) in zip(v, v[1:]):
+        closes += [c0 + (c1 - c0) * (i - i0) / (i1 - i0) for i in range(i0, i1)]
+    closes.append(v[-1][1])
+    return hourly([x * 1000 * (1 + 0.002 * math.sin(i)) for i, x in enumerate(closes)])
+
+
+class SilverNovemberTests(unittest.TestCase):
+    """25 Nov 2026: the 24 Nov bounce to ~44.2 was rejected as 'no lower high' because it topped the
+    small 2H swing at ~42.8. The lower high is now judged on the 4H scale (vs the ~48 leg start)."""
+
+    def test_short_after_the_bounce_to_44(self):
+        from backend.signals import mcx_trend
+        h = silver_nov_2026()
+        hv = {"regime": "HIGH_VOL", "trend": "down"}
+        hits = []
+        for j in range(395, len(h)):
+            w = h[:j + 1]
+            h2, h4 = views(w)
+            if mcx_trend.check("short", hv, -1.0, h4, h2, w[-400:])["ok"]:
+                hits.append(j)
+        self.assertEqual(len(hits), 1, hits)
+        self.assertTrue(401 <= hits[0] <= 412, hits)            # soon after the 44.2 top at bar 400
+        w = h[:hits[0] + 1]
+        h2, h4 = views(w)
+        c = mcx_trend.candidates(w[-400:], h2, h4, hv, -1.0, directions=("short",))[0]
+        self.assertTrue(c["valid"], c.get("reject_reason"))
+        self.assertGreater(c["stop"], c["entry"])
+        self.assertLessEqual(c["stop_atr"], 3.0)                 # stop above the high is 3.6 ATR → capped at 3
+        self.assertIn("capped at 3 ATR", c["stop_type"])
+        self.assertGreaterEqual(c["rr"], 2.0)
+
+
 class HighVolTrendRegimeTests(unittest.TestCase):
     def test_high_vol_days_in_a_fall_are_not_flips(self):
         from backend.signals import regime as rg
@@ -172,6 +210,17 @@ class ReplayTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertTrue(all(r["direction"] == "short" for r in new))
         self.assertFalse([r for r in res["signals"] if r["rule_set"] == "before" and r["setup"] == "mcx_trend"])
         self.assertTrue(any("result" in r for r in new))
+
+    def test_bars_without_open_interest_are_skipped_like_the_live_scan(self):
+        from backend.mcx_replay import replay
+        from backend.signals.fno import oi_signal
+        h = hourly(falling_legs())
+        for b in h[500:520]:
+            b["oi"] = None
+        self.assertIsNone(oi_signal(h[:510])["change_pct"])
+        store_silverm(self.db, h, "2026-11-24")
+        res = replay(date(2026, 10, 20), ["SILVERM"], today=date(2026, 11, 24))
+        self.assertGreaterEqual(res["rejects"]["new"]["data: no open interest on the last bar"], 18)   # minus timing-excluded bars
 
 
 if __name__ == "__main__":

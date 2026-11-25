@@ -34,7 +34,9 @@ from backend.marketdata.candles import get_candles, resample_hours
 from backend.marketdata.instruments import active_future
 from backend.marketdata.store import MCX_UNDERLYINGS
 from backend.signals import events, mcx_trend
-from backend.signals.fno import breakdown_shorts, last_session_before, mcx_value_per_point, oi_signal, risk_per_trade
+from backend.signals.fno import (
+    breakdown_shorts, hourly_quality, last_session_before, mcx_value_per_point, oi_signal, risk_per_trade,
+)
 from backend.signals.regime import current_regime
 from backend.signals.setups import evaluate, htf_trend, min_score
 from tradingagents.utils.market_calendar import MCX, session_windows
@@ -115,6 +117,12 @@ def replay(since: date, symbols=None, today: date | None = None) -> dict:
             signal_end = _bar_end(bar)
             blocked, _ = events.mcx_event_block(name, signal_end)
             hourly = hourly_all[max(0, j - 399):j + 1]
+            problem = hourly_quality(hourly, datetime.fromisoformat(bar["ts"]), MCX, need_oi=True,
+                                     min_bars=inst.min_primary_bars)
+            if problem:   # the live scan rejects these bars too (no volume / OI, missing bars)
+                for rs in RULE_SETS:
+                    rejects[rs][f"data: {_strip(problem)}"] += 1
+                continue
             window = hourly_all[max(0, j - 1300):j + 1]
             h2, h4 = resample_hours(window, MCX, 2)[-300:], resample_hours(window, MCX, 4)[-300:]
             daily = [d for d in daily_all if d["ts"][:10] < day][-300:]

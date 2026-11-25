@@ -42,6 +42,24 @@ _FACTOR_MAX = {"htf_trend": 25, "setup_quality": 25, "volume_oi": 15, "rr_stop":
 SHORTLIST_SCORE = 60
 
 
+SETUP_NAMES = {"mcx_trend": "trend pullback", "range_reversal": "range reversal", "mean_reversion": "mean reversion",
+               "fib_pullback": "fib pullback", "choch_flip": "CHoCH flip"}
+
+
+def labelled_reasons(candidates) -> str:
+    """Every candidate's reject reason, prefixed with its direction and setup ("short trend pullback: ...")
+    so a scan page can tell long from short rejections (asked 25 Nov 2026)."""
+    out = set()
+    for c in candidates:
+        r = c.get("reject_reason")
+        if not r:
+            continue
+        if c.get("direction") and c.get("setup"):
+            r = f"{c['direction']} {SETUP_NAMES.get(c['setup'], c['setup'])}: {r}"
+        out.add(r)
+    return "; ".join(sorted(out))
+
+
 def min_score() -> float:
     return get_config().global_.scoring.min_shortlist_score
 
