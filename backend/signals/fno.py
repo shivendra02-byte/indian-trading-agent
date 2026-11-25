@@ -55,6 +55,13 @@ def risk_per_trade() -> float:
     return g.capital * g.risk.risk_per_trade_pct / 100
 
 
+def breakdown_shorts(segment: str) -> dict | None:
+    """MCX breakdown shorts (agreed 25 Nov 2026): ``instruments.<segment>.breakdown_shorts``
+    in the YAML, or None when absent/disabled."""
+    cfg = _x(segment, "breakdown_shorts", None)
+    return cfg if cfg and cfg.get("enabled") else None
+
+
 def mcx_value_per_point() -> dict[str, float]:
     """₹ value of a 1-point move per lot (MCX quotes per 10 g / kg / barrel / mmBtu)."""
     return _x("mcx", "value_per_point", {})
@@ -339,7 +346,8 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                               is_stock=seg == "stock_futures", rs_override=rs, oi=oi,
                               confirmations=confirmations, context=context_bars,
                               min_primary_bars=icfg.min_primary_bars,
-                              stock_regime=current_regime(daily)["regime"] if daily else None)
+                              stock_regime=current_regime(daily)["regime"] if daily else None,
+                              breakdown_shorts=breakdown_shorts(seg))
         trackable = []
         for c in candidates:
             c["stages"] = [eligibility, *c.get("stages", [])]
@@ -347,7 +355,10 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
                 continue
             lots = int(risk_per_trade() // (c["risk_per_unit"] * inst["value_per_point"])) if c["risk_per_unit"] else 0
             if lots < 1:
-                c.update(trackable=False, valid=False, reject_reason="1 lot risks more than the per-trade limit")
+                lot_risk = c["risk_per_unit"] * inst["value_per_point"]
+                c.update(trackable=False, valid=False,
+                         reject_reason=f"1 lot risks ₹{lot_risk:,.0f}, more than the per-trade limit "
+                                       f"(₹{risk_per_trade():,.0f})")
                 c["stages"].append(stage("construction", "fail", c["reject_reason"]))
                 continue
             c["lots"] = lots
@@ -441,7 +452,7 @@ def _journal_row(r: dict, day: date, bar_start: datetime, fill_until: datetime, 
         "entry_date": day.isoformat(), "fill_until": fill_until.isoformat(timespec="seconds"),
         "time_stop_date": time_stop.isoformat(),
         "extra": {k: r.get(k) for k in ("tradingsymbol", "expiry", "lots", "value_per_point", "oi_change_pct",
-                                         "spread_pct", "stop_atr", "next_level", "vol_ratio", "htf_trend",
+                                         "spread_pct", "stop_atr", "stop_type", "next_level", "vol_ratio", "htf_trend",
                                          "rs_vs_nifty_pct", "risk_mult", "confirmations", "context")},
         "stages": r.get("stages"), "rule_version": r.get("rule_version"),
     }

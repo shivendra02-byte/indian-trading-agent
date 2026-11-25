@@ -245,6 +245,10 @@ instruments:
     max_spread_pct: 0.1
     min_primary_bars: 60
     value_per_point: {GOLDM: 10, SILVERM: 5, CRUDEOILM: 10, NATGASMINI: 250}
+    breakdown_shorts:              # agreed 25 Nov 2026: short breakdowns below the 20-bar low (gold, silver, crude, gas)
+      enabled: true
+      extra_regimes: [HIGH_VOL]    # also allowed here, with the 4H trend fully down (STRONG_DOWN / MODERATE_DOWN already allow them)
+      cap_stop_atr: 3.0            # swing stop wider than this → stop placed at 3 ATR from entry instead of rejecting
   index_options:                   # NIFTY / BANKNIFTY — built in a later step
     enabled: false
     primary_tf: 10minute

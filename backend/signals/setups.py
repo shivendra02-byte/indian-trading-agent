@@ -384,7 +384,10 @@ def _range_reversal(bars, ctx, s) -> tuple[bool, str, int, dict]:
 
 # --- Stage 5: trade construction (stop / target) ----------------------------------
 
-def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | None = None) -> dict:
+def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | None = None,
+             cap_stop_atr: float | None = None) -> dict:
+    """``cap_stop_atr``: a structural stop wider than ``max_stop_atr`` is placed at this many ATR
+    from the entry instead of rejecting the trade (MCX breakdown shorts, agreed 25 Nov 2026)."""
     g = get_config().global_.geometry
     st = ctx.get("strategy")
     min_rr = min_rr or (st.min_rr if st else get_config().global_.scoring.min_rr)
@@ -399,9 +402,17 @@ def geometry(bars, ctx, s, max_stop_pct: float | None = None, min_rr: float | No
     if s * (entry - stop) < g.min_stop_atr * a:
         stop = entry - s * g.min_stop_atr * a
     risk = s * (entry - stop)
+    stop_type = None
+    if cap_stop_atr is not None and a and risk > cap_stop_atr * a:
+        structural = risk / a
+        stop = entry - s * cap_stop_atr * a
+        risk = s * (entry - stop)
+        stop_type = f"capped at {cap_stop_atr:g} ATR (swing stop {structural:.1f} ATR)"
     result = {"entry": round(entry, 2), "stop": round(stop, 2), "risk_per_unit": round(risk, 2),
               "stop_atr": round(risk / a, 2) if a else None}
-    if risk > g.max_stop_atr * a:
+    if stop_type:
+        result["stop_type"] = stop_type
+    if risk > g.max_stop_atr * a + 1e-9:
         return {**result, "ok": False, "reason": f"stop too wide ({risk / a:.1f} ATR > {g.max_stop_atr})"}
     if max_stop_pct is not None and risk / entry > max_stop_pct:
         return {**result, "ok": False, "reason": f"stop too wide ({100 * risk / entry:.1f}% of price)"}
@@ -508,7 +519,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
              max_stop_pct: float | None = None, rs_override: dict | None = None,
              oi: dict | None = None, confirmations: dict[str, Sequence[dict]] | None = None,
              context: dict[str, Sequence[dict]] | None = None, min_primary_bars: int = 60,
-             volume_available: bool = True, stock_regime: str | None = None) -> list[dict]:
+             volume_available: bool = True, stock_regime: str | None = None,
+             breakdown_shorts: dict | None = None) -> list[dict]:
     """Check every setup for each direction.
 
     ``htf_bars``: the scored higher timeframe (must agree for pullback/breakout).
@@ -522,7 +534,10 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
     ``regime_source: stock`` judges its regime requirement, permission and fit
     on it instead of the market (NIFTY) regime.
     ``rs_override``: {"long": (points, diff), "short": ...} computed elsewhere.
-    ``oi``: {"change_pct", "price_change"} for futures."""
+    ``oi``: {"change_pct", "price_change"} for futures.
+    ``breakdown_shorts``: {"extra_regimes": [...], "cap_stop_atr": x} (MCX, agreed 25 Nov 2026) —
+    breakout shorts are also permitted (with the trend only) in those regimes, and a breakout
+    short's stop wider than ``cap_stop_atr`` ATR is placed at ``cap_stop_atr`` ATR instead of rejecting."""
     cfg = get_config()
     if len(bars) < min_primary_bars:
         return _reject_all(f"only {len(bars)} bars (need {min_primary_bars})")
@@ -552,9 +567,15 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
         setup_regime = stock_regime if use_stock else regime
         rule = permissions_for(setup_regime).get(setup)
         base_ctx = ctx
+        base_rule = rule
         for direction in directions:
             s = 1 if direction == "long" else -1
             ctx = dict(base_ctx)
+            rule = base_rule
+            breakdown = bool(breakdown_shorts and setup == "breakout" and s < 0)
+            if (breakdown and setup_regime in (breakdown_shorts.get("extra_regimes") or [])
+                    and not (rule and "short" in rule["directions"])):
+                rule = {"directions": ["short"], "risk_mult": 1.0, "preferred": False, "with_trend_only": True}
             stages: list[dict] = []
             cand = {"setup": setup, "direction": direction, "valid": False, "trackable": False, "regime": regime,
                     "setup_regime": setup_regime, "regime_source": "stock" if use_stock else "market",
@@ -612,7 +633,8 @@ def evaluate(bars: Sequence[dict], htf_bars: Sequence[dict], regime: str, *,
                 continue
             stages.append(stage("setup", "pass", vol_ratio=round(ctx["vol_ratio"], 2)))
             # Stage 5 (trade construction) runs before scoring: the score uses R:R and stop quality.
-            geo = geometry(bars, ctx, s, max_stop_pct)
+            geo = geometry(bars, ctx, s, max_stop_pct,
+                           cap_stop_atr=breakdown_shorts.get("cap_stop_atr") if breakdown else None)
             cand.update({k: v for k, v in geo.items() if k not in ("ok", "reason")})
             if not geo["ok"]:
                 cand["reject_reason"] = geo["reason"]
