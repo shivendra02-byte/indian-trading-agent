@@ -11,10 +11,13 @@ Shorts are described; longs are the mirror image.
   (STRONG_UP, HIGH_VOL). HIGH_VOL counts only with ``regime["trend"]`` in the trade's direction
   (``regime.current_regime(high_vol_trend=True)``). The daily trend must not be up.
 * **4H trend**: EMA20 < EMA50, the 4H close below EMA50 (a bounce may lift it above EMA20 —
-  that is the pullback) and, when two confirmed 4H swing highs exist, the last one lower.
+  that is the pullback) and the last confirmed 4H swing high below the highest high of the
+  ``structure_bars`` (30, about a week) 4H bars before it — a lower high on the 4H scale.
 * **2H pullback**: within the last ``pullback_bars`` 2H bars one bar's high reached the 2H
-  EMA20 (within ``pullback_touch_atr`` 2H ATR), and the pullback high stayed below the last
-  confirmed 2H swing high before it (a lower high). ``hold_2h_ema_slow`` (off) would also demand
+  EMA20 (within ``pullback_touch_atr`` 2H ATR), and the pullback high stayed below the highest
+  4H high of the ``structure_bars`` 4H bars before the pullback (a lower high on the 4H scale;
+  25 Nov 2026: comparing with the last *2H* swing rejected the 24 Nov silver bounce to ~44.2,
+  which topped a small 2H swing at ~42.8 but was well under the ~48 start of the leg). ``hold_2h_ema_slow`` (off) would also demand
   every 2H close below the 2H EMA50 — too tight in a fast fall, where a normal bounce closes
   around the slow average (the 24 Nov silver bounce to ~44).
 * **1H trigger**: the latest completed 1H bar is bearish, closes below the lowest low of the
@@ -39,7 +42,7 @@ from backend.signals.setups import _close_position, _context, geometry, htf_tren
 SETUP = "mcx_trend"
 DEFAULTS = {
     "ema_fast": 20, "ema_slow": 50, "h4_structure": True, "pullback_bars": 6, "pullback_touch_atr": 0.25,
-    "hold_2h_ema_slow": False, "cap_stop_atr": 3.0,
+    "hold_2h_ema_slow": False, "cap_stop_atr": 3.0, "structure_bars": 30,
     "trigger_lookback": 3, "trigger_ema": True,
     "short_regimes": ["STRONG_DOWN", "MODERATE_DOWN", "HIGH_VOL"], "long_regimes": ["STRONG_UP", "HIGH_VOL"],
 }
@@ -75,10 +78,30 @@ def trend_4h(h4: Sequence[dict], d: str, cfg: dict) -> tuple[bool, str]:
     if cfg["h4_structure"]:
         highs, lows = swing_points(h4, 2)
         pts = highs if s < 0 else lows
-        if len(pts) >= 2 and s * (pts[-1][1] - pts[-2][1]) <= 0:
-            what = "lower highs" if s < 0 else "higher lows"
-            return False, f"4H structure: no {what} ({pts[-2][1]:.2f} → {pts[-1][1]:.2f})"
+        if pts:
+            i, v = pts[-1]
+            before = h4[max(0, i - cfg["structure_bars"]):i]
+            if before:
+                ref = max(b["high"] for b in before) if s < 0 else min(b["low"] for b in before)
+                if s * (ref - v) >= 0:
+                    what = "lower high" if s < 0 else "higher low"
+                    return False, (f"4H structure: last swing {v:.2f} beyond the {cfg['structure_bars']}-bar "
+                                   f"{'high' if s < 0 else 'low'} {ref:.2f} before it (no {what})")
     return True, "4H trend agrees"
+
+
+def lower_high_4h(h4: Sequence[dict], d: str, extreme: float, window_start: str, cfg: dict) -> tuple[bool, str]:
+    """The pullback extreme must stay inside the 4H range of the ``structure_bars`` bars before it."""
+    s = _s(d)
+    before = [b for b in h4 if b["ts"] < window_start][:-1][-cfg["structure_bars"]:]   # last one may overlap
+    if not before:
+        return True, "no earlier 4H bars"
+    ref = max(b["high"] for b in before) if s < 0 else min(b["low"] for b in before)
+    if s * (ref - extreme) >= 0:
+        what = "lower high" if s < 0 else "higher low"
+        return False, (f"pullback {extreme:.2f} beyond the {cfg['structure_bars']}-bar 4H "
+                       f"{'high' if s < 0 else 'low'} {ref:.2f} (no {what})")
+    return True, f"pullback {extreme:.2f} {'below' if s < 0 else 'above'} the 4H {'high' if s < 0 else 'low'} {ref:.2f}"
 
 
 def pullback_2h(h2: Sequence[dict], d: str, cfg: dict) -> tuple[dict | None, str]:
@@ -100,12 +123,8 @@ def pullback_2h(h2: Sequence[dict], d: str, cfg: dict) -> tuple[dict | None, str
         return None, f"no 2H pullback to EMA{cfg['ema_fast']} in the last {n} bars"
     first = touched[0]
     extreme = max(h2[i]["high"] for i in recent) if s < 0 else min(h2[i]["low"] for i in recent)
-    highs, lows = swing_points(h2, 2)
-    prior = [p for i, p in (highs if s < 0 else lows) if i < first - 2]
-    if prior and s * (prior[-1] - extreme) >= 0:
-        what = "lower high" if s < 0 else "higher low"
-        return None, f"pullback {extreme:.2f} broke the last 2H swing {prior[-1]:.2f} (no {what})"
-    return {"extreme": extreme, "touch_ts": h2[first]["ts"]}, f"2H pullback to EMA{cfg['ema_fast']}"
+    return {"extreme": extreme, "touch_ts": h2[first]["ts"], "window_start": h2[recent[0]]["ts"]}, \
+        f"2H pullback to EMA{cfg['ema_fast']}"
 
 
 def trigger_1h(h1: Sequence[dict], d: str, since_ts: str, cfg: dict) -> tuple[bool, str]:
@@ -162,7 +181,10 @@ def check(d: str, regime: dict, daily_trend: float | None, h4: Sequence[dict], h
     pb, why = pullback_2h(h2, d, cfg)
     if not pb:
         return fail("pullback_2h", why)
-    ok("pullback_2h", why)
+    good, why2 = lower_high_4h(h4, d, pb["extreme"], pb["window_start"], cfg)
+    if not good:
+        return fail("pullback_2h", why2)
+    ok("pullback_2h", f"{why}; {why2}")
     fired, why = trigger_1h(h1, d, pb["touch_ts"], cfg)
     if not fired:
         return fail("trigger_1h", why)

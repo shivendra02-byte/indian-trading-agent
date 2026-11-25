@@ -23,7 +23,7 @@ from backend.marketdata.instruments import fno_universe, spot_instrument
 from backend.signals import events
 from backend.signals.regime import current_regime
 from backend.signals.selection import choose_shortlist
-from backend.signals.setups import evaluate, min_score, stage
+from backend.signals.setups import evaluate, labelled_reasons, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, holiday_name, is_trading_day, previous_trading_day
 
@@ -275,7 +275,7 @@ def run_scan(now: datetime | None = None, force: bool = False,
                 rows.append({**c, "symbol": symbol, "token": stock["spot_token"],
                              "turnover_cr": round(turnover / 1e7, 1)})
         else:
-            reasons = "; ".join(sorted({c["reject_reason"] for c in candidates if c.get("reject_reason")}))
+            reasons = labelled_reasons(candidates)
             rows.append({"symbol": symbol, "valid": False, "regime": regime["regime"], "reject_reason": reasons,
                          "stages": candidates[0].get("stages") if len(candidates) == 1 else [eligibility]})
 

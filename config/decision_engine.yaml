@@ -254,9 +254,10 @@ instruments:
       enabled: true
       ema_fast: 20                 # 2H / 4H / 1H trigger EMAs
       ema_slow: 50
-      h4_structure: true           # 4H: last confirmed swing high lower than the one before (mirror for longs)
+      h4_structure: true           # 4H: last confirmed swing high below the high of the structure_bars before it (mirror for longs)
+      structure_bars: 30           # 4H bars (~1 week) that define "lower high": the pullback must stay below their high
       pullback_bars: 6             # 2H bars searched for the touch of the 2H EMA20 ...
-      pullback_touch_atr: 0.25     # ... within this many 2H ATR; the pullback high must stay under the last 2H swing high
+      pullback_touch_atr: 0.25     # ... within this many 2H ATR; the pullback high must stay under the 4H structure high
       hold_2h_ema_slow: false      # true = also every 2H close below the 2H EMA50 (too tight in a fast fall)
       trigger_lookback: 3          # 1H close beyond the last 3 bars' low (high for longs), bearish (bullish) candle ...
       trigger_ema: true            # ... and beyond the 1H EMA20; one signal per pullback
