@@ -87,13 +87,15 @@ def last_stored(token: int, interval: str) -> datetime | None:
 
 def sync_candles(client, token: int, interval: str, exchange: str, lookback_days: int,
                  now: datetime | None = None, continuous: bool = False, oi: bool = False,
-                 sleep: Callable[[float], None] = _time.sleep) -> int:
-    """Fetch missing completed candles for one instrument. Returns rows saved."""
+                 sleep: Callable[[float], None] = _time.sleep, full: bool = False) -> int:
+    """Fetch missing completed candles for one instrument. Returns rows saved.
+    ``full`` re-downloads the whole lookback even when newer bars are stored (repairs a
+    series whose first download came back short)."""
     if interval not in INTERVALS:
         raise ValueError(f"Unsupported interval: {interval}")
     ensure_marketdata_tables()
     now = _naive_ist(now or datetime.now(IST))
-    last = last_stored(token, interval)
+    last = None if full else last_stored(token, interval)
     start = last if last else now - timedelta(days=lookback_days)
     chunk = timedelta(days=INTERVALS[interval][1])
     saved = 0
@@ -104,6 +106,13 @@ def sync_candles(client, token: int, interval: str, exchange: str, lookback_days
         start = stop
         sleep(REQUEST_GAP_SECONDS)
     return saved
+
+
+def count_stored(token: int, interval: str) -> int:
+    with get_db() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM candles WHERE instrument_token = ? AND interval = ?",
+                           (int(token), interval)).fetchone()
+    return int(row[0]) if row else 0
 
 
 def get_candles(token: int, interval: str, since: datetime | None = None,

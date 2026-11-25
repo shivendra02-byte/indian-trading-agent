@@ -140,9 +140,52 @@ def morning_refresh(client=None) -> dict:
             results = refresh_results(fno_stock_names())
         except Exception as exc:  # results dates are re-checked later; never block the refresh
             results = {"error": type(exc).__name__}
+        try:
+            repaired = repair_continuous(c)
+        except Exception as exc:     # never block the morning refresh
+            repaired = {"error": type(exc).__name__}
         return {"instruments": summary, "ban_list": {k: v for k, v in ban.items() if k != "symbols"},
-                "results_dates": results}
+                "results_dates": results, "continuous_daily": repaired}
     return _run("morning_refresh", body, client)
+
+
+_REPAIRED: dict[int, date] = {}      # token → day a full re-download was last tried
+
+
+def _min_daily_bars() -> int:
+    try:
+        from backend.decision.config import get_config
+        return get_config().global_.regime.min_daily_bars
+    except Exception:
+        return 200
+
+
+def repair_continuous(c, exchanges: tuple[str, ...] | None = None, now: datetime | None = None,
+                      force: bool = False) -> list[dict]:
+    """Continuous daily series (MCX minis) with fewer bars than the regime needs are
+    downloaded again over the whole lookback (24 Nov 2026: every MCX contract was
+    rejected with "only N daily bars" because its daily history had come back short).
+    Tried once per token per day unless ``force``. Returns one row per series checked."""
+    from backend.marketdata.candles import count_stored
+    need, today = _min_daily_bars(), (now or _now()).date()
+    out = []
+    for item in build_sync_plan():
+        if not item["continuous"] or (exchanges and item["exchange"] not in exchanges):
+            continue
+        before = count_stored(item["token"], item["interval"])
+        row = {"label": item["label"], "token": item["token"], "before": before, "after": before, "need": need}
+        if before < need and (force or _REPAIRED.get(item["token"]) != today):
+            _REPAIRED[item["token"]] = today
+            sync_candles(c, item["token"], item["interval"], item["exchange"], item["lookback_days"],
+                         now=now, continuous=True, oi=item["oi"], full=True)
+            row["after"] = count_stored(item["token"], item["interval"])
+            row["repaired"] = True
+        out.append(row)
+    return out
+
+
+def repair_continuous_job(client=None, exchanges: tuple[str, ...] | None = None, force: bool = False) -> dict:
+    return _run("repair_daily", lambda c: {"series": repair_continuous(c, exchanges, force=force)}, client)
 
 
 def candle_sync(client=None, intervals: tuple[str, ...] | None = None,
@@ -156,9 +199,17 @@ def candle_sync(client=None, intervals: tuple[str, ...] | None = None,
             if exchanges and item["exchange"] not in exchanges:
                 continue
             try:
+                full = False
+                if item["continuous"]:
+                    from backend.marketdata.candles import count_stored
+                    today = (now or _now()).date()
+                    if count_stored(item["token"], item["interval"]) < _min_daily_bars() and \
+                            _REPAIRED.get(item["token"]) != today:
+                        _REPAIRED[item["token"]] = today
+                        full = True
                 saved += sync_candles(
                     c, item["token"], item["interval"], item["exchange"], item["lookback_days"],
-                    now=now, continuous=item["continuous"], oi=item["oi"],
+                    now=now, continuous=item["continuous"], oi=item["oi"], full=full,
                 )
                 done += 1
             except Exception as exc:
