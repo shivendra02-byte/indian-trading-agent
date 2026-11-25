@@ -163,10 +163,27 @@ class HourlyScanTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual(late["status"], "skipped")
         self.assertIn("tracking", late)
 
-    def test_rbi_inside_hold_blocks_nse_scan(self):
-        from backend.signals.fno import run_hourly_scan
-        blocked = run_hourly_scan("nse", now=datetime(2026, 12, 2, 12, 20), client=FakeQuoteKite())
+    def test_rbi_inside_hold_blocks_only_with_event_block_on(self):
+        from unittest import mock
+        from backend.signals import events, fno
+        fake = {"verified": True, "events": [{"event": "RBI policy", "date": "2026-11-25"}]}
+        real = fno._x
+        with mock.patch.object(events, "market_events_between", return_value=fake), \
+                mock.patch.object(fno, "_x", lambda seg, key, default=None:
+                                  True if key == "event_block" else real(seg, key, default)):
+            blocked = self.scan()
         self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("RBI policy 2026-11-25", blocked["reason"])
+
+    def test_rbi_note_on_candidates(self):
+        from unittest import mock
+        from backend.journal.store import list_records
+        from backend.signals import events
+        fake = {"verified": True, "events": [{"event": "RBI policy", "date": "2026-11-25"}]}
+        with mock.patch.object(events, "market_events_between", return_value=fake):
+            self.assertEqual(self.scan()["status"], "ok")
+        brk = [r for r in list_records("segment = 'stock_futures'") if r["setup"] == "breakout"][0]
+        self.assertIn("RBI policy 2026-11-25 inside the holding window", brk["extra"]["event_note"])
 
 
 class FuturesTrackingTests(IsolatedStateTestCase, unittest.TestCase):

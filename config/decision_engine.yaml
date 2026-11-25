@@ -194,6 +194,7 @@ global:
 
 instruments:
   stock_futures:
+    event_block: false             # agreed 25 Nov 2026: RBI/Budget in the 3-day hold no longer blocks the NSE scan (named in the alert)
     enabled: true
     orb_enabled: true              # opening range breakout on the most liquid stocks (shares the F&O book limits)
     orb_universe_size: 25          # top F&O stocks by 20-day turnover
@@ -222,6 +223,7 @@ instruments:
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
       long_regimes: [STRONG_UP, HIGH_VOL]
   index_futures:
+    event_block: false             # agreed 25 Nov 2026: RBI/Budget in the 3-day hold no longer blocks the NSE scan (named in the alert)
     enabled: true
     primary_tf: 60minute
     confirmation_tfs: [2h, 4h]
