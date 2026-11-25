@@ -25,6 +25,7 @@ type Row = {
   note?: string | null;
   alert?: "AI approved" | "rules only";
   taken?: boolean;
+  live?: boolean;
 };
 type Book = {
   rows: Row[];
@@ -38,7 +39,8 @@ type Book = {
   open: number;
   pending: number;
 };
-type Summary = { date: string; as_of: string; mine: Book; system: Book; total: Book };
+type LiveFeed = { state: string; connected: boolean; subscribed: number; last_tick: string | null; refresh_seconds: number };
+type Summary = { date: string; as_of: string; live_feed?: LiveFeed; mine: Book; system: Book; total: Book };
 
 const STATE_LABEL: Record<Row["state"], string> = {
   closed: "closed",
@@ -111,7 +113,9 @@ function BookBlock({ title, book, href }: { title: string; book: Book; href: str
                   <Badge variant={r.state === "closed" ? "secondary" : r.state === "awaiting_exit" ? "destructive" : "outline"} className="text-[10px]">
                     {STATE_LABEL[r.state]}
                   </Badge>
-                  <div className="text-muted-foreground">{time(r.at)}</div>
+                  <div className="text-muted-foreground">
+                    {r.live ? <span className="text-emerald-600">● live {time(r.at)}</span> : time(r.at)}
+                  </div>
                 </td>
                 <td className={`py-1 text-right ${tone(r.pnl)}`}>
                   <div>{rupees(r.pnl)}</div>
@@ -141,11 +145,16 @@ export function TodayPnl() {
       .finally(() => setLoading(false));
   }, []);
 
+  // every few seconds while the Kite live feed is connected, else once a minute (trackers update per bar)
+  const live = !!data?.live_feed?.connected;
+  const every = live ? Math.max(1, data?.live_feed?.refresh_seconds ?? 5) * 1000 : 60_000;
   useEffect(() => {
     fetchData();
-    const t = setInterval(fetchData, 60_000); // trackers update after each bar; refresh every minute
-    return () => clearInterval(t);
   }, [fetchData]);
+  useEffect(() => {
+    const t = setInterval(fetchData, every);
+    return () => clearInterval(t);
+  }, [fetchData, every]);
 
   const reload = () => {
     setLoading(true);
@@ -163,7 +172,15 @@ export function TodayPnl() {
             </CardTitle>
             <CardDescription>
               Yours = My futures trades + journal trades you marked Taken. System = paper trades you were alerted on
-              (AI-approved or rules only). A trade moves to realised as soon as it ends{data ? ` · updated ${data.as_of.slice(11, 16)}` : ""}.
+              (AI-approved or rules only). A trade moves to realised as soon as it ends{data ? ` · updated ${data.as_of.slice(11, 19)}` : ""}.
+              {data?.live_feed && (
+                <span className={live ? " text-emerald-600" : " text-muted-foreground"}>
+                  {" "}
+                  {live
+                    ? `Live prices on (${data.live_feed.subscribed} contracts${data.live_feed.last_tick ? `, last tick ${data.live_feed.last_tick.slice(11, 19)}` : ""}).`
+                    : `Live prices ${data.live_feed.state}; open trades use the last bar close.`}
+                </span>
+              )}
             </CardDescription>
           </div>
           <Button size="sm" variant="ghost" onClick={reload} disabled={loading} aria-label="Refresh today's P&L">
@@ -184,7 +201,7 @@ export function TodayPnl() {
             Total today: realised <b className={tone(data.total.realised_pnl)}>{rupees(data.total.realised_pnl)}</b>{" "}
             ({rr(data.total.realised_r)}) · open <b className={tone(data.total.unrealised_pnl)}>{rupees(data.total.unrealised_pnl)}</b>{" "}
             ({rr(data.total.unrealised_r)}). Stop/target hits on your trades count at the hit price until you enter your
-            exit. System ₹ is after charges once closed. A trade you took counts once in the total, as yours (your
+            exit. Live prices only change the open P&L shown here; trades still end on completed bars. System ₹ is after charges once closed. A trade you took counts once in the total, as yours (your
             fill and exit, the rules&apos; lot size, no charges).
           </p>
         )}

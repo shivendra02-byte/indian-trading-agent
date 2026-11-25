@@ -14,6 +14,10 @@ Two books, each split into realised (ended today) and unrealised (still open):
 
 The overall total counts a trade you took once (your numbers), not again as a paper trade.
 
+Open futures/MCX/cash trades use the live last price from the Kite WebSocket feed when it is
+fresh (``live: true`` on the row; asked 24 Nov 2026), else the last bar close. The live price only
+changes the open P&L shown — trades still end on completed bars.
+
 Nothing is stored: the numbers are read from the tables the trackers keep current, so the card
 changes as soon as a tracker marks a trade ended (after each bar sync for futures/MCX, the daily
 close for cash swing, the evening option files for spreads).
@@ -32,6 +36,13 @@ SEGMENT_LABELS = {"stock_futures": "Stock futures", "index_futures": "Index futu
 
 def _table_exists(conn, name: str) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone() is not None
+
+
+def _live(token) -> tuple[float, str] | None:
+    """(live price, time) from the Kite WebSocket feed when fresh (backend/marketdata/live.py)."""
+    from backend.marketdata.live import feed
+    got = feed.price(token)
+    return (got[0], datetime.fromtimestamp(got[1]).isoformat(timespec="seconds")) if got else None
 
 
 def _r(x) -> float | None:
@@ -54,6 +65,14 @@ def my_trade_rows(today: date) -> list[dict]:
                         "r": _r(t["open_r"]), "pnl": _r(t["open_pnl"]),
                         "note": f"{t['status'].replace('_', ' ')} — enter your exit price on My trades"})
         elif t["status"] == "open":
+            live = _live(t["instrument_token"])
+            if live:
+                s = 1 if t["direction"] == "long" else -1
+                risk = abs(t["entry_price"] - t["initial_stop"])
+                move = s * (live[0] - t["entry_price"])
+                out.append({**base, "state": "open", "at": live[1], "price": live[0], "live": True,
+                            "r": _r(move / risk) if risk else None, "pnl": _r(move * t["lots"] * t["point_value"])})
+                continue
             out.append({**base, "state": "open", "at": t["last_bar_ts"], "price": t["last_close"],
                         "r": _r(t["open_r"]), "pnl": _r(t["open_pnl"]),
                         "note": None if t["last_close"] is not None else (t.get("data_note") or "no bars yet")})
@@ -87,7 +106,11 @@ def taken_rows(today: date) -> list[dict]:
                         "pnl": _r(s * (rec["exit_price"] - fill) * qty * per_point) if rec.get("exit_price") else None,
                         "note": f"rules exit ({rec.get('exit_reason') or 'closed'}) — enter your exit on the Trade Journal"})
         else:
-            out.append({**base, "state": "open", "at": ((rec.get("extra") or {}).get("stop_now") or {}).get("at"),
+            live = _live(rec.get("instrument_token"))
+            at = ((rec.get("extra") or {}).get("stop_now") or {}).get("at")
+            if live:
+                last, at = live
+            out.append({**base, "state": "open", "at": at, "live": bool(live),
                         "price": last, "r": _r(s * (last - fill) / risk) if risk and last is not None else None,
                         "pnl": _r(s * (last - fill) * qty * per_point) if last is not None else None,
                         "note": None if last is not None else "no bars yet"})
@@ -106,11 +129,12 @@ def _qty(rec: dict) -> tuple[float, float]:
     return _size(rec, fill, risk) if risk else (0, 1.0)
 
 
-def _journal_open_pnl(rec: dict) -> tuple[float | None, float | None, float | None]:
-    """(R, ₹, last close) for an open approved record, from the tracker's last stop_now."""
+def _journal_open_pnl(rec: dict, live: float | None = None) -> tuple[float | None, float | None, float | None]:
+    """(R, ₹, price) for an open approved record: the live price when given, else the tracker's
+    last close (stop_now)."""
     from backend.journal.tracker import _size
     now = (rec.get("extra") or {}).get("stop_now") or {}
-    last, fill = now.get("last_close"), rec.get("fill_price")
+    last, fill = (live if live is not None else now.get("last_close")), rec.get("fill_price")
     if last is None or fill is None:
         return None, None, last
     s = 1 if rec["direction"] == "long" else -1
@@ -140,8 +164,10 @@ def system_rows(today: date) -> list[dict]:
             out.append({**base, "state": "closed", "at": rec["exit_ts"], "price": rec["exit_price"],
                         "r": _r(rec["pnl_r"]), "pnl": _r(rec["pnl_rupees"]), "note": rec.get("exit_reason")})
         elif rec["track_status"] == "open":
-            r, pnl, last = _journal_open_pnl(rec)
-            out.append({**base, "state": "open", "at": ((rec.get("extra") or {}).get("stop_now") or {}).get("at"),
+            live = _live(rec.get("instrument_token"))
+            r, pnl, last = _journal_open_pnl(rec, live[0] if live else None)
+            out.append({**base, "state": "open", "live": bool(live),
+                        "at": live[1] if live else ((rec.get("extra") or {}).get("stop_now") or {}).get("at"),
                         "price": last, "r": _r(r), "pnl": _r(pnl)})
         else:
             out.append({**base, "state": "pending", "at": rec.get("fill_until"), "price": rec["entry"],
@@ -189,5 +215,11 @@ def today_summary(today: date | None = None) -> dict:
     for rows in (mine, system):
         rows.sort(key=lambda x: (order[x["state"]], str(x.get("at") or "")))
     both = _totals(mine + [x for x in system if not x.get("taken")])     # a trade you took counts once
+    from backend.marketdata.live import feed, settings as live_settings
+    try:
+        refresh = live_settings().pnl_refresh_seconds
+    except Exception:
+        refresh = 5
     return {"date": today.isoformat(), "as_of": datetime.now().isoformat(timespec="seconds"),
+            "live_feed": {**feed.status(), "refresh_seconds": refresh},
             "mine": {"rows": mine, **_totals(mine)}, "system": {"rows": system, **_totals(system)}, "total": both}

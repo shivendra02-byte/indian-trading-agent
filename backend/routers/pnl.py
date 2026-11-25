@@ -13,3 +13,10 @@ router = APIRouter(prefix="/api/pnl", tags=["pnl"])
 def pnl_today(day: date | None = Query(None, description="defaults to today")):
     from backend.pnl_today import today_summary
     return today_summary(day)
+
+
+@router.get("/live-feed")
+def live_feed_status():
+    """State of the Kite WebSocket feed that drives the live open P&L."""
+    from backend.marketdata.live import feed
+    return feed.status()
