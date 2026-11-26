@@ -402,7 +402,7 @@ instruments:
     take_profit_pct: 50            # buy back at 50% of the credit
     stop_multiple: 2.0             # stop when the spread costs 2x the credit (1R = one credit)
     max_vix: 25.0                  # no new spread above this India VIX
-    min_credit_ratio_single: null  # bull put / bear call minimum credit (fraction of width); null = min_credit_ratio
+    min_credit_ratio_single: 0.12  # agreed 26 Nov 2026: bull put / bear call need >= 12% of the width (condor keeps 15%); null = min_credit_ratio
     mode: intraday                 # agreed 24 Nov 2026 (replaces the evening run): daily regime → 4H confirms → 1H setup → 15m trigger, live chain; exits on 1H closes. eod = the old evening rules
     intraday:                      # backend/options/spread_mtf.py
       first_signal: "09:30"        # 15-minute bar ends from which a trigger counts

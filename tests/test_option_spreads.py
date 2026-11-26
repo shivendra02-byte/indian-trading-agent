@@ -119,6 +119,18 @@ class DebitSpreadTests(unittest.TestCase):
         built, why = spreads.build(chain("2025-11-19", 30, 10), "bull_put", RULE, cfg)   # credit 20 = 10% of 200
         self.assertTrue(built, why)
 
+    def test_live_single_minimum_is_12_pct(self):
+        # agreed 26 Nov 2026: bull put / bear call need 12% of the width, the condor keeps 15%
+        live = spreads.settings()
+        self.assertEqual(live["min_credit_ratio_single"], 0.12)
+        self.assertEqual(live["min_credit_ratio"], 0.15)
+        cfg = {**self.cfg, "min_credit_ratio_single": live["min_credit_ratio_single"]}
+        built, why = spreads.build(chain("2025-11-19", 35, 10), "bull_put", RULE, cfg)   # credit 25 = 12.5%
+        self.assertTrue(built, why)
+        built, why = spreads.build(chain("2025-11-19", 32, 10), "bull_put", RULE, cfg)   # credit 22 = 11%
+        self.assertIsNone(built)
+        self.assertIn("0.12", why)
+
 
 def _store(rows):
     from backend.db import get_db
