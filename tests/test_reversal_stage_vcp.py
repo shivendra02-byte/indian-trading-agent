@@ -221,6 +221,31 @@ class ReversalTests(unittest.TestCase):
         live = reversal.build(self.bars, "long", self.p, STAGE2)
         self.assertEqual((found[0]["entry"], found[0]["stop"]), (live["entry"], live["stop"]))
 
+    def test_find_all_reports_drop_outs(self):
+        # 26 Nov 2026: the backtest funnel gets the reason of every checked bar that failed
+        reasons = []
+        found = reversal.find_all(self.bars, self.p, lambda t: STAGE2, directions=("long",), on_reject=reasons.append)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(reasons)
+        self.assertTrue(all(isinstance(r, str) and r for r in reasons))
+
+    def test_nifty_regime_filter(self):
+        cfg = {**reversal.cash_settings(), "params": self.p, "nifty_regimes": ["STRONG_UP", "SIDEWAYS"]}
+        row = reversal.cash_candidate(self.bars, cfg, "STRONG_DOWN")
+        self.assertFalse(row["trackable"])
+        self.assertIn("NIFTY regime STRONG_DOWN", row["reject_reason"])
+        self.assertIsNone(reversal.cash_settings()["nifty_regimes"])           # live: no filter
+
+    def test_reversal_experiments_load(self):
+        from backend.decision.config import use_config
+        with use_config("config/experiments/reversal_loose_regime.yaml"):
+            c = reversal.cash_settings()
+        self.assertEqual(c["params"]["z_stretch"], 2.0)
+        self.assertIn("STRONG_UP", c["nifty_regimes"])
+        with use_config("config/experiments/reversal_nifty_regime.yaml"):
+            c = reversal.cash_settings()
+        self.assertEqual(c["params"]["z_stretch"], 2.5)
+
     def test_swing_high_trigger(self):
         p = {**self.p, "trigger": "swing_high"}
         r = reversal.check(self.bars, "long", p, STAGE2)

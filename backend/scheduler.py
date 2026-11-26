@@ -12,7 +12,7 @@ Jobs:
   buffer so Kite has the bar): NSE 10-minute (indices) and 1-hour; MCX 1-hour;
   daily bars after each exchange's close.
 * ``scan:cash_swing`` — once per NSE trading day from 15:45 (followed by the
-  cup-and-handle scan on the same daily bars), after today's
+  reversal / VCP scans on the same daily bars), after today's
   daily candles are stored.
 * ``scan:orb`` — after each synced 10-minute NSE bar from 09:55 to 14:50
   (opening range breakout on the most liquid stock futures).
@@ -286,14 +286,8 @@ class MarketDataScheduler:
                 result = run_scan(now=now)
                 if result.get("status") != "skipped" or result.get("reason") != "paused":
                     self.scans_done["cash_swing"] = now.date()
-                    # Cup and handle runs on the same daily bars, even when the swing scan
-                    # is blocked by an event inside its 7-day window.
-                    try:
-                        from backend.signals.cup_handle import run_scan as run_cup_scan
-                        cup = run_cup_scan(now=now)
-                    except Exception as exc:  # never let it stop the scheduler
-                        cup = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
-                    self.last_results["scan:cup_handle"] = {"at": now.isoformat(timespec="seconds"), **_brief(cup)}
+                    # 26 Nov 2026: the cup and handle scan is retired (VCP covers the same bases);
+                    # its records and backtest segment are kept.
                     # 25 Nov 2026: the reversal and VCP scans (shadow) replace the Wolfe Wave scan;
                     # then Minervini top-signal exit warnings for the longs you hold.
                     for name, module, fn in (("scan:cash_reversal", "backend.signals.reversal", "run_scan"),

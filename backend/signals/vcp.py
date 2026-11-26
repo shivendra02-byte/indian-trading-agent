@@ -186,17 +186,23 @@ def candidate(bars: Sequence[dict], cfg: dict | None = None, regime: str | None 
                        stage("scoring", "pass" if sc["score"] >= min_score else "below_threshold", score=sc["score"])]}
 
 
-def find_all(bars: Sequence[dict], cfg: dict | None = None, start: int = 0) -> list[dict]:
-    """Every trackable VCP breakout by signal bar, point in time — for backtests."""
+def find_all(bars: Sequence[dict], cfg: dict | None = None, start: int = 0,
+             on_reject: Callable[[str], None] | None = None) -> list[dict]:
+    """Every trackable VCP breakout by signal bar, point in time — for backtests. ``on_reject``
+    receives the reason of every checked bar that failed (the backtest drop-out funnel)."""
     cfg = cfg or settings()
     out = []
     for t in range(max(start, 250), len(bars)):
         if bars[t]["close"] <= bars[t - 1]["close"]:      # a breakout bar closes up
+            if on_reject:
+                on_reject("no up close")
             continue
         c = candidate(bars[:t + 1], cfg)
         if c.get("trackable"):
             c["s"] = t
             out.append(c)
+        elif on_reject:
+            on_reject(c.get("reject_reason") or "rejected")
     return out
 
 

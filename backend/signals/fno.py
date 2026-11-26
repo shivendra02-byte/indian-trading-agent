@@ -381,7 +381,14 @@ def run_hourly_scan(group: str, now: datetime | None = None, client=None, force:
             if not c.get("trackable"):
                 continue
             lot_risk = c["risk_per_unit"] * inst["value_per_point"]
-            lots, size_note = lots_within_risk(seg, lot_risk)
+            lots, size_note = lots_within_risk(seg, lot_risk, sym)
+            if lots < 1 and size_note:      # per-symbol ₹ cap (SILVERM ₹15,000, agreed 26 Nov 2026)
+                # never shortlisted or alerted, but journaled (1 lot) so the post-mortem shows what was skipped
+                c.update(valid=False, reject_reason=f"skipped: {size_note}", lots=1,
+                         lot_risk_pct=round(100 * lot_risk / get_config().global_.capital, 2))
+                c["stages"].append(stage("sizing", "fail", c["reject_reason"]))
+                trackable.append(c)
+                continue
             if lots < 1:
                 cap = _x(seg, "one_lot_max_risk_pct", None)
                 limit = f"₹{risk_per_trade():,.0f}" + (f"; 1 lot allowed up to {cap:g}% = ₹{get_config().global_.capital * cap / 100:,.0f}"

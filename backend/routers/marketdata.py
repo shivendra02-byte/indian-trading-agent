@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from backend.brokers.kite import get_kite_status
@@ -263,3 +263,50 @@ def candles(
         assert interval in INTERVALS
         rows = get_candles(token, interval, limit=limit)
     return {"token": token, "symbol": inst["tradingsymbol"], "interval": interval, "candles": rows}
+
+
+# --- cash universe: F&O + NIFTY 500, ASM/GSM list (26 Nov 2026) ----------------------------------
+
+MAX_LIST_BYTES = 3_000_000
+
+
+@router.get("/api/marketdata/cash-universe")
+def cash_universe_status():
+    from backend.marketdata.cash_universe import summary
+    return summary()
+
+
+@router.post("/api/marketdata/nifty500/refresh")
+def nifty500_refresh():
+    from backend.marketdata.cash_universe import refresh_nifty500
+    return refresh_nifty500(force=True)
+
+
+async def _body_text(request: Request) -> str:
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty file")
+    if len(data) > MAX_LIST_BYTES:
+        raise HTTPException(413, "file too large")
+    return data.decode("utf-8-sig", "replace")
+
+
+@router.post("/api/marketdata/nifty500/upload")
+async def nifty500_upload(request: Request):
+    """Upload ind_nifty500list.csv (niftyindices.com) when the server can't download it.
+    The new stocks get instruments at the next morning refresh."""
+    from backend.marketdata.cash_universe import import_nifty500
+    try:
+        return import_nifty500(await _body_text(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/api/marketdata/surveillance/upload")
+async def surveillance_upload(request: Request):
+    """Upload NSE's daily surveillance file (REG1_IND<ddmmyy>.csv) when the download is blocked."""
+    from backend.marketdata.cash_universe import import_surveillance
+    try:
+        return import_surveillance(await _body_text(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

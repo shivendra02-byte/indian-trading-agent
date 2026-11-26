@@ -44,32 +44,41 @@ _COMMON = [
     "Only RBI and Budget dates are checked for market-wide events.",
 ]
 _SURVIVORSHIP = "Universe is today's F&O list: stocks removed from F&O in the past are missing (survivorship bias)."
+_SURVIVORSHIP_CASH = ("Universe is today's F&O list plus today's NIFTY 500: stocks that left either list in the past "
+                      "are missing, so results look better than they really were (survivorship bias).")
+CASH_BACKTESTS = ("cash_swing", "cup_handle", "wolfe", "cash_reversal", "vcp")
+
+
+def _floor(stock: dict, default: float) -> float:
+    """₹ turnover floor: the strategy's own for F&O stocks, the NIFTY 500 floor for the others."""
+    from backend.marketdata.cash_universe import min_turnover_for
+    return min_turnover_for(stock, default)
 LIMITATIONS = {
     "cash_swing": [
-        _SURVIVORSHIP,
+        _SURVIVORSHIP_CASH,
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts (about 12 months back) the entry uses the daily bar and the 4H "
         "confirmation is not tested (shown as 'daily only').",
         *_COMMON],
     "cup_handle": [
-        _SURVIVORSHIP,
+        _SURVIVORSHIP_CASH,
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         *_COMMON],
     "wolfe": [
-        _SURVIVORSHIP,
+        _SURVIVORSHIP_CASH,
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         "Exit: this book's own exit_management (breakeven, then ATR trail), not the global one.",
         *_COMMON],
     "cash_reversal": [
-        _SURVIVORSHIP,
+        _SURVIVORSHIP_CASH,
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         "Daily stage from the stock's own stored daily bars, point in time.",
         *_COMMON],
     "vcp": [
-        _SURVIVORSHIP,
+        _SURVIVORSHIP_CASH,
         "No historical company results dates, so the results filter is not applied.",
         "Before hourly history starts the entry uses the daily bar (shown as 'daily only').",
         *_COMMON],
@@ -414,7 +423,7 @@ def run_cash_swing(start: date, end: date, symbols: list[dict], nifty: list[dict
             if i == 0 or d_index[i - 1] != iso:
                 continue
             bars = daily[max(0, i - 300):i]
-            if len(bars) < inst.min_primary_bars or avg_turnover(bars) < min_turnover:
+            if len(bars) < inst.min_primary_bars or avg_turnover(bars) < _floor(stock, min_turnover):
                 funnel.add("stock_days_skipped_history_or_turnover")
                 continue
             funnel.add("stock_days_evaluated")
@@ -623,7 +632,7 @@ def run_cup_handle(start: date, end: date, symbols: list[dict], nifty: list[dict
                 continue
             lo_bar = max(0, i - 800)
             bars = daily[lo_bar:i]
-            if avg_turnover(bars) < ch["min_turnover"]:
+            if avg_turnover(bars) < _floor(stock, ch["min_turnover"]):
                 continue
             # Swings confirmed by today: fractal index ≤ i-3 (two bars after it must exist).
             upto = bisect.bisect_right(sh_index, i - 3)
@@ -678,7 +687,7 @@ def run_wolfe(start: date, end: date, symbols: list[dict], nifty: list[dict],
             iso = daily[c["s"]]["ts"][:10]
             if iso > end.isoformat():
                 break
-            if avg_turnover(daily[max(0, i - 60):i]) < wc["min_turnover"]:
+            if avg_turnover(daily[max(0, i - 60):i]) < _floor(stock, wc["min_turnover"]):
                 continue
             d = date.fromisoformat(iso)
             window = _next_days(d, wc["hold_days"])
@@ -710,12 +719,28 @@ def run_wolfe(start: date, end: date, symbols: list[dict], nifty: list[dict],
     return trades
 
 
-def _run_daily_pattern(segment: str, settings: dict, find: Callable[[list[dict], int], list[dict]],
+def _run_daily_pattern(segment: str, settings: dict, find: Callable[..., list[dict]],
                        pattern_keys: tuple[str, ...], start: date, end: date, symbols: list[dict],
-                       nifty: list[dict], progress: Callable[[str], None], daily_only: bool) -> list[dict]:
-    """Daily cash pattern books (reversal, VCP): signals from ``find(daily, first_index)``, buy limit
-    at the signal close next session (hourly bars where stored, else the daily bar), then daily
-    bars with the book's own exit; safety exit after ``max_hold_trading_days``."""
+                       nifty: list[dict], progress: Callable[[str], None], daily_only: bool,
+                       funnel: Funnel | None = None) -> list[dict]:
+    """Daily cash pattern books (reversal, VCP): signals from ``find(daily, first_index, on_reject)``,
+    buy limit at the signal close next session (hourly bars where stored, else the daily bar), then
+    daily bars with the book's own exit; safety exit after ``max_hold_trading_days``.
+
+    ``funnel`` (26 Nov 2026): every checked stock-day and why it dropped out — the pattern's own
+    rejection reasons, then turnover, the event window, the NIFTY-regime filter (``nifty_regimes``)
+    and a missing entry bar — so "why so few trades?" is answered per stage."""
+    setup_label = segment.replace("_", " ")
+    allowed_regimes = settings.get("nifty_regimes")
+
+    def drop(key: str) -> None:
+        if funnel is not None:
+            funnel.add(key)
+
+    def on_reject(reason: str) -> None:
+        if funnel is not None:
+            funnel.add("stock_days_checked")
+            funnel.rejects.setdefault(setup_label, Counter())[_reason_key(reason)] += 1
     cfg = get_config()
     min_score = cfg.global_.scoring.min_shortlist_score
     entry_end = settings["entry_window"][1]
@@ -728,19 +753,26 @@ def _run_daily_pattern(segment: str, settings: dict, find: Callable[[list[dict],
         hourly = [] if daily_only else get_candles(stock["spot_token"], "60minute", limit=20000)
         h_index = [b["ts"] for b in hourly]
         first_i = next((i for i, b in enumerate(daily) if b["ts"][:10] >= start.isoformat()), len(daily))
-        for c in find(daily, max(first_i, settings["min_bars"])):
+        for c in find(daily, max(first_i, settings["min_bars"]), on_reject):
             i = c["s"] + 1
             iso = daily[c["s"]]["ts"][:10]
             if iso > end.isoformat():
                 break
-            if avg_turnover(daily[max(0, i - 60):i]) < settings["min_turnover"]:
+            drop("stock_days_checked")
+            drop("pattern_found")
+            if avg_turnover(daily[max(0, i - 60):i]) < _floor(stock, settings["min_turnover"]):
+                drop("dropped_turnover")
                 continue
             d = date.fromisoformat(iso)
             window = _next_days(d, settings["hold_days"])
             if _market_blocked(window[0], window[min(settings["event_block_days"], len(window)) - 1], blocked_cache):
+                drop("dropped_event_window")
                 continue
             k = bisect.bisect_right(nifty_index, iso)
             c["regime"] = current_regime(nifty[max(0, k - 300):k])["regime"] if k else None
+            if allowed_regimes and c["regime"] not in allowed_regimes:
+                drop(f"dropped_nifty_regime_{c['regime']}")
+                continue
             entry_day = window[0].isoformat()
             lo = bisect.bisect_left(h_index, entry_day)
             hi = bisect.bisect_left(h_index, window[1].isoformat()) if len(window) > 1 else len(hourly)
@@ -752,6 +784,7 @@ def _run_daily_pattern(segment: str, settings: dict, find: Callable[[list[dict],
             else:
                 entry_bar = [{**b, "eod": True} for b in daily[i:i + 1] if b["ts"][:10] == entry_day]
                 if not entry_bar:
+                    drop("dropped_no_entry_bar")
                     continue
                 path, data, fill_until = entry_bar + fwd_daily, "daily_only", f"{entry_day}T23:59:59"
             outcome = _simulate(c, path, fill_until, exit_by, segment=segment)
@@ -759,6 +792,7 @@ def _run_daily_pattern(segment: str, settings: dict, find: Callable[[list[dict],
             pattern = c.get("pattern") or {}
             rec.update(data=data, untested=None, pattern={k2: pattern.get(k2) for k2 in pattern_keys})
             trades.append(rec)
+            drop("signals_simulated")
         progress(f"{n}/{len(symbols)} stocks")
     mark_shortlist(trades, settings["shortlist"])
     return trades
@@ -775,14 +809,14 @@ def run_cash_reversal(start: date, end: date, symbols: list[dict], nifty: list[d
     rc = reversal.cash_settings()
     sa = get_config().global_.stage_analysis
 
-    def find(daily: list[dict], first: int) -> list[dict]:
+    def find(daily: list[dict], first: int, on_reject=None) -> list[dict]:
         closes = [b["close"] for b in daily]
         smas = (sma(closes, sa.sma_fast), sma(closes, sa.sma_mid), sma(closes, sa.sma_slow))
         return reversal.find_all(daily, rc["params"], lambda t: stage_mod.classify(daily, sa, t, smas),
-                                 directions=rc["directions"], start=first)
+                                 directions=rc["directions"], start=first, on_reject=on_reject)
 
     return _run_daily_pattern("cash_reversal", rc, find, ("z", "divergence", "sfp", "effort", "daily_stage"),
-                              start, end, symbols, nifty, progress, daily_only)
+                              start, end, symbols, nifty, progress, daily_only, funnel)
 
 
 def run_vcp(start: date, end: date, symbols: list[dict], nifty: list[dict],
@@ -792,9 +826,10 @@ def run_vcp(start: date, end: date, symbols: list[dict], nifty: list[dict],
     from backend.signals import vcp
 
     vc = vcp.settings()
-    return _run_daily_pattern("vcp", vc, lambda daily, first: vcp.find_all(daily, vc, start=first),
+    return _run_daily_pattern("vcp", vc,
+                              lambda daily, first, on_reject=None: vcp.find_all(daily, vc, start=first, on_reject=on_reject),
                               ("pivot", "base_days", "dryup_ratio", "breakout_volume"),
-                              start, end, symbols, nifty, progress, daily_only)
+                              start, end, symbols, nifty, progress, daily_only, funnel)
 
 
 def run_orb(start: date, end: date, symbols: list[dict], nifty: list[dict],
@@ -1188,6 +1223,9 @@ def run_backtest(run_id: int, segment: str, config_file, start: date, end: date,
             elif segment == "index_futures_proxy":
                 symbols = [{"symbol": name, "spot_token": inst["instrument_token"]}
                            for name in ("NIFTY", "BANKNIFTY") if (inst := spot_instrument(name))]
+            elif segment in CASH_BACKTESTS:     # F&O + the NIFTY 500 (26 Nov 2026), like the live cash scans
+                from backend.marketdata.cash_universe import cash_universe
+                symbols = [s for s in cash_universe() if s.get("spot_token")]
             else:
                 symbols = [s for s in fno_universe() if s.get("spot_token")]
             symbols = symbols[:max_symbols] if max_symbols else symbols

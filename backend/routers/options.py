@@ -178,6 +178,26 @@ def spreads_backtest(req: SpreadBacktestRequest):
     return result
 
 
+class CreditCompareRequest(BaseModel):
+    start_date: date
+    end_date: date
+    ratios: list[float] = Field(default_factory=lambda: [0.10, 0.12, 0.15], min_length=2, max_length=5)
+    split_date: date | None = None
+    symbols: list[Literal["NIFTY", "BANKNIFTY", "SENSEX"]] | None = None
+
+
+@router.post("/spreads/compare-credit")
+def spreads_compare_credit(req: CreditCompareRequest):
+    """Asked 26 Nov 2026: the live rules at several minimum credits for bull put / bear call
+    spreads, with costs, side by side — and the trades a lower minimum adds."""
+    from backend.options.spread_research import compare_min_credit
+    if req.end_date <= req.start_date:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+    if any(not 0 < r < 1 for r in req.ratios):
+        raise HTTPException(status_code=400, detail="ratios must be between 0 and 1")
+    return compare_min_credit(req.start_date, req.end_date, req.ratios, req.split_date, req.symbols)
+
+
 # --- research: strategy eligibility, exits, out-of-sample (asked 24 Nov 2026) --------------------
 
 class ResearchRequest(BaseModel):

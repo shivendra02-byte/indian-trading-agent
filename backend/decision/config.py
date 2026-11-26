@@ -510,8 +510,22 @@ def _load(path: str, mtime: float) -> DecisionConfig:
     return cfg
 
 
-def lots_within_risk(segment: str, lot_risk: float) -> tuple[int, str | None]:
+def lot_risk_cap(segment: str, symbol: str | None) -> float | None:
+    """₹ cap on what one lot of ``symbol`` may risk (``instruments.<segment>.max_lot_risk_rupees``),
+    e.g. SILVERM ₹15,000 (agreed 26 Nov 2026). None when the symbol has no cap."""
+    if not symbol:
+        return None
+    inst = get_config().instruments.get(segment)
+    caps = (inst.model_extra or {}).get("max_lot_risk_rupees") if inst else None
+    cap = (caps or {}).get(symbol)
+    return float(cap) if cap is not None else None
+
+
+def lots_within_risk(segment: str, lot_risk: float, symbol: str | None = None) -> tuple[int, str | None]:
     """(lots, note) for a futures trade whose one lot risks ``lot_risk`` ₹.
+
+    With ``symbol``, a per-symbol ₹ cap (``lot_risk_cap``) is checked first: a lot risking more
+    is not traded at all (0 lots, the note gives the reason).
 
     Lots = ``global.risk.risk_per_trade_pct`` of capital ÷ lot risk. When that is under one lot,
     an instrument with ``one_lot_max_risk_pct`` (MCX, agreed 25 Nov 2026: 3.5%) still takes 1 lot
@@ -521,6 +535,9 @@ def lots_within_risk(segment: str, lot_risk: float) -> tuple[int, str | None]:
     g = cfg.global_
     if lot_risk <= 0:
         return 0, None
+    sym_cap = lot_risk_cap(segment, symbol)
+    if sym_cap is not None and lot_risk > sym_cap + 1e-9:
+        return 0, f"stop risk ₹{lot_risk:,.0f} per lot > ₹{sym_cap:,.0f} cap for {symbol}"
     lots = int(g.capital * g.risk.risk_per_trade_pct / 100 // lot_risk)
     if lots >= 1:
         return lots, None

@@ -19,11 +19,11 @@ from backend.journal.store import add_records as journal_add
 from backend.journal.tracker import track_open_records
 from backend.decision.config import get_config
 from backend.marketdata.candles import bars_for_timeframe, get_candles
-from backend.marketdata.instruments import fno_universe, spot_instrument
+from backend.marketdata.instruments import spot_instrument
 from backend.signals import events
 from backend.signals.regime import current_regime
 from backend.signals.selection import choose_shortlist
-from backend.signals.setups import evaluate, labelled_reasons, min_score, stage
+from backend.signals.setups import evaluate, htf_trend, labelled_reasons, min_score, stage
 from backend.system_state import is_paused
 from tradingagents.utils.market_calendar import IST, holiday_name, is_trading_day, previous_trading_day
 
@@ -236,7 +236,8 @@ def run_scan(now: datetime | None = None, force: bool = False,
         event_note = f"{names} inside the holding window"
     regime = current_regime(nifty_bars)
 
-    universe = fno_universe(today)
+    from backend.marketdata.cash_universe import cash_universe, min_turnover_for
+    universe = cash_universe(today)          # F&O stocks + the NIFTY 500 (26 Nov 2026)
     if not universe:
         return _finish_run(run_id, "blocked", {"reason": "F&O universe is empty (instrument master missing)"})
     events.refresh_results([u["symbol"] for u in universe], fetch=results_fetch, today=today)
@@ -253,14 +254,18 @@ def run_scan(now: datetime | None = None, force: bool = False,
         if not stock["spot_token"]:
             reject(symbol, "no NSE spot instrument")
             continue
+        if stock.get("surveillance"):
+            reject(symbol, f"on NSE surveillance (ASM/GSM): {stock['surveillance']}")
+            continue
         bars = get_candles(stock["spot_token"], "day", limit=DAILY_BARS)
         problem = data_quality(bars, signal_date, min_bars=cfg["min_bars"])
         if problem:
             reject(symbol, problem)
             continue
         turnover = avg_turnover(bars)
-        if turnover < cfg["min_turnover"]:
-            reject(symbol, f"turnover ₹{turnover / 1e7:.0f} cr < ₹{cfg['min_turnover'] / 1e7:.0f} cr")
+        floor = min_turnover_for(stock, cfg["min_turnover"])
+        if turnover < floor:
+            reject(symbol, f"turnover ₹{turnover / 1e7:.0f} cr < ₹{floor / 1e7:.0f} cr")
             continue
         ok, why = events.results_clear(symbol, first, last, today)
         if not ok:
@@ -268,7 +273,14 @@ def run_scan(now: datetime | None = None, force: bool = False,
             continue
         htf = bars_for_timeframe(stock["spot_token"], inst.scored_htf or "week", "NSE")
         confirmations = {tf: bars_for_timeframe(stock["spot_token"], tf, "NSE") for tf in inst.confirmation_tfs}
-        eligibility = stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1))
+        untested = []
+        if not stock.get("fno", True):   # NIFTY 500 stocks have daily bars only: intraday confirmations untested
+            untested = [tf for tf, b in confirmations.items() if htf_trend(b) is None]
+            confirmations = {tf: b for tf, b in confirmations.items() if tf not in untested}
+        eligibility = stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1),
+                            universe="F&O" if stock.get("fno", True) else "NIFTY 500",
+                            **({"untested": untested} if untested else {}),
+                            **({"surveillance": "list unknown"} if stock.get("surveillance_status") == "unknown" else {}))
         candidates = evaluate(bars, htf, regime["regime"], directions=tuple(inst.directions),
                               is_stock=True, benchmark=nifty_bars, max_stop_pct=cfg["max_stop_pct"],
                               confirmations=confirmations, min_primary_bars=cfg["min_bars"],

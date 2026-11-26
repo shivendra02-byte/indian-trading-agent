@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/utils";
 import { SpreadResearch } from "@/components/spreads/SpreadResearch";
+import { CreditCompare } from "@/components/spreads/CreditCompare";
 
 type Leg = { type: "CE" | "PE"; strike: number; side: "short" | "long"; price: number; delta?: number };
 type Spread = {
@@ -186,7 +187,7 @@ function ScanLogCard({ rows }: { rows: ScanRow[] }) {
                 <td className="pr-3 font-medium">{r.symbol}</td>
                 <td className="pr-3 text-muted-foreground">{r.regime ?? ""}</td>
                 <td className={r.signal ? "font-medium" : "text-muted-foreground"}>
-                  {r.signal ? "signal → " : ""}
+                  {r.signal ? (/shortlisted|approved/.test(r.result) ? "signal found → " : "signal found → spread rejected: ") : ""}
                   {r.result}
                 </td>
               </tr>
@@ -509,6 +510,7 @@ export default function OptionSpreadsPage() {
           )}
         </CardContent>
       </Card>
+      <CreditCompare />
       <SpreadResearch
         defaults={{ start_date: form.start_date, end_date: form.end_date, split_date: form.split_date || "2025-12-01", minSingle: minSingle || "10" }}
       />

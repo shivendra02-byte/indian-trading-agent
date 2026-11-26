@@ -585,3 +585,76 @@ def trades_csv(run_id: int, which: str = "baseline") -> str | None:
     for r in rows:
         w.writerow(r)
     return buf.getvalue()
+
+
+# --- minimum credit comparison (asked 26 Nov 2026) -----------------------------------------------
+
+def compare_min_credit(start: date, end: date, ratios: list[float] | None = None,
+                       split_date: date | None = None, symbols: list[str] | None = None) -> dict:
+    """The live spread rules re-run once per minimum credit for bull put / bear call spreads
+    (``min_credit_ratio_single``), credit spreads only (no VIX switch), with the research cost
+    model on every trade. Per ratio: trades, win rate, average R and ₹ after costs, profit factor,
+    max drawdown, train/test; plus the trades a lower minimum adds over the next higher one."""
+    from backend.options import spreads as sp_mod
+    from backend.options import store
+
+    ratios = sorted({round(float(r), 4) for r in (ratios or [0.10, 0.12, 0.15])})
+    rcfg = settings()
+    scfg = sp_mod.settings()
+    singles = ("bull_put", "bear_call")
+    runs: dict[float, list[dict]] = {}
+    for r in ratios:
+        res = sp_mod.backtest(start, end, symbols, split_date, min_credit_ratio_single=r, debit_below_vix=0)
+        rows = []
+        for t in res["trades"]:
+            prices = sp_mod._prices(store.chain(t["symbol"], t["exit_date"], t["expiry"]))
+            cost = cost_points(t, prices, rcfg["costs"])
+            one_r = sp_mod.one_r_points(t, scfg)
+            net = t["pnl_points"] - cost
+            rows.append({**t, "cost_points": cost, "pnl_points_gross": t["pnl_points"],
+                         "pnl_points": round(net, 2), "pnl_r": round(net / one_r, 3) if one_r else 0.0,
+                         "pnl_inr": round(net * t["lot_size"] * t["lots"], 0),
+                         "credit_pct": round(100 * t["credit"] / t["width"], 1) if t.get("width") else None})
+        runs[r] = rows
+
+    def summary(rows: list[dict]) -> dict:
+        s = sp_mod._stats(rows)
+        if not rows:
+            return s
+        gains = sum(x["pnl_r"] for x in rows if x["pnl_r"] > 0)
+        losses = -sum(x["pnl_r"] for x in rows if x["pnl_r"] < 0)
+        return {**s, "profit_factor": round(gains / losses, 2) if losses else None,
+                "total_inr": round(sum(x["pnl_inr"] for x in rows), 0),
+                "avg_inr": round(sum(x["pnl_inr"] for x in rows) / len(rows), 0),
+                "avg_cost_points": round(sum(x["cost_points"] for x in rows) / len(rows), 2)}
+
+    def split(rows: list[dict]) -> dict:
+        if not split_date:
+            return {}
+        cut = split_date.isoformat()
+        return {"train": summary([x for x in rows if x["signal_date"] < cut]),
+                "test": summary([x for x in rows if x["signal_date"] >= cut])}
+
+    def key(t: dict) -> tuple:
+        return t["symbol"], t["signal_date"], t["strategy"]
+
+    out_rows = []
+    for i, r in enumerate(ratios):
+        rows = runs[r]
+        single = [x for x in rows if x["strategy"] in singles]
+        row = {"ratio": r, "singles": summary(single), "all": summary(rows), "singles_by_period": split(single)}
+        if i + 1 < len(ratios):                       # what this lower minimum adds over the next one up
+            higher = {key(t) for t in runs[ratios[i + 1]]}
+            added = [x for x in single if key(x) not in higher]
+            row["added_vs"] = ratios[i + 1]
+            row["added"] = summary(added)
+            row["added_trades"] = [{k: x.get(k) for k in ("symbol", "signal_date", "strategy", "credit", "width",
+                                                          "credit_pct", "exit_date", "exit_reason", "pnl_r", "pnl_inr")}
+                                   for x in added][-50:]
+        out_rows.append(row)
+    return {"status": "ok", "start": start.isoformat(), "end": end.isoformat(),
+            "split_date": split_date.isoformat() if split_date else None, "ratios": out_rows,
+            "notes": ["Credit spreads only (VIX/IV switch to debit spreads off) so only the minimum credit differs.",
+                      "Costs: the research cost model (slippage per leg, brokerage, STT, exchange, GST, stamp) — a model.",
+                      "Stops and fills on end-of-day option closes; the live strategy checks 1H closes.",
+                      "A lower minimum can also change later entries (one spread per index at a time)."]}
