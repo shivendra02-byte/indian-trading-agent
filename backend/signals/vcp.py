@@ -52,6 +52,9 @@ def settings() -> dict:
         "target_pct": g("target_pct", 20) / 100, "min_rr": g("min_rr", 2.0),
         "min_turnover": g("min_turnover_cr", 50) * 1e7, "event_block_days": int(g("event_block_days", 5)),
         "entry_window": x.get("entry_window", ["09:15", "15:15"]),
+        # optional NIFTY-regime filter (26 Nov 2026, as cash_reversal; tested in a rule set first): NIFTY's
+        # daily regime must be one of these; None = no filter (live)
+        "nifty_regimes": list(x["nifty_regimes"]) if x.get("nifty_regimes") else None,
     }
 
 
@@ -211,5 +214,15 @@ def run_scan(now: datetime | None = None, force: bool = False,
     """Daily VCP scan on every F&O stock (after the cup & handle scan)."""
     from backend.signals.daily_cash_scan import run_daily_scan
     cfg = settings()
-    return run_daily_scan(SEGMENT, SETUP, cfg, lambda bars, c, regime, nifty: candidate(bars, c, regime, nifty),
-                          "VCP scan", now=now, force=force, results_fetch=results_fetch)
+    return run_daily_scan(SEGMENT, SETUP, cfg, scan_candidate, "VCP scan", now=now, force=force,
+                          results_fetch=results_fetch)
+
+
+def scan_candidate(bars: Sequence[dict], cfg: dict, regime: str | None, nifty: Sequence[dict] | None = None) -> dict:
+    """The live scan's row: the NIFTY-regime filter (when configured), then ``candidate()``.
+    Backtests apply the same filter in ``engine._run_daily_pattern`` (``nifty_regimes``)."""
+    allowed = cfg.get("nifty_regimes")
+    if allowed and regime not in allowed:
+        return {"setup": SETUP, "direction": "long", "valid": False, "trackable": False, "regime": regime,
+                "reject_reason": f"NIFTY regime {regime} not in {', '.join(allowed)}"}
+    return candidate(bars, cfg, regime, nifty)

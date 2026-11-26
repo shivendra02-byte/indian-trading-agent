@@ -328,6 +328,8 @@ instruments:
     min_primary_bars: 60
     value_per_point: {GOLDM: 10, SILVERM: 5, CRUDEOILM: 10, NATGASMINI: 250}
     one_lot_max_risk_pct: 3.5      # agreed 25 Nov 2026: sizing stays 1%, but when even 1 lot risks more, take 1 lot
+    max_lot_risk_rupees:           # agreed 26 Nov 2026: skip the trade when one lot's stop risks more than this (checked after the 3 ATR cap)
+      SILVERM: 15000
                                    # if it risks ≤ 3.5% (₹35,000) — lets gold/silver trade with wide stops; crude isn't sized up
     breakdown_shorts:              # agreed 25 Nov 2026: short breakdowns below the 20-bar low (gold, silver, crude, gas)
       enabled: true
@@ -407,7 +409,7 @@ instruments:
     take_profit_pct: 50            # buy back at 50% of the credit
     stop_multiple: 2.0             # stop when the spread costs 2x the credit (1R = one credit)
     max_vix: 25.0                  # no new spread above this India VIX
-    min_credit_ratio_single: null  # bull put / bear call minimum credit (fraction of width); null = min_credit_ratio
+    min_credit_ratio_single: 0.12  # agreed 26 Nov 2026: bull put / bear call need >= 12% of the width (condor keeps 15%); null = min_credit_ratio
     mode: intraday                 # agreed 24 Nov 2026 (replaces the evening run): daily regime → 4H confirms → 1H setup → 15m trigger, live chain; exits on 1H closes. eod = the old evening rules
     intraday:                      # backend/options/spread_mtf.py
       first_signal: "09:30"        # 15-minute bar ends from which a trigger counts
@@ -456,6 +458,11 @@ instruments:
       BANKNIFTY: {wing: 500, lot_size: 30, weekdays: [0, 1, 2, 3, 4], min_days: 10, max_days: 20}   # monthly, 10-20 days out
       SENSEX: {wing: 500, lot_size: 20, weekdays: [0, 1, 2, 3, 4], min_days: 7, max_days: 13}  # agreed 25 Nov 2026: like NIFTY, the next weekly, always 7+ days out (was Fri-Mon, 3-6 days)
   cash_swing:
+    cash_universe:                 # agreed 26 Nov 2026: cash swing, VCP and cash reversal scan F&O stocks + the NIFTY 500
+      nifty500: true
+      min_turnover_cr_non_fno: 20  # NIFTY 500 stocks outside F&O (F&O stocks keep each book's own floor)
+      refresh_days: 28             # NIFTY 500 list re-downloaded about monthly (upload on the Swing Scan page if blocked)
+      skip_surveillance: true      # skip stocks on an NSE ASM/GSM stage (daily file; unknown → not skipped, noted)
     event_block: false             # agreed 25 Nov 2026: RBI/Budget in the hold no longer blocks the scan (named in the alert)
     enabled: true
     primary_tf: day
@@ -480,8 +487,8 @@ instruments:
     max_open_risk_pct: 2.0
     min_primary_bars: 250
 
-  cup_handle:                      # William O'Neil cup and handle — cash, long only, own book
-    enabled: true
+  cup_handle:                      # William O'Neil cup and handle — RETIRED 26 Nov 2026 (VCP covers it); kept for old records and backtests
+    enabled: false
     primary_tf: day
     directions: [long]
     shortlist_per_scan: 2
