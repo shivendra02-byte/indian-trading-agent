@@ -27,6 +27,33 @@ class EquityPortfolioTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertEqual(rows[0]["pnl"], 250)
         self.assertEqual(rows[0]["pnl_pct"], 25)
 
+    def test_normalize_holdings_adds_t1_quantity(self):
+        # 26 Nov 2026: Kite's quantity is only the settled part; recent buys sit in t1_quantity
+        from backend.brokers.kite import KiteConfigError, normalize_holdings
+
+        rows = normalize_holdings([
+            {"tradingsymbol": "TCS", "exchange": "NSE", "quantity": 10, "t1_quantity": 5,
+             "average_price": 100, "last_price": 110, "pnl": 100},          # Kite pnl on 10 only
+            {"tradingsymbol": "INFY", "exchange": "NSE", "quantity": 0, "t1_quantity": 8,
+             "average_price": 50, "last_price": 55},                       # bought yesterday
+        ])
+        tcs, infy = rows
+        self.assertEqual((tcs["quantity"], tcs["settled_quantity"], tcs["t1_quantity"]), (15, 10, 5))
+        self.assertEqual((tcs["invested_value"], tcs["current_value"], tcs["pnl"]), (1500, 1650, 150))
+        self.assertEqual((infy["quantity"], infy["current_value"], infy["pnl"]), (8, 440, 40))
+        with self.assertRaises(KiteConfigError):
+            normalize_holdings([{"tradingsymbol": "X", "exchange": "NSE", "quantity": 1, "t1_quantity": -1,
+                                 "average_price": 1, "last_price": 1}])
+
+    def test_kite_sync_stores_t1_shares(self):
+        from backend.brokers.kite import normalize_holdings
+
+        rows = normalize_holdings([{"tradingsymbol": "TCS", "exchange": "NSE", "quantity": 10,
+                                    "t1_quantity": 5, "average_price": 100, "last_price": 110}])
+        self.db.replace_kite_positions(rows)
+        stored = [p for p in self.db.list_positions() if p["tradingsymbol"] == "TCS"][0]
+        self.assertEqual((stored["quantity"], stored["t1_quantity"]), (15, 5))
+
     def test_missing_kiteconnect_explains_how_to_install_the_extra(self):
         from backend.brokers import kite
 

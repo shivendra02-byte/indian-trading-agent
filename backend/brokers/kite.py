@@ -377,18 +377,28 @@ def normalize_holdings(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     raise ValueError
             except (TypeError, ValueError):
                 raise KiteConfigError(f"Kite returned an invalid {field} for {symbol}")
-        quantity = float(holding["quantity"])
+        # Kite's ``quantity`` is only the settled (T+2, in demat) part; shares bought in the last
+        # session or two are in ``t1_quantity`` and must be added, as the Kite app does (26 Nov 2026).
+        settled = float(holding["quantity"])
+        t1 = _num(holding.get("t1_quantity"))
+        if not math.isfinite(t1) or t1 < 0:
+            raise KiteConfigError(f"Kite returned an invalid t1_quantity for {symbol}")
+        quantity = settled + t1
         average_price = float(holding["average_price"])
         last_price = float(holding["last_price"])
         close_price = _num(holding.get("close_price", last_price))
         invested_value = average_price * quantity
         current_value = last_price * quantity
-        pnl = _num(holding.get("pnl")) if holding.get("pnl") is not None else current_value - invested_value
+        if t1 or holding.get("pnl") is None:
+            pnl = current_value - invested_value   # on the full quantity, settled + T1
+        else:
+            pnl = _num(holding.get("pnl"))
         normalized.append({
             "tradingsymbol": symbol,
             "exchange": exchange,
             "isin": holding.get("isin"), "product": holding.get("product"),
-            "quantity": quantity, "t1_quantity": _num(holding.get("t1_quantity")),
+            "quantity": quantity, "t1_quantity": t1, "settled_quantity": settled,
+            "collateral_quantity": _num(holding.get("collateral_quantity")),
             "average_price": round(average_price, 2), "last_price": round(last_price, 2),
             "close_price": round(close_price, 2), "invested_value": round(invested_value, 2),
             "current_value": round(current_value, 2), "pnl": round(pnl, 2),
