@@ -18,6 +18,18 @@ class LotsWithinRiskTests(unittest.TestCase):
         self.assertEqual(lots_within_risk("mcx", 35_001), (0, None))
         self.assertEqual(lots_within_risk("stock_futures", 21_144), (0, None))  # NSE unchanged
 
+    def test_silverm_rupee_cap(self):
+        # agreed 26 Nov 2026: a SILVERM lot whose stop risks more than ₹15,000 is skipped
+        from backend.decision.config import lot_risk_cap, lots_within_risk
+        self.assertEqual(lot_risk_cap("mcx", "SILVERM"), 15000)
+        self.assertIsNone(lot_risk_cap("mcx", "GOLDM"))
+        self.assertEqual(lots_within_risk("mcx", 15_000, "SILVERM")[0], 1)
+        lots, note = lots_within_risk("mcx", 21_144, "SILVERM")
+        self.assertEqual(lots, 0)
+        self.assertIn("₹15,000 cap for SILVERM", note)
+        self.assertEqual(lots_within_risk("mcx", 21_144, "GOLDM")[0], 1)       # gold keeps the 3.5% rule
+        self.assertEqual(lots_within_risk("mcx", 21_144)[0], 1)                # no symbol → old rule (tracker)
+
     def test_tracker_sizes_like_the_scan(self):
         from backend.journal.tracker import _size
         rec = {"segment": "mcx", "extra": {"value_per_point": 5}}

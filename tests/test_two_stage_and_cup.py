@@ -141,7 +141,12 @@ class CupHandleScanTests(IsolatedStateTestCase, unittest.TestCase):
         save_candles(256265, "day", [{**b, "date": b["ts"]} for b in flat_nifty(bars)])
         from backend.signals import events
         events.refresh_results(["CUPCO"], fetch=lambda s: date(2027, 3, 1), today=date(2026, 11, 20))
-        out = cup_handle.run_scan(now=datetime(2026, 11, 20, 16, 0), results_fetch=lambda s: date(2027, 3, 1))
+        # retired 26 Nov 2026: off in the live config, the code still works when switched on
+        self.assertEqual(cup_handle.run_scan(now=datetime(2026, 11, 20, 16, 0))["status"], "skipped")
+        from unittest import mock
+        real = cup_handle.settings
+        with mock.patch.object(cup_handle, "settings", lambda *a, **k: {**real(*a, **k), "enabled": True}):
+            out = cup_handle.run_scan(now=datetime(2026, 11, 20, 16, 0), results_fetch=lambda s: date(2027, 3, 1))
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(out["patterns"], 1, out)
         from backend.journal.store import list_records

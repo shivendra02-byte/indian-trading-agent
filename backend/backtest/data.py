@@ -67,7 +67,8 @@ def backfill_series(client, token: int, interval: str, start: datetime, now: dat
 def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
                            hourly_months: int = HISTORY_HOURLY_MONTHS,
                            progress: Callable[[str], None] | None = None) -> dict:
-    """Daily and hourly spot history for every F&O stock and NIFTY.
+    """Daily and hourly spot history for every F&O stock and NIFTY; daily only for the NIFTY 500
+    stocks outside F&O (cash backtests).
 
     Daily: ``daily_years`` (the first ~300 sessions are indicator warm-up).
     Hourly: ``hourly_months``. 10-minute: 24 months for the ORB stocks and NIFTY
@@ -82,6 +83,14 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
         if inst:
             tokens.append((index, inst["instrument_token"]))
     tokens += [(s["symbol"], s["spot_token"]) for s in fno_universe() if s["spot_token"]]
+    daily_only = set()
+    try:   # NIFTY 500 stocks outside F&O: daily history only, for the cash backtests (26 Nov 2026)
+        from backend.marketdata.cash_universe import cash_universe
+        extra = [(s["symbol"], s["spot_token"]) for s in cash_universe() if not s["fno"] and s["spot_token"]]
+        tokens += extra
+        daily_only = {t for _, t in extra}
+    except Exception:
+        pass
     ten_min = set()
     try:
         from backend.signals.orb import orb_universe, settings as orb_settings
@@ -110,7 +119,8 @@ def backfill_for_backtests(client, daily_years: float = HISTORY_DAILY_YEARS,
             _set_progress(current=name)
             try:
                 saved += backfill_series(client, token, "day", daily_start, now)
-                saved += backfill_series(client, token, "60minute", hourly_start, now)
+                if token not in daily_only:
+                    saved += backfill_series(client, token, "60minute", hourly_start, now)
                 if token in ten_min:
                     saved += backfill_series(client, token, "10minute", ten_min_start, now)
                 if token in five_min:

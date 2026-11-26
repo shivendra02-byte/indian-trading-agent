@@ -25,7 +25,7 @@ def run_daily_scan(segment: str, setup: str, cfg: dict, candidate_fn: Callable, 
                    results_fetch: Callable[[str], date | None] | None = None) -> dict:
     from backend.journal.store import add_records as journal_add
     from backend.marketdata.candles import get_candles
-    from backend.marketdata.instruments import fno_universe, spot_instrument
+    from backend.marketdata.instruments import spot_instrument
     from backend.signals import events
     from backend.signals.cash_swing import (IST, _finish_run, _save, _start_run, avg_turnover, data_quality,
                                             ensure_scan_tables, expected_last_daily_bar, min_score)
@@ -62,7 +62,8 @@ def run_daily_scan(segment: str, setup: str, cfg: dict, candidate_fn: Callable, 
         names = ", ".join(f"{e['event']} {e['date']}" for e in market["events"])
         return _finish_run(run_id, "blocked", {"reason": f"event in the first {cfg['event_block_days']} days: {names}"})
     regime = current_regime(nifty_bars[-300:])["regime"]
-    universe = fno_universe(today)
+    from backend.marketdata.cash_universe import cash_universe, min_turnover_for
+    universe = cash_universe(today)          # F&O stocks + the NIFTY 500 (26 Nov 2026)
     if not universe:
         return _finish_run(run_id, "blocked", {"reason": "F&O universe is empty (instrument master missing)"})
     events.refresh_results([u["symbol"] for u in universe], fetch=results_fetch, today=today)
@@ -77,21 +78,26 @@ def run_daily_scan(segment: str, setup: str, cfg: dict, candidate_fn: Callable, 
             rows.append({"symbol": symbol, "valid": False, "reject_reason": why,
                          "stages": [stage("eligibility", "fail", why)]})
 
+        if stock.get("surveillance"):
+            reject(f"on NSE surveillance (ASM/GSM): {stock['surveillance']}")
+            continue
         bars = get_candles(stock["spot_token"], "day", limit=400)
         problem = data_quality(bars, signal_date, min_bars=cfg["min_bars"])
         if problem:
             reject(problem)
             continue
         turnover = avg_turnover(bars)
-        if turnover < cfg["min_turnover"]:
-            reject(f"turnover ₹{turnover / 1e7:.0f} cr < ₹{cfg['min_turnover'] / 1e7:.0f} cr")
+        floor = min_turnover_for(stock, cfg["min_turnover"])
+        if turnover < floor:
+            reject(f"turnover ₹{turnover / 1e7:.0f} cr < ₹{floor / 1e7:.0f} cr")
             continue
         ok, why = events.results_clear(symbol, first, block_last, today)
         if not ok:
             reject(why)
             continue
         c = candidate_fn(bars, cfg, regime, nifty_bars)
-        c["stages"] = [stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1)), *c.get("stages", [])]
+        c["stages"] = [stage("eligibility", "pass", turnover_cr=round(turnover / 1e7, 1),
+                             universe="F&O" if stock.get("fno", True) else "NIFTY 500"), *c.get("stages", [])]
         rows.append({**c, "symbol": symbol, "token": stock["spot_token"], "turnover_cr": round(turnover / 1e7, 1)})
 
     ranked = sorted((r for r in rows if r.get("valid") and r["score"] >= min_score()),

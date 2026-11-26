@@ -150,11 +150,13 @@ def replay(since: date, symbols=None, today: date | None = None) -> dict:
                     lot_risk = c["risk_per_unit"] * vpp[name]
                     row["lot_risk"] = round(lot_risk)
                     if new:
-                        lots, _ = lots_within_risk("mcx", lot_risk)
+                        lots, cap_note = lots_within_risk("mcx", lot_risk, name)
                     else:
                         lots = int(budget // lot_risk) if lot_risk else 0
                     if blocked:
                         why = "event window (US data)"
+                    elif lots < 1 and new and cap_note:
+                        why = cap_note
                     elif lots < 1:
                         why = f"1 lot risks ₹{lot_risk:,.0f} ({100 * lot_risk / capital:.1f}%)"
                     elif bar["ts"] < busy_until[rs]:

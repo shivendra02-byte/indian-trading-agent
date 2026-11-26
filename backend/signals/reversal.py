@@ -321,9 +321,10 @@ def candidates(bars: Sequence[dict], daily: Sequence[dict], p: dict, *, directio
 
 
 def find_all(bars: Sequence[dict], p: dict, daily_stages: Callable[[int], dict | None],
-             directions=("long",), start: int = 0) -> list[dict]:
+             directions=("long",), start: int = 0, on_reject: Callable[[str], None] | None = None) -> list[dict]:
     """Every trackable signal by bar, point in time — for backtests. ``daily_stages(t)`` gives the
-    stage info valid at bar ``t``. Indicators are causal, so they are computed once."""
+    stage info valid at bar ``t``. Indicators are causal, so they are computed once. ``on_reject``
+    receives the reason of every bar that was checked and failed (the backtest drop-out funnel)."""
     sr = Series(bars, p)
     out = []
     for t in range(max(start, p["context_ema"] + p["stretch_bars"] + 2), len(bars)):
@@ -333,11 +334,15 @@ def find_all(bars: Sequence[dict], p: dict, daily_stages: Callable[[int], dict |
                 continue
             s = 1 if d == "long" else -1
             if s * (sr.closes[t] - sv) <= 0:           # cheap pre-filter: the trigger needs a close beyond EMA9
+                if on_reject:
+                    on_reject(f"no close beyond the {p['trigger_ema']} EMA")
                 continue
             row = build(bars[:t + 1], d, p, daily_stages(t), None, _Prefix(sr, t), t)
             if row.get("trackable"):
                 row["s"] = t
                 out.append(row)
+            elif on_reject:
+                on_reject(row.get("reject_reason") or "rejected")
     return out
 
 
@@ -363,11 +368,18 @@ def cash_settings() -> dict:
         "event_block_days": int(x.get("event_block_days", 5)),
         "entry_window": x.get("entry_window", ["09:15", "15:15"]),
         "params": params(x), "directions": tuple(d for d in inst.directions if d in ("long", "short")) or ("long",),
+        # optional NIFTY-regime filter (26 Nov 2026, tested in a rule set first): NIFTY's daily regime must be one
+        # of these; None = no filter (live)
+        "nifty_regimes": list(x["nifty_regimes"]) if x.get("nifty_regimes") else None,
     }
 
 
 def cash_candidate(bars: Sequence[dict], cfg: dict, regime: str | None, nifty: Sequence[dict] | None = None) -> dict:
     """The cash scan's row for one stock: the best valid direction, else the long rejection."""
+    allowed = cfg.get("nifty_regimes")
+    if allowed and regime not in allowed:
+        return {"setup": SETUP, "direction": cfg["directions"][0], "valid": False, "trackable": False,
+                "regime": regime, "reject_reason": f"NIFTY regime {regime} not in {', '.join(allowed)}"}
     rows = candidates(bars, bars, cfg["params"], directions=cfg["directions"], regime=regime)
     valid = [r for r in rows if r.get("trackable")]
     if valid:

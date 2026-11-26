@@ -160,17 +160,26 @@ def evaluate(regime: str, h1: Sequence[dict], h4: Sequence[dict], m15: Sequence[
     d = regime_direction(regime)
     out = {"regime": regime, "bias": d or ("range" if regime == "SIDEWAYS" else None), "h4": None, "h1": None,
            "m15": None, "signal": None, "at": now.isoformat(timespec="minutes")}
-    t = now.time()
-    in_window = time.fromisoformat(cfg["first_signal"]) <= t <= time.fromisoformat(cfg["last_signal"])
+    first, last = time.fromisoformat(cfg["first_signal"]), time.fromisoformat(cfg["last_signal"])
+
+    def in_window(bars: Sequence[dict], minutes: int) -> bool:
+        """The window applies to the end of the bar that triggers (fixed 26 Nov 2026: it was compared
+        with the clock, so the 14:30–14:45 bar, scanned ~14:47, could never trigger). The bar must be
+        from today's session."""
+        if not bars:
+            return False
+        end = bar_end(bars[-1], minutes)
+        return end.date() == now.date() and first <= end.time() <= last
+
     if regime == "SIDEWAYS":
         setup, why = range_rejection(h1, cfg)
         out["h1"] = {"ok": bool(setup), "note": why}
         out["h4"] = {"ok": None, "note": "not used in a sideways market"}
         out["m15"] = {"ok": None, "note": "condor enters on the 1H close"}
-        if setup and in_window:
+        if setup and in_window(h1, 60):
             out["signal"] = {"direction": "range", **setup, "signal_ts": h1[-1]["ts"]}
         elif setup:
-            out["reason"] = "outside the entry window"
+            out["reason"] = f"outside the entry window ({cfg['first_signal']}–{cfg['last_signal']} bar end)"
         else:
             out["reason"] = why
         return out
@@ -189,8 +198,8 @@ def evaluate(regime: str, h1: Sequence[dict], h4: Sequence[dict], m15: Sequence[
         out["reason"] = why1
     elif not ok15:
         out["reason"] = why15
-    elif not in_window:
-        out["reason"] = "outside the entry window"
+    elif not in_window(m15, 15):
+        out["reason"] = f"outside the entry window ({cfg['first_signal']}–{cfg['last_signal']} bar end)"
     else:
         out["signal"] = {"direction": d, **setup, "signal_ts": m15[-1]["ts"], "trigger_close": m15[-1]["close"]}
     return out

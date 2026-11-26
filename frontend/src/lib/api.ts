@@ -229,6 +229,12 @@ export const startOptionBackfill = (data: { start_date: string; end_date: string
 export const runOptionUpdate = () => fetchAPI(`/api/options/update`, { method: "POST" });
 export const uploadOptionFile = (exchange: "NSE" | "BSE", file: Blob) =>
   fetchAPI(`/api/options/upload?exchange=${exchange}`, { method: "POST", body: file });
+// Cash universe: F&O + NIFTY 500, ASM/GSM list (26 Nov 2026)
+export const getCashUniverse = () => fetchAPI(`/api/marketdata/cash-universe`);
+export const refreshNifty500 = () => fetchAPI(`/api/marketdata/nifty500/refresh`, { method: "POST" });
+export const uploadNifty500 = (file: Blob) => fetchAPI(`/api/marketdata/nifty500/upload`, { method: "POST", body: file });
+export const uploadSurveillance = (file: Blob) =>
+  fetchAPI(`/api/marketdata/surveillance/upload`, { method: "POST", body: file });
 export const getOptionChain = (symbol: string, date?: string, expiry?: string) => {
   const params = new URLSearchParams({ symbol });
   if (date) params.set("date", date);
@@ -344,6 +350,14 @@ export const backtestOptionSpreads = (data: {
   split_date?: string | null;
 }) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
 
+// Minimum credit comparison for bull put / bear call spreads (asked 26 Nov 2026)
+export const compareSpreadCredit = (data: {
+  start_date: string;
+  end_date: string;
+  ratios?: number[];
+  split_date?: string | null;
+}) => fetchAPI(`/api/options/spreads/compare-credit`, { method: "POST", body: JSON.stringify(data) });
+
 // Option-spread research: experiments A/B/C (asked 24 Nov 2026)
 export const startSpreadResearch = (data: {
   start_date: string;
@@ -436,8 +450,6 @@ export const getOllamaModels = () => fetchAPI(`/api/settings/ollama/models`);
 // Learning Insights
 export const getLearningInsights = () => fetchAPI(`/api/insights/`);
 
-// Daily Verdict (synthesized trade-or-skip decision)
-export const getDailyVerdict = () => fetchAPI(`/api/daily-verdict/`);
 
 // Concentration (Sector Exposure Tracker)
 export const getConcentrationSummary = () => fetchAPI(`/api/concentration/summary`);
@@ -609,13 +621,6 @@ export const refreshShadowTrades = () =>
 export const getConfidenceCalibration = (windowDays = 180) =>
   fetchAPI(`/api/confidence-calibration/?window_days=${windowDays}`);
 
-// Verdict Calibration (does the daily verdict actually predict Nifty?)
-export const getVerdictCalibration = (windowDays = 90) =>
-  fetchAPI(`/api/verdict-calibration/?window_days=${windowDays}`);
-export const forceSnapshotVerdict = () =>
-  fetchAPI(`/api/verdict-calibration/snapshot`, { method: "POST" });
-export const backfillVerdictOutcomes = () =>
-  fetchAPI(`/api/verdict-calibration/backfill`, { method: "POST" });
 
 // Performance
 export const getPerformanceAll = (universe = "nifty50", lookbackDays = 60) =>

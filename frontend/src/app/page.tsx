@@ -10,7 +10,6 @@ import { SectorHeatmap } from "@/components/dashboard/SectorHeatmap";
 import { FIIDIIBanner } from "@/components/dashboard/FIIDIIBanner";
 import { CalendarBanner } from "@/components/dashboard/CalendarBanner";
 import { ConcentrationWidget } from "@/components/dashboard/ConcentrationWidget";
-import { DailyVerdict } from "@/components/dashboard/DailyVerdict";
 import { RegimeBadge } from "@/components/dashboard/RegimeBadge";
 import { TodayPnl } from "@/components/dashboard/TodayPnl";
 
@@ -50,10 +49,6 @@ export default function DashboardPage() {
       {/* Market Regime Badge — shows current regime (Bull/Bear/Sideways/High-Vol)
           so traders know which conditional signal weights to expect */}
       <RegimeBadge />
-
-      {/* === HEADLINE DECISION CARD ===
-          Synthesizes all filters into one TRADE / SELECTIVE / STAND DOWN verdict */}
-      <DailyVerdict />
 
       {/* Today's P&L — your futures trades + the system's paper trades (asked 24 Nov 2026) */}
       <TodayPnl />

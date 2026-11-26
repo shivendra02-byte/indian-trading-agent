@@ -53,6 +53,13 @@ def build_sync_plan(today: date | None = None) -> list[dict]:
             add(stock["symbol"], row, "day", NSE, 400)
         if stock["future_token"]:  # traded contract for the 1h futures scan, with OI
             add(f"{stock['symbol']} FUT", {"instrument_token": stock["future_token"]}, "60minute", NSE, 60, oi=True)
+    try:  # NIFTY 500 stocks outside F&O: daily bars only, for the cash strategies (26 Nov 2026)
+        from backend.marketdata.cash_universe import cash_universe
+        for stock in cash_universe(today):
+            if not stock["fno"] and stock["spot_token"]:
+                add(stock["symbol"], {"instrument_token": stock["spot_token"]}, "day", NSE, 400)
+    except Exception:  # never let the NIFTY 500 list break the main sync plan
+        pass
     try:  # ORB: 10-minute bars (with OI) of the most liquid stocks' active futures
         from backend.signals.orb import orb_universe, settings as orb_settings
         if orb_settings()["enabled"]:
@@ -130,8 +137,15 @@ def _run(job: str, body: Callable[[object], dict], client=None) -> dict:
 
 
 def morning_refresh(client=None) -> dict:
-    """Instrument master + F&O ban list + results dates. Run before 09:15 on trading days."""
+    """NIFTY 500 list (monthly) + surveillance list + instrument master + F&O ban list + results
+    dates. Run before 09:15 on trading days."""
     def body(c):
+        try:   # before the master, so the NIFTY 500 equities are kept in it (26 Nov 2026)
+            from backend.marketdata.cash_universe import refresh_nifty500, refresh_surveillance
+            n500 = refresh_nifty500()
+            surv = refresh_surveillance()
+        except Exception as exc:  # never block the morning refresh
+            n500 = surv = {"status": "error", "error": type(exc).__name__}
         summary = refresh_instruments(c)
         ban = refresh_ban_list()
         try:
@@ -145,7 +159,7 @@ def morning_refresh(client=None) -> dict:
         except Exception as exc:     # never block the morning refresh
             repaired = {"error": type(exc).__name__}
         return {"instruments": summary, "ban_list": {k: v for k, v in ban.items() if k != "symbols"},
-                "results_dates": results, "continuous_daily": repaired}
+                "results_dates": results, "continuous_daily": repaired, "nifty500": n500, "surveillance": surv}
     return _run("morning_refresh", body, client)
 
 

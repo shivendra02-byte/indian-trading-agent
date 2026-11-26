@@ -5,7 +5,7 @@ needs are kept:
 
 * NFO futures — every stock and index future (defines the F&O stock list)
 * NFO options — scanned indices only (NIFTY, BANKNIFTY)
-* NSE cash rows — spot equity for F&O stocks, plus the spot indices
+* NSE cash rows — spot equity for F&O stocks and the NIFTY 500 (cash strategies), plus the spot indices
 * MCX futures — the mini contracts in ``MCX_UNDERLYINGS``
 * BFO futures + the BSE spot index — SENSEX (``BFO_INDICES``)
 """
@@ -53,8 +53,9 @@ def _iso(value: Any) -> str | None:
 
 
 def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict],
-                bfo: Iterable[dict] = (), bse: Iterable[dict] = ()) -> list[dict]:
-    """Pick the instrument rows the scanner needs from the raw Kite dumps."""
+                bfo: Iterable[dict] = (), bse: Iterable[dict] = (), extra_equities: Iterable[str] = ()) -> list[dict]:
+    """Pick the instrument rows the scanner needs from the raw Kite dumps. ``extra_equities``:
+    more NSE cash symbols to keep (the NIFTY 500 for the cash strategies, 26 Nov 2026)."""
     nfo = list(nfo)
     futures = [r for r in nfo if r.get("segment") == "NFO-FUT"]
     if len(futures) < MIN_NFO_FUTURES:
@@ -62,12 +63,13 @@ def select_rows(nfo: Iterable[dict], nse: Iterable[dict], mcx: Iterable[dict],
             f"Kite returned only {len(futures)} NFO futures; keeping the previous instrument master"
         )
     stock_names = {r["name"] for r in futures if r.get("name") and r["name"] not in INDEX_UNDERLYINGS}
+    equity_names = stock_names | {s.upper() for s in extra_equities}
     spot_indices = {INDEX_SPOT_SYMBOLS[n] for n in SCANNED_INDICES if n in INDEX_SPOT_SYMBOLS}
 
     selected = list(futures)
     selected += [r for r in nfo if r.get("segment") == "NFO-OPT" and r.get("name") in SCANNED_INDICES]
     for r in nse:
-        if r.get("segment") == "NSE" and r.get("instrument_type") == "EQ" and r.get("tradingsymbol") in stock_names:
+        if r.get("segment") == "NSE" and r.get("instrument_type") == "EQ" and r.get("tradingsymbol") in equity_names:
             selected.append(r)
         elif r.get("segment") == "INDICES" and r.get("tradingsymbol") in spot_indices:
             selected.append(r)
@@ -92,8 +94,14 @@ def _optional_dump(client, exchange: str) -> list[dict]:
 def refresh_instruments(client) -> dict:
     """Download today's instrument dump from Kite and replace the master."""
     ensure_marketdata_tables()
+    try:   # NIFTY 500 equities for the cash strategies (never block the refresh)
+        from backend.marketdata.cash_universe import nifty500_symbols, settings as cash_settings
+        extra = nifty500_symbols() if cash_settings()["nifty500"] else []
+    except Exception as exc:  # noqa: BLE001
+        log.warning("NIFTY 500 list unavailable: %s", exc)
+        extra = []
     rows = select_rows(client.instruments("NFO"), client.instruments("NSE"), client.instruments("MCX"),
-                       _optional_dump(client, "BFO"), _optional_dump(client, "BSE"))
+                       _optional_dump(client, "BFO"), _optional_dump(client, "BSE"), extra_equities=extra)
     today = _today().isoformat()
     with get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")

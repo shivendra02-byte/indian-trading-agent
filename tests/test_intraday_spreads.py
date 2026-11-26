@@ -103,15 +103,23 @@ class TimeframeTests(unittest.TestCase):
         h4 = bars([20000 + 20 * i + (30 if i % 6 < 3 else -30) for i in range(80)], minutes=240)
         h1c = [20000 + 15 * i for i in range(70)]
         h1c += [h1c[-1] - d for d in (60, 120, 170, 150, 110, 80)]
-        m15 = bars([20000 + 5 * i for i in range(30)] + [20140, 20130, 20125, 20200], minutes=15, wick=2)
+        m15c = [20000 + 5 * i for i in range(30)] + [20140, 20130, 20125, 20200]
+        m15 = bars(m15c, start="2026-11-25T02:15:00", minutes=15, wick=2)   # last bar 10:30–10:45 today
         now = datetime(2026, 11, 25, 11, 0)
         ev = mtf.evaluate("MODERATE_UP", bars(h1c), h4, m15, now, CFG)
         self.assertEqual(ev["signal"]["direction"], "up", ev)
         self.assertEqual(ev["signal"]["kind"], "pullback")
         self.assertIsNone(mtf.evaluate("STRONG_DOWN", bars(h1c), h4, m15, now, CFG)["signal"])
         self.assertIsNone(mtf.evaluate("UNSTABLE", bars(h1c), h4, m15, now, CFG)["signal"])
-        late = mtf.evaluate("MODERATE_UP", bars(h1c), h4, m15, datetime(2026, 11, 25, 15, 0), CFG)
-        self.assertEqual(late["reason"], "outside the entry window")
+        # 26 Nov 2026: the window applies to the trigger bar's end, not the clock
+        m15_1445 = bars(m15c, start="2026-11-25T06:15:00", minutes=15, wick=2)   # last bar 14:30–14:45
+        on_time = mtf.evaluate("MODERATE_UP", bars(h1c), h4, m15_1445, datetime(2026, 11, 25, 14, 47), CFG)
+        self.assertEqual(on_time["signal"]["direction"], "up", on_time)
+        m15_1500 = bars(m15c, start="2026-11-25T06:30:00", minutes=15, wick=2)   # last bar 14:45–15:00
+        late = mtf.evaluate("MODERATE_UP", bars(h1c), h4, m15_1500, datetime(2026, 11, 25, 15, 2), CFG)
+        self.assertTrue(late["reason"].startswith("outside the entry window"), late)
+        stale = mtf.evaluate("MODERATE_UP", bars(h1c), h4, m15, datetime(2026, 11, 26, 10, 0), CFG)
+        self.assertIsNone(stale["signal"])                                       # yesterday's bar never triggers
         self.assertTrue(mtf.invalidated(ev["signal"]["invalid"], "up", ev["signal"]["invalid"] - 1))
 
     def test_completed_bars(self):

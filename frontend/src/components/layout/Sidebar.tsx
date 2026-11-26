@@ -46,9 +46,9 @@ type NavGroup = {
 };
 
 // The old upstream tools (Top Picks, Market Scan, Strategies, News, Deep Analysis, Performance,
-// Top Picks Tracker, Learning Insights, Signal Performance, Verdict/Confidence Calibration,
+// Top Picks Tracker, Learning Insights, Signal Performance, Confidence Calibration,
 // Shadow Trades, Memory Admin, AI Backtest, My Trades) are off the sidebar (23 Nov 2026) but their
-// pages still open by URL.
+// pages still open by URL. The daily verdict card and Verdict Calibration were removed (26 Nov 2026).
 const navGroups: NavGroup[] = [
   {
     items: [
@@ -58,8 +58,7 @@ const navGroups: NavGroup[] = [
   {
     title: "CASH (AFTER THE CLOSE)",
     items: [
-      { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O stocks)" },
-      { href: "/cup-handle-scan", label: "Cup & Handle", icon: Award, hint: "O'Neil breakouts, ~8-week holds" },
+      { href: "/swing-scan", label: "Swing Scan", icon: TrendingUp, hint: "Daily cash swing setups (F&O + NIFTY 500)" },
       { href: "/reversal-scan", label: "Reversals", icon: Waves, hint: "Stretch → exhaustion → structure break (shadow)" },
       { href: "/vcp-scan", label: "VCP", icon: Award, hint: "Minervini volatility contraction breakouts (shadow)" },
     ],
@@ -220,8 +219,7 @@ export function Sidebar() {
           <LogOut className="h-3.5 w-3.5" /> Sign out
         </button>
         <div className="text-[10px] text-muted-foreground">
-          <p>Powered by Claude + LangGraph</p>
-          <p className="mt-0.5">Data: yfinance (NSE)</p>
+          <p>Powered by Claude · Data: Zerodha Kite</p>
         </div>
       </div>
     </aside>

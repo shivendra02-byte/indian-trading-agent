@@ -153,6 +153,20 @@ class BookTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertAlmostEqual(t["pnl_r"], 18 / 33, places=3)
         self.assertEqual(res["by_strategy"]["bull_put"]["trades"], 1)
 
+    def test_compare_min_credit(self):
+        # asked 26 Nov 2026: the same rules at several minimum credits, with costs
+        from backend.options.spread_research import compare_min_credit
+        res = compare_min_credit(date(2025, 11, 17), date(2025, 11, 21), [0.20, 0.15], symbols=["NIFTY"])
+        by = {r["ratio"]: r for r in res["ratios"]}
+        self.assertEqual(by[0.15]["singles"]["trades"], 1)                    # credit 33 on 200 = 16.5%
+        self.assertEqual(by[0.2]["singles"]["trades"], 0)
+        self.assertEqual(by[0.15]["added_vs"], 0.2)
+        self.assertEqual(by[0.15]["added"]["trades"], 1)
+        t = by[0.15]["added_trades"][0]
+        self.assertEqual((t["strategy"], t["credit_pct"]), ("bull_put", 16.5))
+        self.assertLess(t["pnl_r"], 18 / 33)                                   # costs come off
+        self.assertGreater(by[0.15]["singles"]["avg_cost_points"], 0)
+
     def test_compare_strategies_keeps_a_book_each(self):
         from backend.db import get_db
         with get_db() as conn:
