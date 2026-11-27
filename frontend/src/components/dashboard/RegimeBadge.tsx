@@ -43,7 +43,7 @@ type EngineRegime = {
 const engineStyles: Record<string, { key: string; label: string; desc: string }> = {
   STRONG_UP: { key: "BULL", label: "STRONG UP", desc: "NSE trades allowed: pullback and breakout longs." },
   STRONG_DOWN: { key: "BEAR", label: "STRONG DOWN", desc: "NSE trades allowed: pullback and breakout shorts." },
-  MODERATE_UP: { key: "BULL", label: "MODERATE UP", desc: "Trend up but ADX below the strong level: bullish option spreads only, no new futures or cash longs." },
+  MODERATE_UP: { key: "BULL", label: "MODERATE UP", desc: "Trend up but ADX below the strong level: pullback and breakout longs allowed, bullish option spreads." },
   MODERATE_DOWN: { key: "BEAR", label: "MODERATE DOWN", desc: "Trend down but ADX below the strong level: pullback and breakout futures shorts, bearish option spreads." },
   SIDEWAYS: { key: "SIDEWAYS", label: "SIDEWAYS", desc: "NSE trades allowed: range reversals; breakouts only on 2x volume." },
   HIGH_VOL: { key: "HIGH_VOL", label: "HIGH VOL", desc: "NSE trades allowed: with-trend pullbacks at half size." },

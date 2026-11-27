@@ -61,7 +61,8 @@ class ModerateRegimeTests(unittest.TestCase):
         from backend.decision.config import get_config
         g = get_config().global_
         self.assertEqual(g.regime.adx_moderate_min, 20)
-        self.assertEqual(g.permissions["MODERATE_UP"], {})
+        self.assertEqual(g.permissions["MODERATE_UP"]["pullback"].directions, ["long"])   # 27 Nov 2026
+        self.assertEqual(g.permissions["MODERATE_UP"]["breakout"].directions, ["long"])
         self.assertEqual(g.permissions["MODERATE_DOWN"]["pullback"].directions, ["short"])
         self.assertEqual(g.permissions["MODERATE_DOWN"]["breakout"].directions, ["short"])
 

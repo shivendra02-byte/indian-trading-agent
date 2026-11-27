@@ -72,7 +72,9 @@ global:
     STRONG_DOWN:
       pullback: {directions: [short], risk_mult: 1.0, preferred: true}
       breakout: {directions: [short], risk_mult: 1.0, preferred: true}
-    MODERATE_UP: {}                # agreed 24 Nov 2026: no futures/cash longs in a moderate uptrend (option spreads only)
+    MODERATE_UP:                   # 27 Nov 2026: longs allowed in a moderate uptrend (was {} = none since 24 Nov)
+      pullback: {directions: [long], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [long], risk_mult: 1.0, preferred: true}
     MODERATE_DOWN:                 # agreed 24 Nov 2026: futures may short a moderate downtrend (cash swing is long-only)
       pullback: {directions: [short], risk_mult: 1.0, preferred: true}
       breakout: {directions: [short], risk_mult: 1.0, preferred: true}
@@ -247,7 +249,7 @@ instruments:
       pullback_bars: 6
       cap_stop_atr: 3.0
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
-      long_regimes: [STRONG_UP, HIGH_VOL]
+      long_regimes: [STRONG_UP, MODERATE_UP, HIGH_VOL]
     reversal: &reversal_intraday   # trend reversal on 1H bars of the contract, SHADOW (agreed 25 Nov 2026, replaces Wolfe)
       enabled: true
       context_ema: 200             # the extreme came below (above) the 1H 200 EMA
@@ -302,7 +304,7 @@ instruments:
       pullback_bars: 6
       cap_stop_atr: 3.0
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # the stock's / index's own daily regime
-      long_regimes: [STRONG_UP, HIGH_VOL]
+      long_regimes: [STRONG_UP, MODERATE_UP, HIGH_VOL]
     reversal: *reversal_intraday
   mcx:
     enabled: true
@@ -344,7 +346,7 @@ instruments:
       trigger_ema: true            # ... and beyond the 1H EMA20; one signal per pullback
       cap_stop_atr: 3.0            # stop above the pullback high wider than this → placed at 3 ATR from the entry
       short_regimes: [STRONG_DOWN, MODERATE_DOWN, HIGH_VOL]   # HIGH_VOL only with the daily trend down
-      long_regimes: [STRONG_UP, HIGH_VOL]                     # no longs in a moderate uptrend (agreed 24 Nov 2026)
+      long_regimes: [STRONG_UP, MODERATE_UP, HIGH_VOL]        # moderate uptrend allowed since 27 Nov 2026
     reversal: *reversal_intraday     # each commodity's own daily stage (continuous daily bars)
   index_options:                   # NIFTY / BANKNIFTY — built in a later step
     enabled: false
