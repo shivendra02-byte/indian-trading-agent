@@ -198,6 +198,35 @@ def spreads_compare_credit(req: CreditCompareRequest):
     return compare_min_credit(req.start_date, req.end_date, req.ratios, req.split_date, req.symbols)
 
 
+class TriggerVariant(BaseModel):
+    name: str = Field(max_length=60)
+    pullback_touch_atr: float = Field(gt=0, le=3)
+    pullback_bars: int = Field(ge=1, le=30)
+
+
+class TriggerBacktestRequest(BaseModel):
+    start_date: date
+    end_date: date
+    split_date: date | None = None
+    variants: list[TriggerVariant] | None = Field(default=None, max_length=6)
+
+
+@router.post("/spreads/trigger-backtest")
+def spreads_trigger_backtest(req: TriggerBacktestRequest):
+    """Asked 27 Nov 2026: replay the intraday entry trigger with other 1H pullback settings."""
+    from backend.options import mtf_backtest
+    if req.end_date <= req.start_date:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+    variants = [v.model_dump() for v in req.variants] if req.variants else None
+    return mtf_backtest.start_job(req.start_date, req.end_date, variants, req.split_date)
+
+
+@router.get("/spreads/trigger-backtest")
+def spreads_trigger_backtest_status():
+    from backend.options import mtf_backtest
+    return mtf_backtest.status()
+
+
 # --- research: strategy eligibility, exits, out-of-sample (asked 24 Nov 2026) --------------------
 
 class ResearchRequest(BaseModel):

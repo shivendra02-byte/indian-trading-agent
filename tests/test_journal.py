@@ -66,6 +66,17 @@ class SimulateTests(unittest.TestCase):
 class TrackerAndLearningTests(IsolatedStateTestCase, unittest.TestCase):
     def setUp(self):
         super().setUp()
+        # The fixture's bars end on 25 Nov 2026; pin "today" so later days don't count as missing bars.
+        import datetime as _dt
+        from unittest import mock
+
+        class _Date(_dt.date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 11, 26)
+        patcher = mock.patch("backend.journal.tracker.date", _Date)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         from backend.marketdata import ensure_marketdata_tables
         from backend.marketdata.candles import save_candles
         from backend.journal.store import add_records
