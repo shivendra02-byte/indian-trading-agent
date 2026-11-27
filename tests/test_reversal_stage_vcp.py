@@ -477,3 +477,30 @@ class CashScanTests(IsolatedStateTestCase, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VcpExperimentTests(unittest.TestCase):
+    """26 Nov 2026: looser VCP rule sets and the optional NIFTY-regime filter."""
+
+    def test_loose_rule_sets(self):
+        sets = available_rule_sets()
+        live = vcp.settings()
+        self.assertIsNone(live["nifty_regimes"])                      # live: no filter
+        with use_config(sets["vcp_loose"]):
+            s = vcp.settings()
+            self.assertAlmostEqual(s["max_last_depth"], 0.12)
+            self.assertAlmostEqual(s["dryup_ratio"], 0.9)
+            self.assertIsNone(s["nifty_regimes"])
+        with use_config(sets["vcp_loose_regime"]):
+            s = vcp.settings()
+            self.assertAlmostEqual(s["max_last_depth"], 0.12)
+            self.assertNotIn("STRONG_DOWN", s["nifty_regimes"])
+            self.assertIn("SIDEWAYS", s["nifty_regimes"])
+
+    def test_scan_candidate_applies_the_regime_filter(self):
+        cfg = {**vcp.settings(), "nifty_regimes": ["STRONG_UP", "SIDEWAYS"]}
+        row = vcp.scan_candidate(vcp_bars(), cfg, "STRONG_DOWN")
+        self.assertFalse(row["valid"])
+        self.assertIn("NIFTY regime STRONG_DOWN", row["reject_reason"])
+        self.assertTrue(vcp.scan_candidate(vcp_bars(), cfg, "SIDEWAYS")["valid"])
+        self.assertTrue(vcp.scan_candidate(vcp_bars(), vcp.settings(), "STRONG_DOWN")["valid"])   # live: no filter
