@@ -350,6 +350,15 @@ export const backtestOptionSpreads = (data: {
   split_date?: string | null;
 }) => fetchAPI(`/api/options/spreads/backtest`, { method: "POST", body: JSON.stringify(data) });
 
+// Intraday spread trigger backtest: 1H pullback settings (asked 27 Nov 2026)
+export const startSpreadTriggerBacktest = (data: {
+  start_date: string;
+  end_date: string;
+  split_date?: string | null;
+  variants?: { name: string; pullback_touch_atr: number; pullback_bars: number }[];
+}) => fetchAPI(`/api/options/spreads/trigger-backtest`, { method: "POST", body: JSON.stringify(data) });
+export const getSpreadTriggerBacktest = () => fetchAPI(`/api/options/spreads/trigger-backtest`);
+
 // Minimum credit comparison for bull put / bear call spreads (asked 26 Nov 2026)
 export const compareSpreadCredit = (data: {
   start_date: string;

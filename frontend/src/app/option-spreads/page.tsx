@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/utils";
 import { SpreadResearch } from "@/components/spreads/SpreadResearch";
 import { CreditCompare } from "@/components/spreads/CreditCompare";
+import { TriggerBacktest } from "@/components/spreads/TriggerBacktest";
 
 type Leg = { type: "CE" | "PE"; strike: number; side: "short" | "long"; price: number; delta?: number };
 type Spread = {
@@ -510,6 +511,7 @@ export default function OptionSpreadsPage() {
           )}
         </CardContent>
       </Card>
+      <TriggerBacktest />
       <CreditCompare />
       <SpreadResearch
         defaults={{ start_date: form.start_date, end_date: form.end_date, split_date: form.split_date || "2025-12-01", minSingle: minSingle || "10" }}
