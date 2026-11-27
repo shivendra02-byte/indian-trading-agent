@@ -199,3 +199,23 @@ def research_postmortem_run(req: PostmortemRequest):
 def research_trend_diagnostic(include_stocks: bool = True):
     from backend.research.lab import trend_diagnostic
     return trend_diagnostic(include_stocks=include_stocks)
+
+
+# --- risk switch (information only) -------------------------------------------------------------
+
+class StudyRequest(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+@router.get("/risk-switch")
+def research_risk_switch(days: int = 120):
+    from backend.research.risk_switch import current
+    return current(min(max(days, 10), 750))
+
+
+@router.post("/risk-switch/study")
+def research_risk_switch_study(req: StudyRequest):
+    from backend.research.risk_switch import run_study
+    return run_study(req.start_date.isoformat() if req.start_date else None,
+                     req.end_date.isoformat() if req.end_date else None)

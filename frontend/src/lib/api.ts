@@ -746,3 +746,6 @@ export const runResearchPostmortem = (data: { week_start?: string | null; with_a
   fetchAPI(`/api/research/postmortem/run`, { method: "POST", body: JSON.stringify(data) });
 export const getTrendDiagnostic = (includeStocks = true) =>
   fetchAPI(`/api/research/lab/trend-diagnostic?include_stocks=${includeStocks}`);
+export const getRiskSwitch = (days = 120) => fetchAPI(`/api/research/risk-switch?days=${days}`);
+export const runRiskSwitchStudy = (data: { start_date?: string | null; end_date?: string | null }) =>
+  fetchAPI(`/api/research/risk-switch/study`, { method: "POST", body: JSON.stringify(data) });

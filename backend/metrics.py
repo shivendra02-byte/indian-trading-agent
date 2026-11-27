@@ -8,6 +8,9 @@
   with sqrt(252). Comparable across strategies with different holding periods.
 - ``calmar``: R per year divided by the largest peak-to-trough fall of
   cumulative R (trades in exit order).
+- ``worst_quarter_r`` / ``quarters_positive_pct``: R summed per calendar quarter of
+  exit; the worst quarter and the share of positive quarters (27 Nov 2026, from
+  the DeePM paper: judge a rule by its worst windows, not only its average).
 
 All in R (1R = the planned risk), before tax. With fewer than 30 trades every
 figure is noise; callers already flag that.
@@ -53,12 +56,24 @@ def risk_metrics(results: Iterable[tuple[str | None, float]]) -> dict:
     rs = [r for _, r in pairs]
     if len(rs) < 2:
         return {"sharpe_trade": None, "sortino_trade": None, "sharpe_annual": None,
-                "sortino_annual": None, "calmar": None}
+                "sortino_annual": None, "calmar": None, "worst_quarter_r": None, "quarters_positive_pct": None}
     mean = sum(rs) / len(rs)
     out = {"sharpe_trade": _ratio(mean, _std(rs, mean), 3),
            "sortino_trade": _ratio(mean, _downside(rs), 3),
-           "sharpe_annual": None, "sortino_annual": None, "calmar": None}
+           "sharpe_annual": None, "sortino_annual": None, "calmar": None,
+           "worst_quarter_r": None, "quarters_positive_pct": None}
     dated = sorted((d, r) for d, r in pairs if d)
+    quarters: dict[str, float] = {}
+    for d, r in dated:
+        try:
+            day = date.fromisoformat(d)
+        except ValueError:
+            continue
+        q = f"{day.year}-Q{(day.month - 1) // 3 + 1}"
+        quarters[q] = quarters.get(q, 0.0) + r
+    if quarters:
+        out["worst_quarter_r"] = round(min(quarters.values()), 2)
+        out["quarters_positive_pct"] = round(100 * sum(1 for v in quarters.values() if v > 0) / len(quarters), 0)
     if len(dated) < 2:
         return out
     try:
