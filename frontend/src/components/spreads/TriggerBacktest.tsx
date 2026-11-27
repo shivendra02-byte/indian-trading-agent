@@ -66,6 +66,7 @@ const HEAD = ["Trades", "Win %", "Avg R", "PF", "Max DD R", "Total ₹"];
 export function TriggerBacktest() {
   const [form, setForm] = useState({ start_date: "2025-12-01", end_date: "2026-11-26", split_date: "2026-06-01" });
   const [job, setJob] = useState<Job | null>(null);
+  const [preset, setPreset] = useState<"pullback" | "research">("pullback");
 
   const fetchJob = useCallback(() => {
     getSpreadTriggerBacktest()
@@ -85,7 +86,7 @@ export function TriggerBacktest() {
 
   const start = async () => {
     try {
-      const r = (await startSpreadTriggerBacktest({ ...form, split_date: form.split_date || null })) as { status: string };
+      const r = (await startSpreadTriggerBacktest({ ...form, split_date: form.split_date || null, preset })) as { status: string };
       if (r.status === "busy") toast.error("A run is already going");
       fetchJob();
     } catch (e) {
@@ -98,10 +99,12 @@ export function TriggerBacktest() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Entry trigger test: 1H pullback settings</CardTitle>
+        <CardTitle className="text-base">Entry trigger test</CardTitle>
         <CardDescription>
-          Replays the intraday trigger (daily regime → 4H → 1H pullback → 15m) on stored index bars for four settings: touch
-          within 0.25 or 0.75 ATR of the 1H EMA20, in the last 6 or 10 bars. Spreads are priced on the day&apos;s closing
+          Replays the intraday trigger (daily regime → 4H → 1H pullback → 15m) on stored index bars. Compare the 1H pullback
+          settings (touch within 0.25 or 0.75 ATR of the 1H EMA20, in the last 6 or 10 bars) or the research ideas: a
+          regime change confirmed over 2 days with an ADX exit band, the 20/250-day trend as a direction filter, and no
+          1H invalidation exit. Spreads are priced on the day&apos;s closing
           option chain, with costs.
         </CardDescription>
       </CardHeader>
@@ -113,6 +116,17 @@ export function TriggerBacktest() {
               <Input type="date" value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} className="w-40" />
             </label>
           ))}
+          <label className="space-y-1">
+            <span className="block text-xs text-muted-foreground">Compare</span>
+            <select
+              className="h-9 rounded border bg-background px-2 text-xs"
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as "pullback" | "research")}
+            >
+              <option value="pullback">1H pullback settings (0.25/0.75 ATR × 6/10 bars)</option>
+              <option value="research">Research: regime hysteresis, 20/250 trend filter, no invalidation exit</option>
+            </select>
+          </label>
           <Button size="sm" disabled={running} onClick={start}>
             {running ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Play className="mr-1 h-4 w-4" />} Run test
           </Button>

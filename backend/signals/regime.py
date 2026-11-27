@@ -13,6 +13,10 @@ The current label becomes UNSTABLE if the label changed 3+ times in the last 10 
 A move between STRONG_x and MODERATE_x is not a change (same direction, ADX hovering at 25).
 ``adx_moderate_min: null`` switches the moderate tier off (those days stay UNSTABLE).
 
+Hysteresis (27 Nov 2026, experiment; live config leaves both off): ``adx_trend_exit`` keeps a
+STRONG_x label while ADX stays at or above it (entering still needs ``adx_trend_min``), and
+``confirm_days`` accepts a new label only after it has held that many days in a row.
+
 ``current_regime(bars, high_vol_trend=True)`` (MCX, agreed 25 Nov 2026): a HIGH_VOL day whose
 close and EMAs are aligned (close < EMA20 < EMA50, or the mirror) counts as part of that trend
 for the instability check, and the result carries ``trend`` = "down" / "up" so a falling market
@@ -52,8 +56,13 @@ def _cfg():
     return get_config().global_.regime
 
 
-def label_series(bars: Sequence[dict]) -> list[str | None]:
+def label_series(bars: Sequence[dict], confirm_days: int | None = None,
+                 adx_trend_exit: float | None = None) -> list[str | None]:
+    """Daily labels. ``confirm_days`` / ``adx_trend_exit`` override the config's hysteresis
+    settings (backtests of variants); None = use the config."""
     cfg = _cfg()
+    confirm = int(confirm_days if confirm_days is not None else getattr(cfg, "confirm_days", 1) or 1)
+    exit_adx = adx_trend_exit if adx_trend_exit is not None else getattr(cfg, "adx_trend_exit", None)
     st = get_config().strategy("pullback")
     closes = [b["close"] for b in bars]
     e20, e50 = ema(closes, st.ema_fast), ema(closes, st.ema_slow)
@@ -65,11 +74,14 @@ def label_series(bars: Sequence[dict]) -> list[str | None]:
         window = [v for v in rv[max(0, i - 119):i + 1] if v is not None]
         if None in (e20[i], e50[i], adx14[i], rv[i]) or len(window) < 60 or i < k or e50[i - k] is None:
             continue
+        prev = next((l for l in reversed(labels[:i]) if l is not None), None)
+        up_min = exit_adx if (exit_adx is not None and prev == STRONG_UP) else cfg.adx_trend_min
+        down_min = exit_adx if (exit_adx is not None and prev == STRONG_DOWN) else cfg.adx_trend_min
         if rv[i] > cfg.high_vol_ratio * (sum(window) / len(window)):
             labels[i] = HIGH_VOL
-        elif closes[i] > e20[i] > e50[i] and e50[i] > e50[i - k] and adx14[i] >= cfg.adx_trend_min:
+        elif closes[i] > e20[i] > e50[i] and e50[i] > e50[i - k] and adx14[i] >= up_min:
             labels[i] = STRONG_UP
-        elif closes[i] < e20[i] < e50[i] and e50[i] < e50[i - k] and adx14[i] >= cfg.adx_trend_min:
+        elif closes[i] < e20[i] < e50[i] and e50[i] < e50[i - k] and adx14[i] >= down_min:
             labels[i] = STRONG_DOWN
         elif (cfg.adx_moderate_min is not None and adx14[i] >= cfg.adx_moderate_min
               and closes[i] > e20[i] > e50[i] and e50[i] > e50[i - k]):
@@ -81,7 +93,23 @@ def label_series(bars: Sequence[dict]) -> list[str | None]:
             labels[i] = SIDEWAYS
         else:
             labels[i] = UNSTABLE
-    return labels
+    return _confirm(labels, confirm) if confirm > 1 else labels
+
+
+def _confirm(raw: list[str | None], days: int) -> list[str | None]:
+    """A label change counts only once the new raw label has held ``days`` days in a row."""
+    out: list[str | None] = []
+    accepted, run_label, run_len = None, None, 0
+    for lab in raw:
+        if lab is None:
+            out.append(None)
+            continue
+        run_len = run_len + 1 if lab == run_label else 1
+        run_label = lab
+        if accepted is None or lab == accepted or run_len >= days:
+            accepted = lab
+        out.append(accepted)
+    return out
 
 
 def explain_current(bars: Sequence[dict]) -> dict:
@@ -141,13 +169,15 @@ def high_vol_trends(bars: Sequence[dict]) -> list[str | None]:
     return out
 
 
-def current_regime(bars: Sequence[dict], high_vol_trend: bool = False) -> dict:
+def current_regime(bars: Sequence[dict], high_vol_trend: bool = False, confirm_days: int | None = None,
+                   adx_trend_exit: float | None = None) -> dict:
     """Regime for the last bar, with the instability check. Fails closed (UNSTABLE)
-    when there isn't enough history. ``high_vol_trend``: see the module docstring."""
+    when there isn't enough history. ``high_vol_trend``: see the module docstring;
+    ``confirm_days`` / ``adx_trend_exit``: hysteresis overrides (see ``label_series``)."""
     cfg = _cfg()
     if len(bars) < cfg.min_daily_bars:
         return {"regime": UNSTABLE, "reason": f"only {len(bars)} daily bars (need {cfg.min_daily_bars})"}
-    labels = label_series(bars)
+    labels = label_series(bars, confirm_days, adx_trend_exit)
     n = cfg.instability_window
     trends = high_vol_trends(bars) if high_vol_trend else [None] * len(bars)
     pairs = [(l, t) for l, t in zip(labels[-n:], trends[-n:]) if l is not None]

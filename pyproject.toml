@@ -37,6 +37,9 @@ dependencies = [
     "feedparser>=6.0.12",
     "numpy>=2.0",
     "nsepython>=2.97",
+    # Research section (27 Nov 2026): pairs matching and the win-probability model
+    "networkx>=3.6",
+    "scikit-learn>=1.8",
 ]
 
 [project.optional-dependencies]

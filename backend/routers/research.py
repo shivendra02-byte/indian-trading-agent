@@ -219,3 +219,25 @@ def research_risk_switch_study(req: StudyRequest):
     from backend.research.risk_switch import run_study
     return run_study(req.start_date.isoformat() if req.start_date else None,
                      req.end_date.isoformat() if req.end_date else None)
+
+
+# --- win-probability model ----------------------------------------------------------------------
+
+class WinModelRequest(BaseModel):
+    source: Literal["journal", "backtest"] = "journal"
+    run_id: int | None = None
+    min_train: int = Field(default=300, ge=100, le=5000)
+
+
+@router.get("/lab/win-model/sources")
+def research_win_model_sources():
+    from backend.research.win_model import sources
+    return sources()
+
+
+@router.post("/lab/win-model")
+def research_win_model(req: WinModelRequest):
+    from backend.research.win_model import run
+    if req.source == "backtest" and not req.run_id:
+        raise HTTPException(status_code=400, detail="choose a backtest run")
+    return run(req.source, req.run_id, req.min_train)

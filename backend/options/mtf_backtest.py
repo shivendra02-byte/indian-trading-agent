@@ -39,6 +39,20 @@ VARIANTS_DEFAULT = [
     {"name": "0.75 ATR, 10 bars", "pullback_touch_atr": 0.75, "pullback_bars": 10},
 ]
 
+# Research preset (27 Nov 2026, from the research papers): regime hysteresis (Berzal & García),
+# the 20/250-day trend as a direction filter (Sepp & Lucic) and entries without the 1H invalidation exit.
+VARIANTS_RESEARCH = [
+    {"name": "live", "pullback_touch_atr": 0.25, "pullback_bars": 6},
+    {"name": "regime hysteresis (2 days, ADX exit 22)", "pullback_touch_atr": 0.25, "pullback_bars": 6,
+     "regime_confirm_days": 2, "adx_trend_exit": 22},
+    {"name": "hysteresis + 20/250 trend filter", "pullback_touch_atr": 0.25, "pullback_bars": 6,
+     "regime_confirm_days": 2, "adx_trend_exit": 22, "slow_trend_filter": True},
+    {"name": "no invalidation exit", "pullback_touch_atr": 0.25, "pullback_bars": 6, "use_invalidation": False},
+    {"name": "all three", "pullback_touch_atr": 0.25, "pullback_bars": 6, "regime_confirm_days": 2,
+     "adx_trend_exit": 22, "slow_trend_filter": True, "use_invalidation": False},
+]
+PRESETS = {"pullback": VARIANTS_DEFAULT, "research": VARIANTS_RESEARCH}
+
 _state = {"status": "idle", "progress": None, "result": None, "error": None}
 _lock = threading.Lock()
 
@@ -101,10 +115,25 @@ class _View:
         return self.bars[max(0, k - keep):k]
 
 
-def _regime_before(daily: list[dict], day: str) -> str:
+def _regime_before(daily: list[dict], day: str, var: dict | None = None) -> str:
     from backend.signals.regime import current_regime
+    var = var or {}
     i = bisect.bisect_left([b["ts"][:10] for b in daily], day)
-    return current_regime(daily[max(0, i - 300):i])["regime"] if i else "UNSTABLE"
+    if not i:
+        return "UNSTABLE"
+    return current_regime(daily[max(0, i - 300):i], confirm_days=var.get("regime_confirm_days"),
+                          adx_trend_exit=var.get("adx_trend_exit"))["regime"]
+
+
+def _slow_trend_before(daily: list[dict], day: str, fast: int = 20, slow: int = 250) -> str | None:
+    """"up" / "down" from the 20- vs 250-day EWMA of the daily closes before ``day``."""
+    from backend.research.trend import ewma
+    i = bisect.bisect_left([b["ts"][:10] for b in daily], day)
+    closes = [b["close"] for b in daily[:i]]
+    if len(closes) < slow:
+        return None
+    f, s_ = ewma(closes, fast)[-1], ewma(closes, slow)[-1]
+    return "up" if f > s_ else "down"
 
 
 def run(start: date, end: date, variants: list[dict] | None = None, split_date: date | None = None,
@@ -162,7 +191,7 @@ def run(start: date, end: date, variants: list[dict] | None = None, split_date: 
                     chain = store.chain(symbol, iso, book["expiry"])
                     val = sp_mod.value(book["legs"], sp_mod._prices(chain), sp_mod.is_debit(book["strategy"]))
                     reason = sp_mod.exit_check(book, val, iso, book["exit_by"], cfg)
-                    if not reason and val is not None and any(
+                    if not reason and val is not None and var.get("use_invalidation", True) and any(
                             invalidated(book["invalid"], book["direction"], b["close"]) for b in h1_by_day[src][iso]):
                         reason = "invalidated"
                     if reason and val is not None:
@@ -177,7 +206,7 @@ def run(start: date, end: date, variants: list[dict] | None = None, split_date: 
                 if book:
                     d += timedelta(days=1)
                     continue
-                regime = _regime_before(data[src]["daily"], iso)
+                regime = _regime_before(data[src]["daily"], iso, var)
                 lo = bisect.bisect_left(vm15.ends, datetime.combine(d, time(0, 0)))
                 hi = bisect.bisect_right(vm15.ends, datetime.combine(d, time(23, 59)))
                 fired = None
@@ -191,6 +220,12 @@ def run(start: date, end: date, variants: list[dict] | None = None, split_date: 
                     d += timedelta(days=1)
                     continue
                 signals += 1
+                if var.get("slow_trend_filter") and fired["direction"] in ("up", "down"):
+                    slow = _slow_trend_before(data[src]["daily"], iso)
+                    if slow is None or slow != fired["direction"]:
+                        skipped["against the 20/250-day trend" if slow else "20/250-day trend not ready"] += 1
+                        d += timedelta(days=1)
+                        continue
                 exps = store.expiries(symbol, iso)
                 if not exps:
                     skipped["no option file that day"] += 1
@@ -224,7 +259,10 @@ def run(start: date, end: date, variants: list[dict] | None = None, split_date: 
     for r in results:
         t = r["trades"]
         row = {"name": r["variant"]["name"], "pullback_touch_atr": r["variant"]["pullback_touch_atr"],
-               "pullback_bars": r["variant"]["pullback_bars"], "signal_days": r["signals"], "all": stats(t),
+               "pullback_bars": r["variant"]["pullback_bars"],
+               "options": {k: r["variant"][k] for k in ("regime_confirm_days", "adx_trend_exit", "slow_trend_filter",
+                                                        "use_invalidation") if k in r["variant"]},
+               "signal_days": r["signals"], "all": stats(t),
                "by_symbol": {s: stats([x for x in t if x["symbol"] == s]) for s in symbols},
                "by_exit": {k: stats([x for x in t if x["exit_reason"] == k])
                            for k in sorted({x["exit_reason"] for x in t})},

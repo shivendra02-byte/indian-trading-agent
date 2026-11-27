@@ -356,6 +356,7 @@ export const startSpreadTriggerBacktest = (data: {
   end_date: string;
   split_date?: string | null;
   variants?: { name: string; pullback_touch_atr: number; pullback_bars: number }[];
+  preset?: "pullback" | "research";
 }) => fetchAPI(`/api/options/spreads/trigger-backtest`, { method: "POST", body: JSON.stringify(data) });
 export const getSpreadTriggerBacktest = () => fetchAPI(`/api/options/spreads/trigger-backtest`);
 
@@ -749,3 +750,6 @@ export const getTrendDiagnostic = (includeStocks = true) =>
 export const getRiskSwitch = (days = 120) => fetchAPI(`/api/research/risk-switch?days=${days}`);
 export const runRiskSwitchStudy = (data: { start_date?: string | null; end_date?: string | null }) =>
   fetchAPI(`/api/research/risk-switch/study`, { method: "POST", body: JSON.stringify(data) });
+export const getWinModelSources = () => fetchAPI(`/api/research/lab/win-model/sources`);
+export const runWinModel = (data: { source: "journal" | "backtest"; run_id?: number | null; min_train?: number }) =>
+  fetchAPI(`/api/research/lab/win-model`, { method: "POST", body: JSON.stringify(data) });
