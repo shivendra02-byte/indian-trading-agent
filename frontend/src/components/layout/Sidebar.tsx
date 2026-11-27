@@ -31,6 +31,13 @@ import {
   Menu,
   X,
   Zap,
+  BookOpen,
+  Activity,
+  Link2,
+  Coins,
+  ShieldAlert,
+  Beaker,
+  NotebookPen,
 } from "lucide-react";
 
 type NavItem = {
@@ -85,6 +92,20 @@ const navGroups: NavGroup[] = [
       { href: "/divergence", label: "RSI Divergence", icon: GitCompareArrows, hint: "Daily reversal warnings + their record" },
       { href: "/chart-patterns", label: "Chart Patterns", icon: Spline, hint: "Trendlines, channels, triangles" },
       { href: "/ideas", label: "Ideas", icon: Lightbulb, hint: "Track ideas from X / chats by source" },
+    ],
+  },
+  {
+    // Research papers (27 Nov 2026): every strategy here is shadow — own journal, no AI review per trade,
+    // no Telegram; one AI post-mortem a week.
+    title: "RESEARCH",
+    items: [
+      { href: "/research/journal", label: "Research Journal", icon: BookOpen, hint: "All research trades (shadow)" },
+      { href: "/research/trend", label: "Trend Book", icon: Activity, hint: "EWMA 20/250 + time-series momentum" },
+      { href: "/research/pairs", label: "Pairs", icon: Link2, hint: "F&O stock pairs + GOLDM/SILVERM" },
+      { href: "/research/cash-momentum", label: "Cash Momentum", icon: Coins, hint: "Clenow weekly momentum, NIFTY 500" },
+      { href: "/research/risk-switch", label: "Risk Switch", icon: ShieldAlert, hint: "NIFTY drawdown-risk score" },
+      { href: "/research/lab", label: "Research Lab", icon: Beaker, hint: "Trend check, win model, hysteresis" },
+      { href: "/research/postmortem", label: "Research Post-mortem", icon: NotebookPen, hint: "Weekly AI review of research" },
     ],
   },
   {
