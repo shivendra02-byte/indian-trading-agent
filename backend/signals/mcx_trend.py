@@ -8,7 +8,7 @@ Shorts are described; longs are the mirror image.
 
 * **Regime (daily, the commodity's own)**: the trade direction must be allowed — shorts in
   ``short_regimes`` (STRONG_DOWN, MODERATE_DOWN, HIGH_VOL), longs in ``long_regimes``
-  (STRONG_UP, HIGH_VOL). HIGH_VOL counts only with ``regime["trend"]`` in the trade's direction
+  (STRONG_UP, MODERATE_UP, HIGH_VOL). HIGH_VOL counts only with ``regime["trend"]`` in the trade's direction
   (``regime.current_regime(high_vol_trend=True)``). The daily trend must not be up.
 * **4H trend**: EMA20 < EMA50, the 4H close below EMA50 (a bounce may lift it above EMA20 —
   that is the pullback) and the last confirmed 4H swing high below the highest high of the
@@ -44,7 +44,7 @@ DEFAULTS = {
     "ema_fast": 20, "ema_slow": 50, "h4_structure": True, "pullback_bars": 6, "pullback_touch_atr": 0.25,
     "hold_2h_ema_slow": False, "cap_stop_atr": 3.0, "structure_bars": 30,
     "trigger_lookback": 3, "trigger_ema": True,
-    "short_regimes": ["STRONG_DOWN", "MODERATE_DOWN", "HIGH_VOL"], "long_regimes": ["STRONG_UP", "HIGH_VOL"],
+    "short_regimes": ["STRONG_DOWN", "MODERATE_DOWN", "HIGH_VOL"], "long_regimes": ["STRONG_UP", "MODERATE_UP", "HIGH_VOL"],
 }
 
 

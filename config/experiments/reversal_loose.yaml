@@ -76,7 +76,9 @@ global:
     STRONG_DOWN:
       pullback: {directions: [short], risk_mult: 1.0, preferred: true}
       breakout: {directions: [short], risk_mult: 1.0, preferred: true}
-    MODERATE_UP: {}                # agreed 24 Nov 2026: no futures/cash longs in a moderate uptrend (option spreads only)
+    MODERATE_UP:                   # 27 Nov 2026: longs allowed in a moderate uptrend (was {} = none since 24 Nov)
+      pullback: {directions: [long], risk_mult: 1.0, preferred: true}
+      breakout: {directions: [long], risk_mult: 1.0, preferred: true}
     MODERATE_DOWN:                 # agreed 24 Nov 2026: futures may short a moderate downtrend (cash swing is long-only)
       pullback: {directions: [short], risk_mult: 1.0, preferred: true}
       breakout: {directions: [short], risk_mult: 1.0, preferred: true}

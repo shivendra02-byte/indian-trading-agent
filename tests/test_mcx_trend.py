@@ -79,7 +79,11 @@ class TrendPullbackTests(unittest.TestCase):
         self.assertEqual(self.signals(regime={"regime": "HIGH_VOL", "trend": None}), [])
         self.assertEqual(len(self.signals(regime={"regime": "HIGH_VOL", "trend": "down"})), 5)
         self.assertEqual(self.signals(daily_trend=1.0), [])
-        self.assertEqual(self.signals(d="long", regime={"regime": "MODERATE_UP"}), [])   # agreed 24 Nov 2026
+        from backend.decision.config import get_config
+        from backend.signals import mcx_trend
+        self.assertIn("MODERATE_UP", mcx_trend.DEFAULTS["long_regimes"])          # allowed since 27 Nov 2026
+        live = mcx_trend.config_for(get_config().instruments["mcx"].model_extra)
+        self.assertIn("MODERATE_UP", live["long_regimes"])
 
     def test_higher_high_is_not_a_pullback(self):
         from backend.signals import mcx_trend
