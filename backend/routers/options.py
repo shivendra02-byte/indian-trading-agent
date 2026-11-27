@@ -202,6 +202,10 @@ class TriggerVariant(BaseModel):
     name: str = Field(max_length=60)
     pullback_touch_atr: float = Field(gt=0, le=3)
     pullback_bars: int = Field(ge=1, le=30)
+    regime_confirm_days: int | None = Field(default=None, ge=1, le=10)
+    adx_trend_exit: float | None = Field(default=None, gt=0, lt=60)
+    slow_trend_filter: bool = False
+    use_invalidation: bool = True
 
 
 class TriggerBacktestRequest(BaseModel):
@@ -209,6 +213,7 @@ class TriggerBacktestRequest(BaseModel):
     end_date: date
     split_date: date | None = None
     variants: list[TriggerVariant] | None = Field(default=None, max_length=6)
+    preset: Literal["pullback", "research"] = "pullback"   # used when no variants are given
 
 
 @router.post("/spreads/trigger-backtest")
@@ -217,7 +222,9 @@ def spreads_trigger_backtest(req: TriggerBacktestRequest):
     from backend.options import mtf_backtest
     if req.end_date <= req.start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
-    variants = [v.model_dump() for v in req.variants] if req.variants else None
+    variants = [v.model_dump(exclude_defaults=True) | {"name": v.name, "pullback_touch_atr": v.pullback_touch_atr,
+                                                       "pullback_bars": v.pullback_bars}
+                for v in req.variants] if req.variants else mtf_backtest.PRESETS[req.preset]
     return mtf_backtest.start_job(req.start_date, req.end_date, variants, req.split_date)
 
 

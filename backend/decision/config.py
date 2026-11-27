@@ -107,6 +107,11 @@ class RegimeCfg(_Strict):
     # (agreed 24 Nov 2026); None = no moderate tier (those days are UNSTABLE).
     adx_moderate_min: float | None = None
     ema_slope_bars: int = Field(ge=1)
+    # Hysteresis (27 Nov 2026, research: Berzal & García's switching margin; experiment only, live off):
+    # a new label counts only after ``confirm_days`` days in a row (1 = off), and a STRONG_x trend stays
+    # STRONG_x while ADX ≥ ``adx_trend_exit`` (None = off; must be below adx_trend_min).
+    confirm_days: int = Field(default=1, ge=1, le=10)
+    adx_trend_exit: float | None = None
     instability_changes: int = Field(ge=1)
     instability_window: int = Field(ge=2)
     min_daily_bars: int = Field(ge=50)

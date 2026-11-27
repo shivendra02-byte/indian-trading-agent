@@ -356,6 +356,7 @@ export const startSpreadTriggerBacktest = (data: {
   end_date: string;
   split_date?: string | null;
   variants?: { name: string; pullback_touch_atr: number; pullback_bars: number }[];
+  preset?: "pullback" | "research";
 }) => fetchAPI(`/api/options/spreads/trigger-backtest`, { method: "POST", body: JSON.stringify(data) });
 export const getSpreadTriggerBacktest = () => fetchAPI(`/api/options/spreads/trigger-backtest`);
 
@@ -714,3 +715,41 @@ export function connectBacktestWS<T = unknown>(backtestId: string, onEvent: (eve
   };
   return ws;
 }
+
+// Research section (shadow strategies from the research papers, 27 Nov 2026)
+export const getResearchOverview = () => fetchAPI(`/api/research/`);
+export const getResearchJournal = (strategy?: string, status?: "open" | "closed") => {
+  const q = new URLSearchParams();
+  if (strategy) q.set("strategy", strategy);
+  if (status) q.set("status", status);
+  return fetchAPI(`/api/research/journal${q.toString() ? `?${q}` : ""}`);
+};
+export const getResearchStrategy = (key: string) => fetchAPI(`/api/research/strategy/${key}`);
+export const runResearchStrategy = (key: string) => fetchAPI(`/api/research/strategy/${key}/run`, { method: "POST" });
+export const getResearchBacktests = (strategy?: string) =>
+  fetchAPI(`/api/research/backtests${strategy ? `?strategy=${encodeURIComponent(strategy)}` : ""}`);
+export const getResearchBacktest = (id: number, trades = false) =>
+  fetchAPI(`/api/research/backtests/${id}${trades ? "?trades=true" : ""}`);
+export const startResearchBacktest = (data: {
+  strategy: string;
+  start_date: string;
+  end_date: string;
+  split_date?: string | null;
+  overrides?: Record<string, unknown>;
+  grid?: Record<string, (number | string | boolean)[]>;
+}) => fetchAPI(`/api/research/backtests`, { method: "POST", body: JSON.stringify(data) });
+export const deleteResearchBacktest = (id: number) => fetchAPI(`/api/research/backtests/${id}`, { method: "DELETE" });
+export const getResearchHistory = () => fetchAPI(`/api/research/history`);
+export const downloadResearchHistory = () => fetchAPI(`/api/research/history`, { method: "POST" });
+export const getResearchPostmortems = () => fetchAPI(`/api/research/postmortem`);
+export const getResearchPostmortem = (week: string) => fetchAPI(`/api/research/postmortem/${week}`);
+export const runResearchPostmortem = (data: { week_start?: string | null; with_ai: boolean }) =>
+  fetchAPI(`/api/research/postmortem/run`, { method: "POST", body: JSON.stringify(data) });
+export const getTrendDiagnostic = (includeStocks = true) =>
+  fetchAPI(`/api/research/lab/trend-diagnostic?include_stocks=${includeStocks}`);
+export const getRiskSwitch = (days = 120) => fetchAPI(`/api/research/risk-switch?days=${days}`);
+export const runRiskSwitchStudy = (data: { start_date?: string | null; end_date?: string | null }) =>
+  fetchAPI(`/api/research/risk-switch/study`, { method: "POST", body: JSON.stringify(data) });
+export const getWinModelSources = () => fetchAPI(`/api/research/lab/win-model/sources`);
+export const runWinModel = (data: { source: "journal" | "backtest"; run_id?: number | null; min_train?: number }) =>
+  fetchAPI(`/api/research/lab/win-model`, { method: "POST", body: JSON.stringify(data) });
