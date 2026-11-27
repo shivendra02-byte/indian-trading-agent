@@ -16,12 +16,12 @@ export default function ResearchTrendPage() {
       </div>
       <StrategyPanel
         strategy="trend_ewma"
-        description="Long when the 20-day EWMA is above the 250-day EWMA by a buffer of ATR (short mirrored). Size fixed at entry; stop 5 ATR, trailing behind each close. Exit only when the stop is hit AND the signal is off. Fills at the next day's open. Expect a low win rate and a few large winners."
+        description="Long when the 20-day EWMA is above the 250-day EWMA by a buffer of ATR (short mirrored). Size fixed at entry; stop 5 ATR (1R), trailing behind each close; target 3R. Stop and target are checked on every hourly bar during the session (today's bar so far). Entries at the next day's open. Expect a low win rate and a few large winners."
         gridKeys={["fast", "slow", "entry_buffer_atr"]}
       />
       <StrategyPanel
         strategy="tsmom"
-        description="Time-series momentum: the average sign of the last 10 blocks of 10 days of volatility-scaled returns (-1 … +1). Long at +0.2 or more, short at -0.2 or less, decided once a week; a 5 ATR trailing stop is the safety exit and defines 1R."
+        description="Time-series momentum: the average sign of the last 10 blocks of 10 days of volatility-scaled returns (-1 … +1). Long at +0.2 or more, short at -0.2 or less, decided once a week; a 5 ATR trailing stop (1R) and a 3R target, checked on every hourly bar during the session."
         gridKeys={["blocks", "block_days", "entry_threshold"]}
       />
     </div>

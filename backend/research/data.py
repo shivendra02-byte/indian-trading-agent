@@ -27,6 +27,12 @@ INDICES = ("NIFTY", "BANKNIFTY")
 PROGRESS: dict = {"status": "idle"}
 
 
+def group_of(symbol: str) -> str:
+    """Which evening/hourly run updates ``symbol``: "mcx" or "nse"."""
+    first = symbol.split("/")[0]
+    return "mcx" if first in MCX_UNDERLYINGS else "nse"
+
+
 def kind_of(symbol: str) -> str:
     return "mcx" if symbol in MCX_UNDERLYINGS else "index_futures" if symbol in INDICES else "stock_futures"
 

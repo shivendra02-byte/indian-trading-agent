@@ -245,6 +245,99 @@ class RegimeHysteresisTests(unittest.TestCase):
         self.assertTrue(any(v.get("slow_trend_filter") for v in PRESETS["research"]))
 
 
+def hourly_nse(n_days: int, drift: float = 0.0004, seed: int = 3, start: date = date(2025, 1, 1)):
+    random.seed(seed)
+    out, p = [], 100.0
+    for d in weekdays(n_days, start):
+        for h, m in ((9, 15), (10, 15), (11, 15), (12, 15), (13, 15), (14, 15), (15, 15)):
+            o = p
+            p = p * (1 + drift + random.gauss(0, 0.004))
+            out.append({"ts": datetime(d.year, d.month, d.day, h, m).isoformat(), "open": o,
+                        "high": max(o, p) * 1.002, "low": min(o, p) * 0.998, "close": p, "volume": 1})
+    return out
+
+
+def daily_from(hourly):
+    days = {}
+    for b in hourly:
+        days.setdefault(b["ts"][:10], []).append(b)
+    return [{"ts": k + "T00:00:00", "open": v[0]["open"], "high": max(x["high"] for x in v),
+             "low": min(x["low"] for x in v), "close": v[-1]["close"], "volume": 1} for k, v in sorted(days.items())]
+
+
+class LiveExitTests(unittest.TestCase):
+    """Asked 27 Nov 2026: research trades carry a stop and a target, hit during the session."""
+
+    def setUp(self):
+        rcfg.set_override(None)
+
+    def test_intrabar_exit_gap_stop_first_and_target(self):
+        from backend.research.trend import intrabar_exit
+        t = {"direction": "long", "stop": 95.0, "target": 110.0}
+        self.assertEqual(intrabar_exit(t, {"open": 94, "high": 96, "low": 93, "close": 95}, 95.0), (94, "stop"))
+        self.assertEqual(intrabar_exit(t, {"open": 100, "high": 111, "low": 94, "close": 100}, 95.0), (95.0, "stop"))
+        self.assertEqual(intrabar_exit(t, {"open": 100, "high": 111, "low": 99, "close": 110}, 95.0), (110.0, "target"))
+        self.assertEqual(intrabar_exit(t, {"open": 100, "high": 101, "low": 97, "close": 100}, 98.0), (98.0, "trailing_stop"))
+        self.assertIsNone(intrabar_exit(t, {"open": 100, "high": 101, "low": 99, "close": 100}, 95.0))
+
+    def test_daily_trend_target_and_partial_bar(self):
+        from backend.research.trend import simulate_ewma
+        closes = [100 * math.exp(0.002 * i) for i in range(560)]
+        bars = bars_from(closes)
+        p = {"fast": 20, "slow": 250, "atr_period": 33, "entry_buffer_atr": 1.0, "stop_atr": 5.0, "target_r": 0.5,
+             "exit_check": "intrabar", "warmup_bars": 300}
+        trades = simulate_ewma(bars, p, "GOLDM", CTX)
+        self.assertTrue(any(t["exit_reason"] == "target" for t in trades))
+        first = trades[0]
+        self.assertAlmostEqual(first["target"], first["entry_price"] + 0.5 * (first["entry_price"] - first["stop"]), delta=0.02)
+        # a partial bar never starts a trade but can hit the stop
+        flat = bars_from([100.0] * 400)
+        sig_bars = flat[:-1] + [{**flat[-1], "partial": True, "close": 400.0, "high": 400.0}]
+        self.assertEqual(simulate_ewma(sig_bars, {**p, "warmup_bars": 300}, "GOLDM", CTX), [])
+        open_t = next(t for t in simulate_ewma(bars[:400], {**p, "target_r": 50}, "GOLDM", CTX) if t["status"] == "open")
+        crash = bars[:400] + [{"ts": "2030-01-01T00:00:00", "open": open_t["entry_price"], "high": open_t["entry_price"],
+                                 "low": 1.0, "close": 1.0, "volume": 0, "partial": True}]
+        last = simulate_ewma(crash, {**p, "target_r": 50}, "GOLDM", CTX)[-1]
+        self.assertEqual(last["status"], "closed")
+        self.assertIn(last["exit_reason"], ("stop", "trailing_stop"))
+
+    def test_hourly_pullback_and_4h_trades_have_stop_and_target(self):
+        from backend.research import intraday
+        from tradingagents.utils.market_calendar import NSE
+        bars = hourly_nse(300)
+        prior = bars_from([50 * math.exp(0.002 * i) for i in range(300)], date(2023, 1, 2))
+        daily = prior + daily_from(bars)
+        ctx = {"kind": "stock_futures", "pv": 500.0, "contract": "X", "cost_bps": 4.0, "roll_bps": 4.0, "one_r": 10000.0}
+        p1 = rcfg.strategy("htf_pullback")
+        t1 = intraday.run_1h(bars, intraday.pullback_signals(bars, daily, p1), p1, "TEST", ctx, "1h")
+        p2 = rcfg.strategy("trend_4h")
+        t2 = intraday.run_1h(bars, intraday.trend4h_signals(bars, NSE, p2), p2, "TEST", ctx, "4h")
+        self.assertTrue(t1)
+        self.assertTrue(t2)
+        for t in t1 + t2:
+            self.assertIsNotNone(t["stop"])
+            self.assertIsNotNone(t["target"])
+            sign = 1 if t["direction"] == "long" else -1
+            self.assertGreater((t["target"] - t["entry_price"]) * sign, 0)
+            self.assertGreater((t["entry_price"] - t["stop"]) * sign, 0)
+        keys = [t["key"] for t in t1]
+        self.assertEqual(len(keys), len(set(keys)))
+        reasons = {t["exit_reason"] for t in t1 + t2}
+        self.assertTrue(reasons & {"target", "stop", "breakeven_stop", "trailing_stop"})
+        # entries fill at the bar after the signal
+        sig_ts = t1[0]["extra"]["signal_ts"]
+        k = next(i for i, b in enumerate(bars) if b["ts"] == sig_ts)
+        self.assertEqual(t1[0]["entry_ts"], bars[k + 1]["ts"])
+
+    def test_4h_bucket_completion(self):
+        from backend.research.intraday import _bucket_index
+        from tradingagents.utils.market_calendar import NSE
+        bars = hourly_nse(2)
+        four, idx, done = _bucket_index(bars, NSE)
+        self.assertEqual(len(four), 4)                   # 09:15 and 13:15 buckets, two days
+        self.assertEqual(done[:7], [False, False, False, True, False, False, True])
+
+
 class StoredResearchTests(IsolatedStateTestCase, unittest.TestCase):
     def setUp(self):
         super().setUp()
@@ -259,7 +352,7 @@ class StoredResearchTests(IsolatedStateTestCase, unittest.TestCase):
         t1 = {"symbol": "GOLDM", "direction": "long", "entry_date": "2026-12-01", "entry_price": 1.0,
               "status": "open", "pnl_r": 0.5, "extra": {}}
         out = journal.sync("trend_ewma", [t1, {**t1, "entry_date": "2026-11-01"}], "2026-11-27")
-        self.assertEqual(out, {"trades": 1, "open": 1, "new": 1})
+        self.assertEqual((out["trades"], out["open"], out["new"]), (1, 1, 1))
         first = journal.list_trades("trend_ewma")[0]["first_seen"]
         closed = {**t1, "status": "closed", "exit_date": "2026-12-20", "pnl_r": 2.0}
         out = journal.sync("trend_ewma", [closed], "2026-11-27")
@@ -345,6 +438,38 @@ class StoredResearchTests(IsolatedStateTestCase, unittest.TestCase):
         self.assertGreater(out["auc"], 0.6)
         self.assertGreater(out["by_model_third"]["high"]["avg_r"], out["by_model_third"]["low"]["avg_r"])
         self.assertEqual(run("journal")["status"], "too few")
+
+    def test_sync_by_symbol_and_hourly_run(self):
+        from backend.research import journal, registry
+        a = {"symbol": "GOLDM", "direction": "long", "entry_date": "2026-12-01", "entry_price": 1.0, "stop": 0.9,
+             "target": 1.3, "status": "open", "pnl_r": 0.1, "extra": {}, "entry_ts": "2026-12-01T10:00:00",
+             "timeframe": "1h"}
+        b = {**a, "symbol": "NIFTY"}
+        journal.sync("htf_pullback", [a, b], "2026-11-27")
+        journal.sync("htf_pullback", [], "2026-11-27", symbols=["GOLDM"])        # MCX run with no GOLDM trade
+        rows = journal.list_trades("htf_pullback")
+        self.assertEqual([r["symbol"] for r in rows], ["NIFTY"])
+        self.assertEqual(rows[0]["target"], 1.3)
+        self.assertEqual(rows[0]["timeframe"], "1h")
+        with mock.patch("backend.system_state.is_paused", return_value=True):
+            self.assertEqual(registry.run_hourly("mcx")["status"], "skipped")
+        seen = []
+        out = registry.run_hourly("mcx", runner=lambda e: seen.append(e["key"]) or {"status": "ok"})
+        self.assertEqual(set(seen), {"trend_ewma", "tsmom", "htf_pullback", "trend_4h"})
+        self.assertEqual(out["strategies"]["trend_4h"]["status"], "ok")
+
+    def test_partial_today_from_stitched_mcx_hours(self):
+        from backend.db import get_db
+        from backend.research import intraday
+        intraday.ensure_table()
+        with get_db() as conn:
+            for h, (o, hi, lo, c) in enumerate(((10, 12, 9, 11), (11, 15, 10, 14), (14, 14, 8, 9))):
+                conn.execute("INSERT INTO research_hourly_bars VALUES ('GOLDM', ?, ?, ?, ?, ?, 0, 'X')",
+                             (f"2026-12-02T{9 + h:02d}:00:00", o, hi, lo, c))
+        part = intraday.partial_today("GOLDM", "2026-12-01")
+        self.assertEqual((part["open"], part["high"], part["low"], part["close"]), (10, 15, 8, 9))
+        self.assertTrue(part["partial"])
+        self.assertIsNone(intraday.partial_today("GOLDM", "2026-12-02"))
 
     def test_api_overview_and_journal(self):
         from backend.research import journal

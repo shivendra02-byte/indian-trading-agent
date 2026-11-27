@@ -16,7 +16,7 @@ from datetime import datetime
 
 from backend.db import get_db
 
-FIELDS = ("symbol", "direction", "entry_date", "entry_price", "stop", "exit_date", "exit_price",
+FIELDS = ("symbol", "direction", "entry_date", "entry_price", "stop", "target", "exit_date", "exit_price",
           "exit_reason", "status", "pnl_r", "pnl_rupees", "lots")
 
 
@@ -46,6 +46,10 @@ def ensure_tables() -> None:
                 UNIQUE (strategy, trade_key)
             )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_research_trades_strategy ON research_trades (strategy, status)")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(research_trades)")}
+        for col, typ in (("target", "REAL"), ("entry_ts", "TEXT"), ("exit_ts", "TEXT"), ("timeframe", "TEXT")):
+            if col not in cols:      # added 27 Nov 2026 with the live (hourly) research runs
+                conn.execute(f"ALTER TABLE research_trades ADD COLUMN {col} {typ}")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS research_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,30 +64,40 @@ def trade_key(t: dict) -> str:
     return t.get("key") or f"{t['symbol']}|{t.get('direction')}|{t.get('entry_date')}"
 
 
-def sync(strategy: str, trades: list[dict], since: str) -> dict:
+def sync(strategy: str, trades: list[dict], since: str, symbols: list[str] | None = None) -> dict:
     """Replace ``strategy``'s rows entered on/after ``since`` with ``trades`` (those entered
-    on/after ``since``). Returns counts."""
+    on/after ``since``). ``symbols``: only replace rows of these instruments (an hourly run of one
+    exchange leaves the other's rows alone). Returns counts."""
     ensure_tables()
-    keep = [t for t in trades if str(t.get("entry_date") or "") >= since]
+    keep = [t for t in trades if str(t.get("entry_date") or "") >= since
+            and (symbols is None or t["symbol"] in symbols)]
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
     with get_db() as conn:
         seen = {r["trade_key"]: r["first_seen"] for r in conn.execute(
             "SELECT trade_key, first_seen FROM research_trades WHERE strategy = ?", (strategy,))}
-        conn.execute("DELETE FROM research_trades WHERE strategy = ? AND entry_date >= ?", (strategy, since))
+        if symbols is None:
+            conn.execute("DELETE FROM research_trades WHERE strategy = ? AND entry_date >= ?", (strategy, since))
+        else:
+            for sym in symbols:
+                conn.execute("DELETE FROM research_trades WHERE strategy = ? AND entry_date >= ? AND symbol = ?",
+                             (strategy, since, sym))
         for t in keep:
             key = trade_key(t)
             conn.execute(
                 """INSERT OR REPLACE INTO research_trades
-                   (strategy, trade_key, symbol, direction, entry_date, entry_price, stop, exit_date, exit_price,
-                    exit_reason, status, pnl_r, pnl_rupees, lots, legs, extra, first_seen, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (strategy, trade_key, symbol, direction, entry_date, entry_price, stop, target, exit_date,
+                    exit_price, exit_reason, status, pnl_r, pnl_rupees, lots, legs, extra, first_seen, updated_at,
+                    entry_ts, exit_ts, timeframe)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (strategy, key, t["symbol"], t.get("direction"), t.get("entry_date"), t.get("entry_price"),
-                 t.get("stop"), t.get("exit_date"), t.get("exit_price"), t.get("exit_reason"),
+                 t.get("stop"), t.get("target"), t.get("exit_date"), t.get("exit_price"), t.get("exit_reason"),
                  t.get("status", "closed"), t.get("pnl_r"), t.get("pnl_rupees"),
                  json.dumps(t.get("lots")) if t.get("lots") is not None else None,
                  json.dumps(t.get("legs")) if t.get("legs") else None,
-                 json.dumps(t.get("extra") or {}, default=str), seen.get(key, now), now))
+                 json.dumps(t.get("extra") or {}, default=str), seen.get(key, now), now,
+                 t.get("entry_ts"), t.get("exit_ts"), t.get("timeframe")))
     return {"trades": len(keep), "open": sum(1 for t in keep if t.get("status") == "open"),
+            "new_keys": [trade_key(t) for t in keep if trade_key(t) not in seen][:20],
             "new": sum(1 for t in keep if trade_key(t) not in seen)}
 
 

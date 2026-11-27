@@ -262,6 +262,7 @@ class MarketDataScheduler:
                 if key == "nse_1h":
                     self._momentum("hourly", now)
                     self._spreads_follow(now)
+                self._research_hourly("nse" if key == "nse_1h" else "mcx", now)
                 if result.get("status") not in ("error", "busy") and result.get("reason") != "paused":
                     self.scan_ok_at[exchange] = now
             elif job == "scan:spreads":
@@ -385,6 +386,18 @@ class MarketDataScheduler:
         except Exception as exc:  # never let it stop the scheduler
             result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
         self.last_results[f"research:{group}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+
+    def _research_hourly(self, group: str, now: datetime) -> None:
+        """Research in the live market (asked 27 Nov 2026): hourly strategies and the daily trend books'
+        stops/targets after each completed 1H bar. Shadow only."""
+        if os.getenv("TRADINGAGENTS_RESEARCH", "on").lower() == "off":
+            return
+        try:
+            from backend.research.registry import run_hourly
+            result = run_hourly(group)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"research:hourly:{group}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
 
     def _research_postmortem(self, now: datetime) -> list[str]:
         """Weekly AI review of the research strategies: Saturday from 08:30 (after the main

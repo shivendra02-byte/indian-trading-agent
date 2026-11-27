@@ -76,9 +76,10 @@ def research_run(key: str):
 
 
 @router.post("/run-all")
-def research_run_all(group: Literal["nse", "mcx"] = "nse"):
-    from backend.research.registry import run_live
-    return run_live(group)
+def research_run_all(group: Literal["nse", "mcx"] = "nse", hourly: bool = False):
+    """Evening run (default) or the live-market hourly run of one exchange's research strategies."""
+    from backend.research.registry import run_hourly, run_live
+    return run_hourly(group) if hourly else run_live(group)
 
 
 # --- backtests ----------------------------------------------------------------------------------

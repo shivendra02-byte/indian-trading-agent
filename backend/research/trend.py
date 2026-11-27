@@ -13,6 +13,15 @@
 Decisions use the close of day t; orders fill at the open of day t+1 (no same-bar fills).
 All results are in R after a cost model (research.yaml ``cost_bps``) including a roll per
 calendar month held for futures.
+
+Exits (asked 27 Nov 2026: research trades carry a stop and a target and run in the live market):
+with ``exit_check: intrabar`` (default) the stop and a ``target_r`` R target are checked against
+each bar's low/high — a gap through either fills at the open, a bar touching both counts as the
+stop. The stop still trails ``stop_atr`` × ATR behind each close. During market hours the evening
+run's daily bars are extended with today's partial bar built from completed hourly bars
+(``partial: True``): it can trigger a stop or target but never an entry or a weekly decision.
+``exit_check: close_signal`` keeps the paper's rule (exit on a close beyond the stop AND the
+signal off, filled at the next open).
 """
 
 from __future__ import annotations
@@ -120,6 +129,32 @@ def _ctx(symbol: str) -> dict:
             "roll_bps": rcfg.cost_bps("roll"), "one_r": rcfg.one_r_rupees()}
 
 
+def intrabar_exit(t: dict, bar: dict, stop: float) -> tuple[float, str] | None:
+    """Stop / target hit inside ``bar``: (fill price, reason). Stop first when both are touched."""
+    sign = 1 if t["direction"] == "long" else -1
+    target = t.get("target")
+    o, h, l = bar["open"], bar["high"], bar["low"]
+    stop_reason = "trailing_stop" if (stop - t["stop"]) * sign > 1e-9 else "stop"
+    if (o - stop) * sign <= 0:
+        return o, stop_reason                       # opened through the stop
+    if target is not None and (o - target) * sign >= 0:
+        return o, "target"                          # opened through the target
+    if (l if sign > 0 else h) * sign <= stop * sign:
+        return stop, stop_reason
+    if target is not None and (h if sign > 0 else l) * sign >= target * sign:
+        return target, "target"
+    return None
+
+
+def _set_target(t: dict, p: dict) -> None:
+    r = p.get("target_r")
+    if r and p.get("exit_check", "intrabar") == "intrabar":
+        sign = 1 if t["direction"] == "long" else -1
+        t["target"] = round(t["entry_price"] + sign * float(r) * t["_risk_pts"], 2)
+    else:
+        t["target"] = None
+
+
 def _excursion(t: dict, close: float) -> None:
     sign = 1 if t["direction"] == "long" else -1
     move = (close - t["entry_price"]) * sign / t["_risk_pts"]
@@ -152,22 +187,31 @@ def simulate_ewma(bars: list[dict], p: dict, symbol: str, ctx: dict,
         if atrs[i] is None:
             continue
         sig = ewma_signal(fast[i], slow[i], atrs[i], buf)
+        intrabar = p.get("exit_check", "intrabar") == "intrabar"
         if pos is not None:
             sign = 1 if pos["direction"] == "long" else -1
-            _excursion(pos, closes[i])
-            breach = closes[i] < stop if sign > 0 else closes[i] > stop
-            signal_on = sig == sign
-            if breach and (p.get("exit_rule") == "stop_only" or not signal_on):
-                if i + 1 < len(bars):
-                    trades.append(_close_trade(pos, bars[i + 1]["open"], dates[i + 1], "trailing_stop", ctx))
+            if intrabar:
+                hit = intrabar_exit(pos, bars[i], stop) if dates[i] >= pos["entry_date"] else None
+                if hit:
+                    trades.append(_close_trade(pos, hit[0], dates[i], hit[1], ctx))
                     pos = None
                     continue
+                _excursion(pos, closes[i])
+            else:
+                _excursion(pos, closes[i])
+                breach = closes[i] < stop if sign > 0 else closes[i] > stop
+                signal_on = sig == sign
+                if breach and (p.get("exit_rule") == "stop_only" or not signal_on):
+                    if i + 1 < len(bars):
+                        trades.append(_close_trade(pos, bars[i + 1]["open"], dates[i + 1], "trailing_stop", ctx))
+                        pos = None
+                        continue
             new_stop = closes[i] - sign * k * atrs[i]
             stop = max(stop, new_stop) if sign > 0 else min(stop, new_stop)
             continue
         if end and dates[i] > end:
             break           # no new entries after the window; an open trade is followed to its exit
-        if sig == 0 or i + 1 >= len(bars):
+        if bars[i].get("partial") or sig == 0 or i + 1 >= len(bars):
             continue
         if (sig > 0 and not p.get("long_enabled", True)) or (sig < 0 and not p.get("short_enabled", True)):
             continue
@@ -179,6 +223,7 @@ def simulate_ewma(bars: list[dict], p: dict, symbol: str, ctx: dict,
         pos = _open_trade(symbol, direction, entry_date, bars[i + 1]["open"], risk_pts, ctx,
                           {"signal_date": dates[i], "fast": round(fast[i], 2), "slow": round(slow[i], 2),
                            "atr": round(atrs[i], 2), "contract": ctx.get("contract")})
+        _set_target(pos, p)
         stop = pos["stop"]
     if pos is not None:
         trades.append(_mark_open(pos, closes[-1], dates[-1], stop, ctx))
@@ -238,15 +283,22 @@ def simulate_tsmom(bars: list[dict], p: dict, symbol: str, ctx: dict,
     for i in range(warm, len(bars)):
         if atrs[i] is None:
             continue
+        intrabar = p.get("exit_check", "intrabar") == "intrabar"
         if pos is not None:
             sign = 1 if pos["direction"] == "long" else -1
+            if intrabar and dates[i] >= pos["entry_date"]:
+                hit = intrabar_exit(pos, bars[i], stop)
+                if hit:
+                    trades.append(_close_trade(pos, hit[0], dates[i], hit[1], ctx))
+                    pos = None
+                    continue
             _excursion(pos, closes[i])
-            breach = closes[i] < stop if sign > 0 else closes[i] > stop
+            breach = (not intrabar) and (closes[i] < stop if sign > 0 else closes[i] > stop)
             flip = False
-            if is_rebalance(dates, i, wd) and sig[i] is not None:
+            if is_rebalance(dates, i, wd) and sig[i] is not None and not bars[i].get("partial"):
                 want = 1 if sig[i] >= thr else -1 if sig[i] <= -thr else 0
                 flip = want != sign
-            if (breach or flip) and i + 1 < len(bars):
+            if (breach or flip) and i + 1 < len(bars) and not bars[i + 1].get("partial"):
                 trades.append(_close_trade(pos, bars[i + 1]["open"], dates[i + 1],
                                            "trailing_stop" if breach else "signal_change", ctx))
                 pos = None
@@ -258,7 +310,7 @@ def simulate_tsmom(bars: list[dict], p: dict, symbol: str, ctx: dict,
                 continue
         if end and dates[i] > end:
             break
-        if i + 1 >= len(bars) or sig[i] is None or not is_rebalance(dates, i, wd):
+        if i + 1 >= len(bars) or sig[i] is None or bars[i].get("partial") or not is_rebalance(dates, i, wd):
             continue
         want = 1 if sig[i] >= thr else -1 if sig[i] <= -thr else 0
         if want == 0 or (want > 0 and not p.get("long_enabled", True)) or (want < 0 and not p.get("short_enabled", True)):
@@ -269,6 +321,7 @@ def simulate_tsmom(bars: list[dict], p: dict, symbol: str, ctx: dict,
         pos = _open_trade(symbol, "long" if want > 0 else "short", entry_date, bars[i + 1]["open"], k * atrs[i], ctx,
                           {"signal_date": dates[i], "signal": round(sig[i], 2), "atr": round(atrs[i], 2),
                            "contract": ctx.get("contract")})
+        _set_target(pos, p)
         stop = pos["stop"]
     if pos is not None:
         trades.append(_mark_open(pos, closes[-1], dates[-1], stop, ctx))
@@ -292,11 +345,25 @@ GRID_KEYS = {"trend_ewma": ("fast", "slow", "entry_buffer_atr", "stop_atr"),
              "tsmom": ("blocks", "block_days", "entry_threshold", "stop_atr")}
 
 
+def bars_with_today(symbol: str) -> list[dict]:
+    """Stored daily bars plus today's partial bar from completed hourly bars (live runs)."""
+    from backend.research.intraday import partial_today
+    bars = daily_bars(symbol)
+    try:
+        part = partial_today(symbol, bars[-1]["ts"][:10] if bars else None)
+    except Exception:                 # hourly data missing: the daily bars alone
+        part = None
+    return bars + [part] if part else bars
+
+
 def run_trades(key: str, p: dict, start: str | None = None, end: str | None = None,
-               bars_for: Callable[[str], list[dict]] = daily_bars) -> tuple[list[dict], dict]:
+               bars_for: Callable[[str], list[dict]] = daily_bars,
+               symbols: list[str] | None = None) -> tuple[list[dict], dict]:
     sim, state_fn = SIMULATORS[key]
     trades, states = [], {}
     for symbol in p["instruments"]:
+        if symbols is not None and symbol not in symbols:
+            continue
         bars = bars_for(symbol)
         states[symbol] = state_fn(bars, p) if bars else {"signal": None, "reason": "no daily bars stored"}
         if len(bars) < int(p.get("warmup_bars", 300)) + 5:
@@ -306,11 +373,15 @@ def run_trades(key: str, p: dict, start: str | None = None, end: str | None = No
     return trades, states
 
 
-def live(key: str, today: date | None = None) -> dict:
+def live(key: str, today: date | None = None, group: str | None = None) -> dict:
+    """Re-run over stored daily bars (+ today's partial bar from hourly bars, so stops and targets
+    are hit during the session). ``group`` ("nse" / "mcx") limits it to that exchange's instruments."""
     from backend.research import journal
+    from backend.research.data import group_of
     p = rcfg.strategy(key)
-    trades, states = run_trades(key, p)
-    synced = journal.sync(key, trades, rcfg.live_start())
+    symbols = [s for s in p["instruments"] if group is None or group_of(s) == group]
+    trades, states = run_trades(key, p, bars_for=bars_with_today, symbols=symbols)
+    synced = journal.sync(key, trades, rcfg.live_start(), symbols=symbols)
     return {"status": "ok", **synced, "states": states}
 
 
