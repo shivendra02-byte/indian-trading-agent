@@ -177,7 +177,8 @@ def current_regime(bars: Sequence[dict], high_vol_trend: bool = False, confirm_d
     cfg = _cfg()
     if len(bars) < cfg.min_daily_bars:
         return {"regime": UNSTABLE, "reason": f"only {len(bars)} daily bars (need {cfg.min_daily_bars})"}
-    labels = label_series(bars, confirm_days, adx_trend_exit)
+    labels = (label_series(bars) if confirm_days is None and adx_trend_exit is None
+              else label_series(bars, confirm_days, adx_trend_exit))
     n = cfg.instability_window
     trends = high_vol_trends(bars) if high_vol_trend else [None] * len(bars)
     pairs = [(l, t) for l, t in zip(labels[-n:], trends[-n:]) if l is not None]

@@ -50,6 +50,8 @@ def _features(r: dict) -> dict:
 
 def journal_rows() -> list[dict]:
     with get_db() as conn:
+        if not _has_table(conn, "trade_journal"):
+            return []
         rows = [dict(r) for r in conn.execute(
             "SELECT segment, setup, direction, regime, score, rr, entry, stop, signal_ts, soft_checks, extra, decision, "
             "panel_decision, pnl_r FROM trade_journal WHERE track_status = 'closed' AND pnl_r IS NOT NULL")]
@@ -63,6 +65,8 @@ def journal_rows() -> list[dict]:
 
 def backtest_rows(run_id: int) -> list[dict]:
     with get_db() as conn:
+        if not _has_table(conn, "rule_backtests"):
+            return []
         r = conn.execute("SELECT segment, trades FROM rule_backtests WHERE id = ? AND status = 'done'", (run_id,)).fetchone()
     if not r or not r["trades"]:
         return []

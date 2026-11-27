@@ -53,9 +53,11 @@ def compute(nifty: list[dict], stocks: dict[str, list[dict]], vix: dict[str, flo
     above: dict[str, list[int]] = {}
     for bars in stocks.values():
         c = [b["close"] for b in bars]
+        run = sum(c[:49])
         for j in range(49, len(bars)):
             d = bars[j]["ts"][:10]
-            sma = sum(c[j - 49:j + 1]) / 50
+            run += c[j] - (c[j - 50] if j >= 50 else 0.0)
+            sma = run / 50
             above.setdefault(d, [0, 0])
             above[d][0] += c[j] > sma
             above[d][1] += 1
@@ -142,6 +144,8 @@ def _inputs(limit: int = 4000) -> tuple[list[dict], dict, dict, list[dict]]:
     from backend.marketdata.candles import get_candles
     from backend.marketdata.instruments import fno_universe
     from backend.research.data import daily_bars
+    from backend.research.data import ensure_tables
+    ensure_tables()
     nifty = daily_bars("NIFTY", limit=limit)
     stocks = {}
     for s in fno_universe():

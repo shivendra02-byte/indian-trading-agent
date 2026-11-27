@@ -305,6 +305,8 @@ def _close(pos: dict, d: str, e: float, q: float, px: float, py: float, reason: 
 def _stock_series(p: dict) -> tuple[dict[str, dict[str, float]], Callable[[str, str], bool], dict[str, float | None]]:
     from backend.marketdata.candles import get_candles
     from backend.marketdata.instruments import fno_universe
+    from backend.research.data import ensure_tables
+    ensure_tables()
     series, turnover, units = {}, {}, {}
     for s in fno_universe():
         if not s["spot_token"]:

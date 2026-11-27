@@ -50,6 +50,8 @@ def _universe_bars(warm_from: str | None) -> tuple[dict[str, list[dict]], list[d
     from backend.marketdata.candles import get_candles
     from backend.marketdata.cash_universe import cash_universe
     from backend.research.data import daily_bars
+    from backend.research.data import ensure_tables
+    ensure_tables()
     stocks = {}
     for s in cash_universe():
         if not s.get("spot_token"):

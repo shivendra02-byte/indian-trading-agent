@@ -31,9 +31,16 @@ def kind_of(symbol: str) -> str:
     return "mcx" if symbol in MCX_UNDERLYINGS else "index_futures" if symbol in INDICES else "stock_futures"
 
 
+def ensure_tables() -> None:
+    """Market data tables (fresh installs and tests)."""
+    from backend.marketdata.store import ensure_marketdata_tables
+    ensure_marketdata_tables()
+
+
 def series_token(symbol: str) -> tuple[int | None, bool, str]:
     """(token, continuous, exchange) of the daily series used for ``symbol``."""
     from backend.marketdata.instruments import active_future, spot_instrument
+    ensure_tables()
     if symbol in MCX_UNDERLYINGS:
         fut = active_future(symbol, segment="MCX-FUT")
         return (fut["instrument_token"] if fut else None), True, MCX
