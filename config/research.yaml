@@ -1,0 +1,128 @@
+# Research strategies (asked 27 Nov 2026, from the research papers the owner shared).
+#
+# Everything here is SHADOW: no AI review per trade, no Telegram, no effect on the live
+# books, their limits, Today's P&L or the weekly post-mortem. Each strategy re-runs its
+# rules over the stored daily bars every evening and writes what it would have traded to
+# its own journal (table research_trades). One AI post-mortem per week covers all of them.
+#
+# 1R = risk_pct % of capital for every strategy. Costs are a model (basis points of the
+# traded value per side), not a broker statement.
+
+version: 1
+capital: 1000000                   # ₹10,00,000 paper capital per strategy (same as the live books)
+risk_pct: 1.0                      # 1R = 1% of capital
+live_start: "2026-11-27"           # the journal keeps trades entered on/after this date
+cost_bps:                          # one side (entry or exit), % of traded value × 100
+  mcx: 3.0                         # CTT 0.01% sell side + brokerage + 1-2 ticks slippage
+  index_futures: 2.0
+  stock_futures: 4.0
+  cash: 12.0                       # delivery: STT 0.1% both sides + charges + slippage
+  roll: 4.0                        # futures roll (close + open), per roll, on the position value
+
+postmortem:
+  enabled: true                    # Saturday from 08:30, after the main post-mortem; one AI call
+  min_trades: 30                   # groups with fewer trades are labelled "too early to judge"
+
+history:
+  daily_years: 10                  # "Download research history": MCX continuous + index spot daily
+
+strategies:
+  # Sepp & Lucic (2026) "American" trend system: EWMA crossover with an ATR buffer to enter,
+  # an ATR trailing stop, and an exit only when the stop is hit AND the signal is off.
+  trend_ewma:
+    enabled: true
+    label: "Trend book — EWMA 20/250 (American)"
+    instruments: [GOLDM, SILVERM, CRUDEOILM, NATGASMINI, NIFTY, BANKNIFTY]
+    fast: 20                       # EWMA spans in days
+    slow: 250
+    atr_period: 33                 # the paper's 33-day volatility span
+    entry_buffer_atr: 1.0          # fast must be beyond slow by this many ATR (paper: up to 5)
+    stop_atr: 5.0                  # trailing stop distance (paper: p = 5)
+    exit_rule: stop_and_signal_off # stop_and_signal_off (paper) | stop_only
+    long_enabled: true
+    short_enabled: true
+    warmup_bars: 300
+
+  # Time-series momentum (Moskowitz et al.; Sepp & Lucic's best M = L = 10): the sign of each of
+  # the last M blocks of L days of volatility-scaled returns, averaged; rebalanced weekly.
+  tsmom:
+    enabled: true
+    label: "Trend book — time-series momentum 10×10"
+    instruments: [GOLDM, SILVERM, CRUDEOILM, NATGASMINI, NIFTY, BANKNIFTY]
+    blocks: 10                     # M
+    block_days: 10                 # L
+    vol_span: 33
+    entry_threshold: 0.2           # |signal| at or above this to hold a position (signal is -1 … +1)
+    stop_atr: 5.0                  # safety trailing stop (defines 1R too)
+    atr_period: 33
+    rebalance_weekday: 4           # Friday (or the last session of the week)
+    long_enabled: true
+    short_enabled: true
+    warmup_bars: 150
+
+  # Qureshi & Zaman (2024): pairs chosen by maximum-weight matching (each stock in one pair),
+  # robust q-score (median / interquartile range) of the regression spread.
+  pairs_stocks:
+    enabled: true
+    label: "Pairs — F&O stocks (graph matching)"
+    formation_days: 500            # ~2 years of daily closes for the regression
+    max_pairs: 10
+    same_sector_only: false        # true = only pairs inside one sector of backend.cyclical.SECTOR_MAP
+    min_turnover_cr: 100           # both stocks: 20-day average turnover (₹ cr)
+    max_adf_t: -3.34               # Engle-Granger 5% critical value (two series)
+    min_half_life: 2
+    max_half_life: 40
+    entry_q: 1.5                   # |q| to enter (q = (spread - median) / IQR)
+    exit_q: 0.25
+    stop_q: 3.5                    # defines 1R and stops the trade
+    max_hold_days: 30
+    max_lot_imbalance_pct: 15      # skip a pair when whole lots can't match the hedge ratio within this
+    universe_limit: 120            # most liquid F&O stocks considered (pairs grow with n²)
+
+  pairs_metals:
+    enabled: true
+    label: "Pairs — GOLDM / SILVERM"
+    legs: [GOLDM, SILVERM]
+    formation_days: 500
+    require_cointegration: false   # trade the ratio even when the test doesn't pass (recorded)
+    max_adf_t: -3.34
+    min_half_life: 2
+    max_half_life: 120
+    entry_q: 1.5
+    exit_q: 0.25
+    stop_q: 3.5
+    max_hold_days: 60
+    max_lot_imbalance_pct: 25
+
+  # Clenow "Stocks on the Move" (quoted by Berzal & García): weekly rank by 90-day exponential
+  # regression slope × R², volatility-sized, index filter.
+  cash_momentum:
+    enabled: true
+    label: "Cash momentum — Clenow"
+    regression_days: 90
+    top_pct: 20                    # hold stocks ranked in the top 20% of the universe
+    ma_filter_days: 100            # a stock below its 100-day SMA is sold / not bought
+    max_gap_pct: 15                # any gap over 15% in the regression window disqualifies
+    index_ma_days: 200             # new buys only while NIFTY is above its 200-day SMA
+    risk_factor_bps: 10            # shares = capital × 0.10% ÷ ATR (Clenow's 10 basis points)
+    atr_period: 20
+    max_position_pct: 10           # cap any one stock at 10% of capital
+    rebalance_weekday: 2           # Wednesday (or the next session)
+    min_turnover_cr: 20
+    warmup_bars: 210
+
+  # Not a trade book: a daily NIFTY drawdown-risk score (Berzal & García, rules version).
+  risk_switch:
+    enabled: true
+    label: "Risk switch — NIFTY drawdown risk"
+    off_below: 0.0                 # hysteresis: defensive when the score falls below 0 ...
+    on_above: 0.2                  # ... and normal again only above +0.2
+    drawdown_pct: 5                # study: a NIFTY fall of 5% or more ...
+    horizon_days: 20               # ... within the next 20 sessions
+    weights:                       # each component is scaled to -1 … +1
+      trend: 0.30                  # NIFTY vs its 50 / 200-day SMAs
+      momentum: 0.15               # NIFTY 20-day return
+      breadth: 0.20                # share of F&O stocks above their 50-day SMA
+      volatility: 0.20             # India VIX percentile (1 year) and 5-day change
+      realised_vol: 0.10           # NIFTY 20-day vs 120-day realised volatility
+      crude: 0.05                  # CRUDEOILM 20-day change (a sharp rise is risk-off)

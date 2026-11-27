@@ -244,6 +244,7 @@ class MarketDataScheduler:
             self.scans_done["postmortem"] = week
             self.last_results["postmortem:weekly"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
             ran.append("postmortem:weekly")
+        ran += self._research_postmortem(now)
         ran += self._option_data(now)
         ran += self._weekly_backup(now)
         state = self._state(now)
@@ -301,6 +302,7 @@ class MarketDataScheduler:
                         self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(res)}
                     self._divergence("nse", now)
                     self._momentum("daily", now)
+                    self._research("nse", now)
             else:
                 _, exchange, interval = job.split(":")
                 bar = latest_closed_bar(exchange, interval, now)
@@ -309,6 +311,7 @@ class MarketDataScheduler:
                     self.done[job] = bar
                     if exchange == MCX and interval == "day":
                         self._divergence("mcx", now)   # MCX daily bars are complete after the evening close
+                        self._research("mcx", now)
                     if interval in ("10minute", "60minute"):
                         self._my_trades(exchange, interval, now)
             self.last_results[job] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
@@ -370,6 +373,41 @@ class MarketDataScheduler:
             except Exception as exc:  # never let it stop the scheduler
                 result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
             self.last_results[name] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+
+    def _research(self, group: str, now: datetime) -> None:
+        """Research strategies (shadow, asked 27 Nov 2026): re-run over the day's completed daily
+        bars and update the research journal. No AI, no Telegram."""
+        if os.getenv("TRADINGAGENTS_RESEARCH", "on").lower() == "off":
+            return
+        try:
+            from backend.research.registry import run_live
+            result = run_live(group)
+        except Exception as exc:  # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results[f"research:{group}"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+
+    def _research_postmortem(self, now: datetime) -> list[str]:
+        """Weekly AI review of the research strategies: Saturday from 08:30 (after the main
+        post-mortem), Sunday catches up; one AI call a week."""
+        if os.getenv("TRADINGAGENTS_RESEARCH", "on").lower() == "off":
+            return []
+        try:
+            from backend.research import config as rcfg
+            from backend.research.postmortem import due, exists, run
+            if not (rcfg.load().get("postmortem") or {}).get("enabled", True):
+                return []
+            week = due(now, self.scans_done.get("research_postmortem"))
+            if not week:
+                return []
+            if exists(week):
+                self.scans_done["research_postmortem"] = week
+                return []
+            self.scans_done["research_postmortem"] = week
+            result = run(week)
+        except Exception as exc:   # never let it stop the scheduler
+            result = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+        self.last_results["research:postmortem"] = {"at": now.isoformat(timespec="seconds"), **_brief(result)}
+        return ["research:postmortem"]
 
     def _momentum(self, kind: str, now: datetime) -> None:
         """Momentum book: entries/stops after each NSE hourly bar; ranking and
